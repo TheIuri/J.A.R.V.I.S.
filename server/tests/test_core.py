@@ -64,6 +64,14 @@ def test_fallback_raises_when_all_fail():
         llm.chat([{"role": "user", "content": "hola"}])
 
 
+def test_llm_error_includes_provider_reason():
+    def not_found(request):
+        return httpx.Response(404, json={"error": {"message": "The model `m` does not exist"}})
+
+    with pytest.raises(LLMError, match="HTTP 404.*does not exist"):
+        llm_with(not_found).chat([{"role": "user", "content": "hola"}])
+
+
 def test_audio_turn_records_timings_and_history():
     assistant = make_assistant()
     result = assistant.handle_audio(b"wav")

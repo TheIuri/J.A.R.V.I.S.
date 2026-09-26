@@ -40,6 +40,9 @@ class OpenAICompatLLM:
             )
             resp.raise_for_status()
             text = resp.json()["choices"][0]["message"]["content"]
+        except httpx.HTTPStatusError as exc:
+            # El cuerpo explica el motivo (modelo inexistente, clave invalida, limite...).
+            raise LLMError(f"{self.name}: HTTP {exc.response.status_code}: {exc.response.text[:300]}") from exc
         except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
             raise LLMError(f"{self.name}: {exc}") from exc
         return (text or "").strip()
