@@ -24,7 +24,8 @@ services:
       LLM_PROVIDERS: "groq,gemini"
       GROQ_API_KEY: "" # <<< https://console.groq.com/keys
       GEMINI_API_KEY: "" # <<< https://aistudio.google.com/apikey (si lo dejas vacio, quitalo de LLM_PROVIDERS)
-      # GROQ_MODEL: "llama-3.3-70b-versatile"
+      # GROQ_MODEL: "openai/gpt-oss-120b" # si Groq lo retira, elige otro en console.groq.com/docs/models
+      # GROQ_REASONING_EFFORT: "low" # pon "" si eliges un modelo que no razona
       # GEMINI_MODEL: "gemini-2.5-flash"
 
       # --- Voz (TTS): Piper local en CPU ---

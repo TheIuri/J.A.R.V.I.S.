@@ -1,4 +1,5 @@
 import base64
+import json
 
 import httpx
 import pytest
@@ -29,8 +30,8 @@ class FakeTTS:
         return b"RIFFfake"
 
 
-def llm_with(handler, name="fake"):
-    cfg = LLMProviderConfig(name=name, base_url="http://llm", api_key="k", model="m")
+def llm_with(handler, name="fake", reasoning_effort=""):
+    cfg = LLMProviderConfig(name=name, base_url="http://llm", api_key="k", model="m", reasoning_effort=reasoning_effort)
     client = httpx.Client(base_url="http://llm", transport=httpx.MockTransport(handler))
     return OpenAICompatLLM(cfg, timeout_s=5, max_tokens=50, client=client)
 
@@ -70,6 +71,24 @@ def test_llm_error_includes_provider_reason():
 
     with pytest.raises(LLMError, match="HTTP 404.*does not exist"):
         llm_with(not_found).chat([{"role": "user", "content": "hola"}])
+
+
+def test_reasoning_effort_is_sent_only_when_set():
+    bodies = []
+
+    def capture(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "vale"}}]})
+
+    llm_with(capture, reasoning_effort="low").chat([{"role": "user", "content": "hola"}])
+    llm_with(capture).chat([{"role": "user", "content": "hola"}])
+    assert bodies[0]["reasoning_effort"] == "low"
+    assert "reasoning_effort" not in bodies[1]
+
+
+def test_empty_reply_is_an_error_so_fallback_can_act():
+    llm = FallbackLLM([llm_with(ok_handler(""), "a"), llm_with(ok_handler("vale"), "b")])
+    assert llm.chat([{"role": "user", "content": "hola"}]).provider == "b:m"
 
 
 def test_audio_turn_records_timings_and_history():
@@ -140,6 +159,8 @@ def test_settings_require_token_and_keys(monkeypatch):
     settings = config.load_settings()
     assert [p.name for p in settings.llm_providers] == ["groq", "ollama"]
     assert settings.llm_providers[1].model == "llama3.2:3b"
+    assert settings.llm_providers[0].reasoning_effort == "low"
+    assert settings.llm_providers[1].reasoning_effort == ""
 
 
 def test_piper_voice_url_and_cleanup():
