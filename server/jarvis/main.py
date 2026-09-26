@@ -17,6 +17,7 @@ from .llm import FallbackLLM, LLMError, OpenAICompatLLM
 from .pipeline import Assistant, TurnResult
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
+from .tools import build_registry
 from .tts import NullTTS, PiperTTS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -46,14 +47,23 @@ def build_assistant(settings: Settings) -> Assistant:
     )
     tts = PiperTTS(settings.piper_voice, data / "piper") if settings.tts_provider == "piper" else NullTTS()
 
+    tools = build_registry(settings)
+
     log.info("STT=%s | LLM=%s | TTS=%s", stt.name, llm.name, tts.name)
-    return Assistant(stt, llm, tts, system_prompt(settings.assistant_name), settings.history_turns)
+    return Assistant(
+        stt, llm, tts, system_prompt(settings.assistant_name, settings.home_city), settings.history_turns, tools
+    )
 
 
 class ChatRequest(BaseModel):
     text: str
     session: str = "default"
     speak: bool = True
+    pc_apps: list[str] | None = None  # apps que el cliente de PC permite abrir; None = sin acciones de PC
+
+
+class SpeakRequest(BaseModel):
+    text: str
 
 
 class SessionRequest(BaseModel):
@@ -66,8 +76,20 @@ def _to_json(result: TurnResult) -> dict:
         "reply": result.reply,
         "provider": result.provider,
         "timings_ms": result.timings_ms,
-        "audio_wav_b64": base64.b64encode(result.audio).decode() if result.audio else None,
+        "tools_used": result.tools_used,
+        "pc_actions": result.pc_actions,
+        "audio_wav_b64": _b64(result.audio),
     }
+
+
+def _b64(audio: bytes | None) -> str | None:
+    return base64.b64encode(audio).decode() if audio else None
+
+
+def _parse_apps(raw: str | None) -> list[str] | None:
+    if raw is None:
+        return None
+    return [a.strip() for a in raw.split(",") if a.strip()]
 
 
 def create_app(assistant: Assistant | None = None, api_token: str | None = None) -> FastAPI:
@@ -103,22 +125,34 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             "stt": a.stt.name if a.stt else None,
             "llm": a.llm.name,
             "tts": a.tts.name,
+            "tools": a.tools.names() if a.tools else [],
         }
 
     @app.post("/api/voice", dependencies=[Depends(require_token)])
-    def voice(audio: UploadFile = File(...), session: str = Form("default"), speak: bool = Form(True)) -> dict:
+    def voice(
+        audio: UploadFile = File(...),
+        session: str = Form("default"),
+        speak: bool = Form(True),
+        pc_apps: str | None = Form(None),  # separadas por comas
+    ) -> dict:
         data = audio.file.read(MAX_AUDIO_BYTES + 1)
         if not data:
             raise HTTPException(status_code=400, detail="Audio vacio")
         if len(data) > MAX_AUDIO_BYTES:
             raise HTTPException(status_code=413, detail="Audio demasiado largo")
-        return run(state["assistant"].handle_audio, data, session, speak)
+        return run(state["assistant"].handle_audio, data, session, speak, _parse_apps(pc_apps))
 
     @app.post("/api/chat", dependencies=[Depends(require_token)])
     def chat(req: ChatRequest) -> dict:
         if not req.text.strip():
             raise HTTPException(status_code=400, detail="Texto vacio")
-        return run(state["assistant"].handle_text, req.text, req.session, req.speak)
+        return run(state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps)
+
+    @app.post("/api/speak", dependencies=[Depends(require_token)])
+    def speak(req: SpeakRequest) -> dict:
+        if not req.text.strip():
+            raise HTTPException(status_code=400, detail="Texto vacio")
+        return {"audio_wav_b64": _b64(state["assistant"].speak(req.text))}
 
     @app.post("/api/reset", dependencies=[Depends(require_token)])
     def reset(req: SessionRequest) -> dict:

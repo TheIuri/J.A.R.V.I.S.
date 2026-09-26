@@ -10,8 +10,8 @@ TrueNAS SCALE; el "cerebro" (LLM) usa capas gratuitas en la nube, con un modelo 
 
 | Nivel | Qué | Estado |
 |---|---|---|
-| 1 · Voz | micro → STT → LLM → TTS → altavoz, push-to-talk | ✅ este repo |
-| 2 · Tools | registro de herramientas tipadas + permisos | pendiente |
+| 1 · Voz | micro → STT → LLM → TTS → altavoz, push-to-talk | ✅ |
+| 2 · Tools | registro de herramientas tipadas + permisos | ✅ |
 | 3 · Memoria | SQLite (+ Qdrant cuando haga falta) | pendiente |
 | 4 · Sentidos | wake word, cámara bajo demanda, event bus | pendiente |
 | 5 · Agentes | orquestador + especialistas | pendiente |
@@ -89,6 +89,48 @@ py jarvis_client.py
   `py jarvis_client.py --list-devices` y `--output-device N`. El Echo no sirve como micrófono para un asistente
   propio: el micro será el del PC (o el móvil más adelante).
 
+## Nivel 2: herramientas
+
+El LLM no ejecuta nada: **propone** una llamada a una tool registrada y el servidor la valida
+(tipos, rangos, lista permitida), la ejecuta con tiempo límite y la registra en el log `jarvis.audit`
+(tool, argumentos, resultado, duración). El resultado vuelve al LLM, que responde en lenguaje natural.
+
+| Tool | Dónde se ejecuta | Qué hace |
+|---|---|---|
+| `get_datetime` | NAS | Fecha y hora (`TZ`) |
+| `get_weather` | NAS | Tiempo actual y previsión con Open-Meteo (gratis, sin clave). Ciudad por defecto: `HOME_CITY` |
+| `truenas_status` | NAS | Sistema, pools, apps y alertas del TrueNAS, en solo lectura |
+| `pc_open_app` | PC | Abre una app de `client/apps.json` (y solo esas) |
+| `pc_open_url` | PC | Abre una web `http(s)` en el navegador |
+| `pc_volume` | PC | Fijar volumen (0–100), subir, bajar o silenciar |
+| `pc_media` | PC | Play/pausa, siguiente, anterior |
+| `pc_timer` | PC | Temporizador que avisa por voz |
+
+Ejemplos: *"¿Qué tiempo hará mañana?"*, *"Pon el volumen al 30"*, *"Abre Spotify"*,
+*"Avísame en 10 minutos de la pasta"*, *"¿Cómo está el NAS?"*.
+
+**Seguridad**
+- **Acciones del PC con doble control**: el servidor solo las valida y las devuelve en la respuesta. El cliente
+  las ejecuta únicamente si están en su propia lista permitida; nunca ejecuta comandos arbitrarios.
+- **Interruptores para apagarlo**: `TOOLS_ENABLED=false` apaga todas las tools, `TOOLS_DISABLED` desactiva tools
+  concretas y el cliente se puede arrancar con `--no-actions`.
+- **Nada destructivo por ahora**: las tools marcadas como destructivas no se ofrecen al LLM mientras no exista
+  confirmación humana.
+- **Temporizadores**: viven en el cliente del PC; si cierras el cliente, se pierden.
+
+**Apps del PC**: edita `client/apps.json` (nombre hablado → programa, ruta o URI) y reinicia el cliente.
+
+**Estado del TrueNAS (opcional)**
+1. **Usuario de solo lectura**: en *Credentials → Users → Add*, crea un usuario `jarvis` con el rol
+   *Read-Only Administrator*.
+2. **API key**: en *Credentials → API Keys* (o desde el menú de usuario), crea una API key para ese usuario.
+3. **Variables en el compose**:
+   - `TRUENAS_URL: "wss://IP-DEL-NAS/api/current"`. Tiene que ser `wss://`: TrueNAS revoca las keys usadas
+     sin TLS.
+   - `TRUENAS_USER: "jarvis"`
+   - `TRUENAS_API_KEY`
+   - `TRUENAS_VERIFY_SSL` queda en `false` por defecto, porque TrueNAS usa un certificado autofirmado.
+
 ## Probar sin TrueNAS (desarrollo)
 
 ```bash
@@ -106,17 +148,31 @@ Tests (sin modelos ni red): `pip install -r requirements-dev.txt && python -m py
 server/jarvis/
   config.py     variables de entorno y presets de proveedores
   stt.py        FasterWhisperSTT, GroqSTT
-  llm.py        OpenAICompatLLM + FallbackLLM
+  llm.py        OpenAICompatLLM + FallbackLLM (con tool calling)
   tts.py        PiperTTS (descarga la voz automáticamente), NullTTS
-  pipeline.py   Assistant: STT → LLM → TTS con tiempos por etapa
-  main.py       API HTTP (/health, /api/voice, /api/chat, /api/reset)
-client/jarvis_client.py   push-to-talk para PC
+  pipeline.py   Assistant: STT → LLM ⇄ tools → TTS con tiempos por etapa
+  main.py       API HTTP (/health, /api/voice, /api/chat, /api/speak, /api/reset)
+  tools/
+    registry.py   registro, validación, permisos, timeouts y auditoría
+    basic.py      fecha/hora y tiempo (Open-Meteo)
+    pc.py         acciones que ejecuta el cliente del PC
+    truenas.py    estado del TrueNAS (API oficial, solo lectura)
+client/
+  jarvis_client.py   push-to-talk para PC
+  pc_actions.py      ejecuta las acciones permitidas en Windows
+  apps.json          apps que JARVIS puede abrir
 deploy/truenas/           docker-compose para "Install via YAML"
 ```
 
-## Checklist antes del Nivel 2 (de la guía)
+## Checklist antes de subir de nivel (de la guía)
 
-- [ ] La conversación funciona de principio a fin sin trucos manuales.
-- [ ] Puedes medir latencia y fallos (tiempos en cliente y logs).
-- [ ] Puedes cambiar de proveedor solo con variables de entorno.
-- [ ] Existe una forma de apagarlo (parar la app en TrueNAS).
+Nivel 1:
+- [x] La conversación funciona de principio a fin sin trucos manuales.
+- [x] Puedes medir latencia y fallos (tiempos en cliente y logs).
+- [x] Puedes cambiar de proveedor solo con variables de entorno.
+- [x] Existe una forma de apagarlo (parar la app en TrueNAS).
+
+Nivel 2:
+- [ ] Cada tool funciona sin LLM (tests en `server/tests/test_tools.py`).
+- [ ] Cada acción tiene permisos claros (lista permitida, `TOOLS_DISABLED`, `--no-actions`).
+- [ ] Cada llamada queda en el log de auditoría.

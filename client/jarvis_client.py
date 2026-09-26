@@ -11,6 +11,9 @@ En el prompt:
     texto + Enter -> se lo envia escrito (responde con voz igualmente)
     /reset        -> olvida la conversacion actual
     /salir        -> termina
+
+Acciones en el PC (abrir apps, volumen, musica, temporizadores): solo las apps de apps.json.
+Desactivalas con --no-actions.
 """
 
 from __future__ import annotations
@@ -23,12 +26,16 @@ import sys
 import threading
 import wave
 from enum import Enum
+from pathlib import Path
 
 import httpx
 import numpy as np
 import sounddevice as sd
 
+from pc_actions import PCActions, load_apps
+
 SAMPLE_RATE = 16000  # lo que espera Whisper
+_play_lock = threading.Lock()  # la voz principal y los avisos de temporizador no se pisan
 
 
 class State(Enum):
@@ -70,15 +77,16 @@ def play_wav(data: bytes, output_device: int | None) -> None:
         frames = np.frombuffer(wav.readframes(wav.getnframes()), dtype="int16")
     if channels > 1:
         frames = frames.reshape(-1, channels)
-    sd.play(frames, rate, device=output_device)
-    sd.wait()
+    with _play_lock:
+        sd.play(frames, rate, device=output_device)
+        sd.wait()
 
 
 def show(state: State) -> None:
     print(f"[{state.value}]", flush=True)
 
 
-def handle_response(resp: httpx.Response, output_device: int | None) -> None:
+def handle_response(resp: httpx.Response, output_device: int | None, actions: PCActions | None) -> None:
     if resp.status_code != 200:
         print(f"  Error {resp.status_code}: {resp.text}")
         return
@@ -89,7 +97,11 @@ def handle_response(resp: httpx.Response, output_device: int | None) -> None:
     t = body["timings_ms"]
     print(f"  Tu:     {body['transcript']}")
     print(f"  Jarvis: {body['reply']}")
-    print(f"  ({', '.join(f'{k} {v}ms' for k, v in t.items())} | {body['provider']})")
+    tools = f" | tools: {', '.join(body['tools_used'])}" if body.get("tools_used") else ""
+    print(f"  ({', '.join(f'{k} {v}ms' for k, v in t.items())} | {body['provider']}{tools})")
+    for action in body.get("pc_actions") or []:
+        result = actions.run(action) if actions else "acciones desactivadas"
+        print(f"  [PC] {action.get('action')}: {result}")
     if body.get("audio_wav_b64"):
         show(State.SPEAKING)
         play_wav(base64.b64decode(body["audio_wav_b64"]), output_device)
@@ -103,6 +115,10 @@ def main() -> None:
     parser.add_argument("--input-device", type=int, default=None, help="indice del microfono")
     parser.add_argument("--output-device", type=int, default=None, help="indice del altavoz (p.ej. Echo por Bluetooth)")
     parser.add_argument("--list-devices", action="store_true", help="muestra los dispositivos de audio y sale")
+    parser.add_argument("--no-actions", action="store_true", help="no ejecutar acciones en este PC")
+    parser.add_argument(
+        "--apps", default=str(Path(__file__).with_name("apps.json")), help="lista de apps permitidas (JSON)"
+    )
     args = parser.parse_args()
 
     if args.list_devices:
@@ -119,6 +135,21 @@ def main() -> None:
     except httpx.HTTPError as exc:
         sys.exit(f"No puedo conectar con {args.server}: {exc}")
     print(f"Conectado. STT={health['stt']} | LLM={health['llm']} | TTS={health['tts']}")
+    print(f"Tools del servidor: {', '.join(health.get('tools') or []) or 'ninguna'}")
+
+    def announce(text: str) -> None:
+        print(f"\n  [Aviso] {text}")
+        try:
+            audio = client.post("/api/speak", json={"text": text}).json().get("audio_wav_b64")
+            if audio:
+                play_wav(base64.b64decode(audio), args.output_device)
+        except (httpx.HTTPError, sd.PortAudioError) as exc:
+            print(f"  (no se pudo reproducir el aviso: {exc})")
+
+    actions = None if args.no_actions else PCActions(load_apps(Path(args.apps)), announce)
+    pc_apps = list(actions.apps) if actions else None
+    if actions:
+        print(f"Apps permitidas: {', '.join(pc_apps) or 'ninguna'} (edita {args.apps})")
     print("Enter para hablar, Enter para enviar. Tambien puedes escribir. /reset, /salir.\n")
 
     while True:
@@ -129,6 +160,8 @@ def main() -> None:
             break
         try:
             if line in ("/salir", "/exit"):
+                if actions:
+                    actions.cancel_all()
                 break
             if line == "/reset":
                 client.post("/api/reset", json={"session": args.session})
@@ -136,7 +169,7 @@ def main() -> None:
                 continue
             if line:
                 show(State.PROCESSING)
-                resp = client.post("/api/chat", json={"text": line, "session": args.session})
+                resp = client.post("/api/chat", json={"text": line, "session": args.session, "pc_apps": pc_apps})
             else:
                 show(State.RECORDING)
                 print("  Habla... (Enter para terminar)")
@@ -145,9 +178,9 @@ def main() -> None:
                 resp = client.post(
                     "/api/voice",
                     files={"audio": ("audio.wav", audio, "audio/wav")},
-                    data={"session": args.session},
+                    data={"session": args.session, **({"pc_apps": ",".join(pc_apps)} if pc_apps is not None else {})},
                 )
-            handle_response(resp, args.output_device)
+            handle_response(resp, args.output_device, actions)
         except httpx.HTTPError as exc:
             print(f"  Error de red: {exc}")
         except sd.PortAudioError as exc:
