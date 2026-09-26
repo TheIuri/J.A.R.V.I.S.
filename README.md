@@ -154,6 +154,26 @@ origen y confianza.
 Ejemplos: *"Recuerda que mi perro se llama Toby"*, *"Prefiero que me llames Ori"*, *"¿Cómo se llama mi perro?"*,
 *"Olvida lo del perro"*.
 
+## Interfaz (HUD) en el PC
+
+Una interfaz web con una esfera animada que cambia de color según el estado (en espera, escuchando, pensando,
+hablando) y late con la voz. Incluye subtítulos, historial, un panel de sesión (intercambios, latencia, pico,
+tiempo por etapa, modelo y tools usadas) y la lista de recuerdos con botón para olvidar.
+
+```bash
+cd client
+py jarvis_hud.py        # abre http://localhost:8766 (usa JARVIS_SERVER y JARVIS_TOKEN)
+```
+
+- **Para hablar**: mantén pulsada la **barra espaciadora** o la esfera. También puedes escribir abajo.
+- **Cómo funciona**: `jarvis_hud.py` corre en tu PC, sirve la página y reenvía las peticiones al NAS.
+  - El token **no llega al navegador**.
+  - Las acciones del PC se ejecutan aquí, con `apps.json`. Los temporizadores avisan por voz también en el HUD.
+  - Solo escucha en `127.0.0.1` y rechaza peticiones de otras webs (comprueba `Host` y `Origin`).
+- **Micrófono**: el navegador pide permiso la primera vez. Funciona porque `localhost` cuenta como sitio seguro.
+  Para usarlo desde el móvil hará falta HTTPS, que es el siguiente paso.
+- **Opciones**: `--no-actions` (sin acciones en el PC), `--port 8766` y `--no-browser`.
+
 ## Probar sin TrueNAS (desarrollo)
 
 ```bash
@@ -185,7 +205,9 @@ server/jarvis/
     pc.py         acciones que ejecuta el cliente del PC
     truenas.py    estado del TrueNAS (API oficial, solo lectura)
 client/
-  jarvis_client.py   push-to-talk para PC
+  jarvis_client.py   push-to-talk para PC (consola)
+  jarvis_hud.py      HUD web local (proxy al NAS + acciones del PC)
+  hud/               página del HUD (HTML/CSS/JS sin dependencias)
   pc_actions.py      ejecuta las acciones permitidas en Windows
   apps.json          apps que JARVIS puede abrir
 deploy/truenas/           docker-compose para "Install via YAML"

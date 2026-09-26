@@ -1,0 +1,194 @@
+"""HUD de JARVIS: interfaz web en tu PC.
+
+Sirve la interfaz en http://localhost:8766 y reenvia las peticiones al servidor (NAS).
+- El token nunca llega al navegador: lo anade este proceso.
+- Las acciones del PC (apps, volumen, temporizadores) se ejecutan aqui, con la misma
+  lista permitida que el cliente de consola (apps.json).
+- Solo escucha en 127.0.0.1 y rechaza peticiones de otras webs (Host/Origin).
+
+Uso:
+    py jarvis_hud.py            (usa JARVIS_SERVER y JARVIS_TOKEN)
+    py jarvis_hud.py --no-actions --port 8766
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+import threading
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import httpx
+
+from pc_actions import PCActions, load_apps
+
+STATIC_DIR = Path(__file__).with_name("hud")
+CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
+
+# Rutas del servidor que el HUD puede usar (nada mas se reenvia).
+PROXY_POST = {"/api/chat", "/api/voice", "/api/reset"}
+PROXY_GET = {"/api/memories", "/health"}
+MEMORY_DELETE = re.compile(r"^/api/memories/\d+$")
+MAX_BODY = 12 * 1024 * 1024
+
+
+class Hud:
+    def __init__(self, server: str, token: str, apps_path: Path, actions_enabled: bool):
+        self.api = httpx.Client(base_url=server.rstrip("/"), headers={"Authorization": f"Bearer {token}"}, timeout=90)
+        self._events: list[dict] = []
+        self._lock = threading.Lock()
+        self.actions = PCActions(load_apps(apps_path), self.announce) if actions_enabled else None
+
+    @property
+    def pc_apps(self) -> list[str] | None:
+        return list(self.actions.apps) if self.actions else None
+
+    def announce(self, text: str) -> None:
+        """Aviso de un temporizador: se genera la voz y el navegador lo recoge en /hud/events."""
+        audio = None
+        try:
+            audio = self.api.post("/api/speak", json={"text": text}).json().get("audio_wav_b64")
+        except httpx.HTTPError as exc:
+            print(f"(no se pudo generar la voz del aviso: {exc})")
+        with self._lock:
+            self._events.append({"type": "announce", "text": text, "audio_wav_b64": audio})
+
+    def take_events(self) -> list[dict]:
+        with self._lock:
+            events, self._events = self._events, []
+        return events
+
+    def run_actions(self, body: dict) -> dict:
+        results = []
+        for action in body.get("pc_actions") or []:
+            result = self.actions.run(action) if self.actions else "acciones desactivadas"
+            print(f"[PC] {action.get('action')}: {result}")
+            results.append({"action": action.get("action"), "result": result})
+        body["pc_results"] = results
+        return body
+
+
+def make_handler(hud: Hud, port: int):
+    allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "JarvisHUD"
+
+        def log_message(self, fmt, *args):  # sin ruido por cada peticion
+            pass
+
+        # --- utilidades --------------------------------------------------------
+
+        def _send(self, status: int, body: bytes, content_type: str = "application/json") -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _json(self, status: int, data) -> None:
+            self._send(status, json.dumps(data).encode())
+
+        def _trusted(self) -> bool:
+            # Evita que otra web abierta en el navegador use el HUD (DNS rebinding / CSRF).
+            if self.headers.get("Host") not in allowed_hosts:
+                return False
+            origin = self.headers.get("Origin")
+            return origin is None or origin.removeprefix("http://") in allowed_hosts
+
+        def _forward(self, method: str, path: str, body: bytes | None = None) -> None:
+            headers = {}
+            if body is not None and self.headers.get("Content-Type"):
+                headers["Content-Type"] = self.headers["Content-Type"]
+            try:
+                resp = hud.api.request(method, path, content=body, headers=headers)
+            except httpx.HTTPError as exc:
+                self._json(502, {"detail": f"No puedo conectar con el servidor: {exc}"})
+                return
+            if resp.status_code == 200 and path in ("/api/chat", "/api/voice"):
+                self._json(200, hud.run_actions(resp.json()))
+            else:
+                self._send(resp.status_code, resp.content, resp.headers.get("Content-Type", "application/json"))
+
+        # --- rutas -------------------------------------------------------------
+
+        def do_GET(self):
+            if not self._trusted():
+                return self._json(403, {"detail": "origen no permitido"})
+            path = self.path.split("?")[0]
+            if path in ("/", "/index.html"):
+                path = "/index.html"
+            static = STATIC_DIR / path.lstrip("/")
+            if static.suffix in CONTENT_TYPES and static.parent == STATIC_DIR and static.is_file():
+                return self._send(200, static.read_bytes(), CONTENT_TYPES[static.suffix])
+            if path == "/hud/config":
+                return self._json(200, {"pc_apps": hud.pc_apps})
+            if path == "/hud/events":
+                return self._json(200, {"events": hud.take_events()})
+            if path in PROXY_GET:
+                return self._forward("GET", path)
+            self._json(404, {"detail": "no encontrado"})
+
+        def do_POST(self):
+            if not self._trusted():
+                return self._json(403, {"detail": "origen no permitido"})
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > MAX_BODY:
+                return self._json(413, {"detail": "demasiado grande"})
+            body = self.rfile.read(length)
+            if self.path in PROXY_POST:
+                return self._forward("POST", self.path, body)
+            self._json(404, {"detail": "no encontrado"})
+
+        def do_DELETE(self):
+            if not self._trusted():
+                return self._json(403, {"detail": "origen no permitido"})
+            if MEMORY_DELETE.match(self.path):
+                return self._forward("DELETE", self.path)
+            self._json(404, {"detail": "no encontrado"})
+
+    return Handler
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="HUD web de JARVIS")
+    parser.add_argument("--server", default=os.environ.get("JARVIS_SERVER", "http://localhost:8765"))
+    parser.add_argument("--token", default=os.environ.get("JARVIS_TOKEN", ""))
+    parser.add_argument("--port", type=int, default=8766)
+    parser.add_argument("--no-actions", action="store_true", help="no ejecutar acciones en este PC")
+    parser.add_argument("--no-browser", action="store_true", help="no abrir el navegador automaticamente")
+    parser.add_argument("--apps", default=str(Path(__file__).with_name("apps.json")))
+    args = parser.parse_args()
+    if not args.token:
+        sys.exit("Falta el token: usa --token o la variable JARVIS_TOKEN")
+
+    hud = Hud(args.server, args.token, Path(args.apps), not args.no_actions)
+    try:
+        health = hud.api.get("/health").json()
+    except httpx.HTTPError as exc:
+        sys.exit(f"No puedo conectar con {args.server}: {exc}")
+    print(f"Servidor OK: LLM={health['llm']} | tools={len(health.get('tools') or [])} | memoria={health.get('memory')}")
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(hud, args.port))
+    url = f"http://localhost:{args.port}"
+    print(f"HUD en {url}  (Ctrl+C para salir)")
+    if not args.no_browser:
+        webbrowser.open(url)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if hud.actions:
+            hud.actions.cancel_all()
+        httpd.server_close()
+
+
+if __name__ == "__main__":
+    main()
