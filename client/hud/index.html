@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>J.A.R.V.I.S.</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="hud.css">
+</head>
+<body>
+  <header>
+    <span class="brand">J.A.R.V.I.S.</span>
+    <span id="clock" class="mono"></span>
+  </header>
+
+  <main>
+    <aside id="log" aria-label="Conversación"></aside>
+
+    <section id="stage">
+      <canvas id="orb" aria-label="Mantén pulsado para hablar"></canvas>
+      <p id="subtitle" aria-live="polite"></p>
+      <p id="you" class="dim"></p>
+      <p id="state" class="mono">EN ESPERA</p>
+      <p class="hint mono">MANTÉN PULSADO EL NÚCLEO O LA BARRA ESPACIADORA</p>
+      <form id="ask" autocomplete="off">
+        <input id="text" placeholder="…o escribe aquí y pulsa Enter" aria-label="Mensaje">
+      </form>
+    </section>
+
+    <aside id="panel" class="mono">
+      <dl>
+        <dt>SESIÓN</dt><dd id="s-time">00:00</dd>
+        <dt>INTERCAMBIOS</dt><dd id="s-count">0</dd>
+        <dt>LATENCIA</dt><dd id="s-latency">—</dd>
+        <dt>PICO</dt><dd id="s-peak">—</dd>
+        <dt>ETAPAS</dt><dd id="s-stages">—</dd>
+        <dt>MODELO</dt><dd id="s-model">—</dd>
+        <dt>TOOLS</dt><dd id="s-tools">—</dd>
+      </dl>
+      <button id="memories" type="button">MEMORIA</button>
+      <button id="reset" type="button">NUEVA CONVERSACIÓN</button>
+      <div id="memory-list"></div>
+    </aside>
+  </main>
+
+  <script src="hud.js"></script>
+</body>
+</html>
