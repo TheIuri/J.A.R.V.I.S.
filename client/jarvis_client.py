@@ -9,7 +9,9 @@ Uso:
 En el prompt:
     Enter vacio  -> empieza a grabar; Enter otra vez -> envia
     texto + Enter -> se lo envia escrito (responde con voz igualmente)
-    /reset        -> olvida la conversacion actual
+    /reset        -> olvida la conversacion actual (no la memoria)
+    /memoria      -> lista lo que JARVIS recuerda de ti
+    /olvida N     -> borra el recuerdo numero N
     /salir        -> termina
 
 Acciones en el PC (abrir apps, volumen, musica, temporizadores): solo las apps de apps.json.
@@ -136,6 +138,7 @@ def main() -> None:
         sys.exit(f"No puedo conectar con {args.server}: {exc}")
     print(f"Conectado. STT={health['stt']} | LLM={health['llm']} | TTS={health['tts']}")
     print(f"Tools del servidor: {', '.join(health.get('tools') or []) or 'ninguna'}")
+    print(f"Memoria: {'activada (/memoria para verla)' if health.get('memory') else 'desactivada'}")
 
     def announce(text: str) -> None:
         print(f"\n  [Aviso] {text}")
@@ -150,7 +153,7 @@ def main() -> None:
     pc_apps = list(actions.apps) if actions else None
     if actions:
         print(f"Apps permitidas: {', '.join(pc_apps) or 'ninguna'} (edita {args.apps})")
-    print("Enter para hablar, Enter para enviar. Tambien puedes escribir. /reset, /salir.\n")
+    print("Enter para hablar, Enter para enviar. Tambien puedes escribir. /reset, /memoria, /olvida N, /salir.\n")
 
     while True:
         show(State.IDLE)
@@ -166,6 +169,25 @@ def main() -> None:
             if line == "/reset":
                 client.post("/api/reset", json={"session": args.session})
                 print("  Conversacion reiniciada.")
+                continue
+            if line == "/memoria":
+                resp = client.get("/api/memories")
+                if resp.status_code != 200:
+                    print(f"  {resp.json().get('detail', resp.text)}")
+                    continue
+                memories = resp.json()["memories"]
+                for m in memories:
+                    print(f"  [{m['id']}] ({m['type']}) {m['content']}")
+                print(f"  {len(memories)} recuerdos.")
+                continue
+            if line.startswith("/olvida"):
+                arg = line.removeprefix("/olvida").strip()
+                if not arg.isdigit():
+                    print("  Uso: /olvida N  (mira los numeros con /memoria)")
+                    continue
+                resp = client.delete(f"/api/memories/{arg}")
+                detail = resp.json()
+                print(f"  Olvidado: {detail['deleted']['content']}" if resp.status_code == 200 else f"  {detail.get('detail')}")
                 continue
             if line:
                 show(State.PROCESSING)

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from .config import Settings, load_settings
 from .llm import FallbackLLM, LLMError, OpenAICompatLLM
+from .memory import MemoryRejected, MemoryStore, RuleRetriever
 from .pipeline import Assistant, TurnResult
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
@@ -47,11 +48,19 @@ def build_assistant(settings: Settings) -> Assistant:
     )
     tts = PiperTTS(settings.piper_voice, data / "piper") if settings.tts_provider == "piper" else NullTTS()
 
-    tools = build_registry(settings)
+    store = MemoryStore(data / "memory.db") if settings.memory_enabled else None
+    tools = build_registry(settings, store)
+    retriever = RuleRetriever(store, settings.memory_max_items) if store else None
 
-    log.info("STT=%s | LLM=%s | TTS=%s", stt.name, llm.name, tts.name)
+    log.info("STT=%s | LLM=%s | TTS=%s | memoria=%s", stt.name, llm.name, tts.name, "si" if store else "no")
     return Assistant(
-        stt, llm, tts, system_prompt(settings.assistant_name, settings.home_city), settings.history_turns, tools
+        stt,
+        llm,
+        tts,
+        system_prompt(settings.assistant_name, settings.home_city, memory=store is not None),
+        settings.history_turns,
+        tools,
+        retriever,
     )
 
 
@@ -126,6 +135,7 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             "llm": a.llm.name,
             "tts": a.tts.name,
             "tools": a.tools.names() if a.tools else [],
+            "memory": a.memory is not None,
         }
 
     @app.post("/api/voice", dependencies=[Depends(require_token)])
@@ -153,6 +163,25 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         if not req.text.strip():
             raise HTTPException(status_code=400, detail="Texto vacio")
         return {"audio_wav_b64": _b64(state["assistant"].speak(req.text))}
+
+    def memory_store() -> MemoryStore:
+        a: Assistant = state["assistant"]
+        if a.memory is None:
+            raise HTTPException(status_code=404, detail="Memoria desactivada")
+        return a.memory.store
+
+    @app.get("/api/memories", dependencies=[Depends(require_token)])
+    def list_memories() -> dict:
+        return {"memories": [m.__dict__ for m in memory_store().all()]}
+
+    @app.delete("/api/memories/{memory_id}", dependencies=[Depends(require_token)])
+    def delete_memory(memory_id: int) -> dict:
+        try:
+            m = memory_store().delete(memory_id)
+        except MemoryRejected as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        log.info("recuerdo %d borrado a mano: %s", m.id, m.content)
+        return {"deleted": m.__dict__}
 
     @app.post("/api/reset", dependencies=[Depends(require_token)])
     def reset(req: SessionRequest) -> dict:
