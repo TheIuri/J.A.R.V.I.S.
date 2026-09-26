@@ -8,10 +8,15 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+# Esfuerzo de razonamiento por defecto: bajo, para que un asistente de voz responda rapido.
+REASONING_DEFAULTS = {"groq": "low"}
+
 # Proveedores LLM con API compatible con OpenAI: (base_url, variable de la API key, modelo por defecto).
-# Cualquiera se puede sobrescribir con <NOMBRE>_BASE_URL / <NOMBRE>_MODEL / <NOMBRE>_API_KEY.
+# Cualquiera se puede sobrescribir con <NOMBRE>_BASE_URL / <NOMBRE>_MODEL / <NOMBRE>_API_KEY,
+# y <NOMBRE>_REASONING_EFFORT (low/medium/high) para modelos que razonan antes de responder.
+# Los proveedores retiran modelos a menudo: si uno devuelve 404, mira su catalogo y cambia <NOMBRE>_MODEL.
 LLM_PRESETS: dict[str, tuple[str, str | None, str]] = {
-    "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY", "llama-3.3-70b-versatile"),
+    "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY", "openai/gpt-oss-120b"),
     "gemini": (
         "https://generativelanguage.googleapis.com/v1beta/openai",
         "GEMINI_API_KEY",
@@ -41,6 +46,7 @@ class LLMProviderConfig:
     base_url: str
     api_key: str
     model: str
+    reasoning_effort: str = ""
 
 
 @dataclass(frozen=True)
@@ -58,7 +64,7 @@ class Settings:
 
     llm_providers: list[LLMProviderConfig] = field(default_factory=list)
     llm_timeout_s: int = 30
-    llm_max_tokens: int = 300
+    llm_max_tokens: int = 1024  # incluye los tokens de razonamiento
 
     tts_provider: str = "piper"  # piper | none
     piper_voice: str = "es_ES-davefx-medium"
@@ -80,6 +86,7 @@ def _llm_provider(name: str) -> LLMProviderConfig:
         base_url=_env(f"{prefix}_BASE_URL", base_url).rstrip("/"),
         api_key=_env(f"{prefix}_API_KEY") if key_var else "",
         model=_env(f"{prefix}_MODEL", model),
+        reasoning_effort=_env(f"{prefix}_REASONING_EFFORT", REASONING_DEFAULTS.get(name, "")),
     )
 
 
@@ -106,7 +113,7 @@ def load_settings() -> Settings:
         groq_stt_model=_env("GROQ_STT_MODEL", "whisper-large-v3-turbo"),
         llm_providers=providers,
         llm_timeout_s=_env_int("LLM_TIMEOUT_S", 30),
-        llm_max_tokens=_env_int("LLM_MAX_TOKENS", 300),
+        llm_max_tokens=_env_int("LLM_MAX_TOKENS", 1024),
         tts_provider=_env("TTS_PROVIDER", "piper").lower(),
         piper_voice=_env("PIPER_VOICE", "es_ES-davefx-medium"),
         history_turns=_env_int("HISTORY_TURNS", 6),
