@@ -204,6 +204,41 @@ ningún puerto a internet y funciona también fuera de casa.
 Si usas **ACLs** personalizadas en Tailscale, permite el acceso de tus dispositivos al nodo `jarvis` (puerto 443).
 Desde el móvil no hay acciones de PC (abrir apps, volumen); esas siguen en `jarvis_hud.py`.
 
+## Obsidian
+
+JARVIS usa una bóveda de Obsidian que vive en un dataset del NAS. Tú la abres desde el PC por SMB (una carpeta
+de red) y JARVIS la monta en su contenedor.
+
+| Tool | Qué hace |
+|---|---|
+| `obsidian_search` | Busca en tus notas (título y contenido, sin distinguir acentos) |
+| `obsidian_read` | Lee una nota |
+| `obsidian_create_note` | Crea una nota nueva (por defecto en `Inbox/`) |
+| `obsidian_append` | Añade texto al final de una nota existente |
+| `obsidian_daily_note` | Apunta en la nota de hoy (`Diario/AAAA-MM-DD.md`) con la hora |
+
+Además, `JARVIS/Memoria.md` muestra lo que JARVIS recuerda de ti y se regenera sola en cada cambio. Es de solo
+lectura: para corregir algo, díselo a JARVIS o usa `/memoria`.
+
+**Reglas**
+- **Nunca borra ni sobrescribe notas.** Si al crear una nota el título ya existe, añade un sufijo: `Nota (2).md`.
+- **No sale de la bóveda**, ni siquiera siguiendo enlaces simbólicos, y no toca las carpetas ocultas (`.obsidian`).
+- **No escribe secretos**, igual que la memoria.
+
+Ejemplos: *"Apunta que mañana llamo al fontanero"*, *"Añade huevos a la lista de la compra"*,
+*"¿Qué tengo apuntado sobre la domótica?"*, *"Crea una nota con esta idea: …"*.
+
+**Montaje (una vez)**
+1. **Dataset**: en TrueNAS, crea el dataset `Data/obsidian` con el preset **SMB**.
+2. **Permisos**: en el editor de ACL del dataset (*Datasets → obsidian → Permissions → Edit*), añade el usuario
+   **`apps`** con permiso **Modify** y aplícalo de forma recursiva. JARVIS corre como `apps` (568).
+3. **Carpeta compartida**: en *Shares → SMB → Add*, crea una con ruta `/mnt/Data/obsidian` y nombre `obsidian`.
+   Tu usuario de TrueNAS debe tener acceso SMB.
+4. **En el PC**: en Windows, *Este equipo → Conectar a unidad de red* → `\\IP-DEL-NAS\obsidian` (por ejemplo, como
+   `O:`). Luego, en Obsidian, *Abrir carpeta como bóveda* → `O:\`.
+5. **YAML de la app**: añade el volumen `- /mnt/Data/obsidian:/vault` y `OBSIDIAN_VAULT: "/vault"`.
+6. **Comprobación**: en `/health` deben aparecer las tools `obsidian_*`, y en la bóveda la carpeta `JARVIS/`.
+
 ## Probar sin TrueNAS (desarrollo)
 
 ```bash
@@ -226,12 +261,14 @@ server/jarvis/
   pipeline.py   Assistant: STT → LLM ⇄ tools → TTS con tiempos por etapa
   main.py       API HTTP (/health, /api/voice, /api/chat, /api/speak, /api/reset, /api/memories) + HUD en /hud/
   web/          HUD (HTML/CSS/JS sin dependencias), servido por el NAS y por jarvis_hud.py
+  obsidian.py   bóveda de Obsidian: buscar, leer, crear, añadir, diario y nota de memoria
   memory/
     store.py      SQLite + FTS5: guardar, buscar, corregir, borrar; filtro de secretos
     retrieval.py  qué recuerdos se inyectan en cada turno (reglas) y por qué
   tools/
     registry.py   registro, validación, permisos, timeouts y auditoría
     memory.py     tools de memoria para el LLM
+    obsidian.py   tools de Obsidian para el LLM
     basic.py      fecha/hora y tiempo (Open-Meteo)
     pc.py         acciones que ejecuta el cliente del PC
     truenas.py    estado del TrueNAS (API oficial, solo lectura)

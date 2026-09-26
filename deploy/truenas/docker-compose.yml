@@ -10,6 +10,7 @@ services:
       - "8765:8765"
     volumes:
       - /mnt/TU_POOL/apps/jarvis:/data # <<< dataset para modelos y voces
+      # - /mnt/TU_POOL/obsidian:/vault # Obsidian (opcional): dataset de la boveda; ver README
     environment:
       API_TOKEN: "cambia-esto-por-un-token-largo" # <<< genera uno: openssl rand -hex 32
       ASSISTANT_NAME: "Jarvis"
@@ -35,6 +36,12 @@ services:
       # --- Memoria (Nivel 3): SQLite en el dataset (/data/memory.db) ---
       MEMORY_ENABLED: "true" # "false" = sin memoria (no lee ni guarda recuerdos)
       # MEMORY_MAX_ITEMS: "8" # recuerdos que se le pasan al LLM en cada turno
+
+      # --- Obsidian (opcional): descomenta tambien el volumen /vault de arriba ---
+      # OBSIDIAN_VAULT: "/vault"
+      # OBSIDIAN_INBOX: "Inbox" # carpeta de las notas nuevas
+      # OBSIDIAN_DAILY_FOLDER: "Diario" # notas del dia (AAAA-MM-DD.md)
+      # OBSIDIAN_MEMORY_NOTE: "true" # JARVIS/Memoria.md con lo que recuerda (solo lectura)
 
       # --- Herramientas (Nivel 2) ---
       TOOLS_ENABLED: "true" # interruptor general: "false" apaga todas las tools

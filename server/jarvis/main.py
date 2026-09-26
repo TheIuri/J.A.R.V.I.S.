@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from .config import Settings, load_settings
 from .llm import FallbackLLM, LLMError, OpenAICompatLLM
 from .memory import MemoryRejected, MemoryStore, RuleRetriever
+from .obsidian import Vault
 from .pipeline import Assistant, TurnResult
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
@@ -52,7 +53,14 @@ def build_assistant(settings: Settings) -> Assistant:
     tts = PiperTTS(settings.piper_voice, data / "piper") if settings.tts_provider == "piper" else NullTTS()
 
     store = MemoryStore(data / "memory.db") if settings.memory_enabled else None
-    tools = build_registry(settings, store)
+    vault = None
+    if settings.obsidian_vault:
+        vault = Vault(settings.obsidian_vault, settings.timezone, settings.obsidian_inbox, settings.obsidian_daily)
+        log.info("Boveda de Obsidian: %s (%d notas)", vault.root, len(vault.notes()))
+        if store and settings.obsidian_memory_note:
+            store.on_change(lambda: vault.export_memory(store))
+            vault.export_memory(store)
+    tools = build_registry(settings, store, vault)
     retriever = RuleRetriever(store, settings.memory_max_items) if store else None
 
     log.info("STT=%s | LLM=%s | TTS=%s | memoria=%s", stt.name, llm.name, tts.name, "si" if store else "no")
