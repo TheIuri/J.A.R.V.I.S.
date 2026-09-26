@@ -98,7 +98,7 @@ El LLM no ejecuta nada: **propone** una llamada a una tool registrada y el servi
 | Tool | Dónde se ejecuta | Qué hace |
 |---|---|---|
 | `get_datetime` | NAS | Fecha y hora (`TZ`) |
-| `get_weather` | NAS | Tiempo actual y previsión con Open-Meteo (gratis, sin clave). Ciudad por defecto: `HOME_CITY` |
+| `get_weather` | NAS | Tiempo actual y previsión con Open-Meteo (gratis, sin clave). Ciudad por defecto: `HOME_CITY` (o coordenadas fijas con `HOME_LATITUDE`/`HOME_LONGITUDE`) |
 | `truenas_status` | NAS | Sistema, pools, apps y alertas del TrueNAS, en solo lectura |
 | `pc_open_app` | PC | Abre una app de `client/apps.json` (y solo esas) |
 | `pc_open_url` | PC | Abre una web `http(s)` en el navegador |

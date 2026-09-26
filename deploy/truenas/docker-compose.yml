@@ -36,7 +36,10 @@ services:
       TOOLS_ENABLED: "true" # interruptor general: "false" apaga todas las tools
       # TOOLS_DISABLED: "pc_open_url,pc_timer" # desactivar tools concretas
       TZ: "Europe/Madrid"
-      HOME_CITY: "Madrid" # <<< tu ciudad, para el tiempo
+      HOME_CITY: "Madrid" # <<< tu ciudad, para el tiempo (mejor con acentos: "Badia del Vallès")
+      # Coordenadas de casa (opcional): el tiempo de HOME_CITY no depende del buscador de ciudades.
+      # HOME_LATITUDE: "40.4168"
+      # HOME_LONGITUDE: "-3.7038"
       # Estado del TrueNAS (opcional). Usuario con rol de solo lectura + API key; ver README.
       # TRUENAS_URL: "wss://IP-DEL-NAS/api/current"
       # TRUENAS_USER: "jarvis"
