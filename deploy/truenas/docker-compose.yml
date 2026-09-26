@@ -15,10 +15,10 @@ services:
       ASSISTANT_NAME: "Jarvis"
       LANGUAGE: "es"
 
-      # --- Oido (STT): Whisper local en la GTX 1650 ---
-      STT_PROVIDER: "local" # "groq" para usar Whisper en la nube
-      WHISPER_MODEL: "small" # sube a "medium" o "large-v3-turbo" si la VRAM lo permite
-      WHISPER_DEVICE: "auto" # usa CUDA si esta disponible, si no CPU
+      # --- Oido (STT) ---
+      STT_PROVIDER: "local" # "local" = Whisper en el NAS | "groq" = Whisper en la nube (gratis, mas rapido)
+      WHISPER_MODEL: "small" # en CPU: "base" (rapido) o "small" (mejor); con GPU puedes subir a "medium"
+      WHISPER_DEVICE: "cpu" # "auto" para usar la GPU si has activado el bloque de GPU de abajo
 
       # --- Cerebro (LLM): cloud gratuito, en orden de preferencia ---
       LLM_PROVIDERS: "groq,gemini"
@@ -34,8 +34,10 @@ services:
       resources:
         limits:
           memory: 6G
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+        # GPU NVIDIA (opcional): descomenta solo si `nvidia-smi` funciona en TrueNAS;
+        # si no, el contenedor no arranca.
+        # reservations:
+        #   devices:
+        #     - driver: nvidia
+        #       count: all
+        #       capabilities: [gpu]

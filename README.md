@@ -22,7 +22,7 @@ TrueNAS SCALE; el "cerebro" (LLM) usa capas gratuitas en la nube, con un modelo 
 ```
  PC Windows / Android (cliente)                 TrueNAS SCALE (jarvis-core, Docker)
  ┌───────────────────────────┐   HTTP + token   ┌─────────────────────────────────────────┐
- │ micro ── push-to-talk ────┼─────── WAV ─────▶│ STT  faster-whisper (GTX 1650, CUDA)     │
+ │ micro ── push-to-talk ────┼─────── WAV ─────▶│ STT  faster-whisper (CPU, o Groq)        │
  │                           │                  │  │                                       │
  │ altavoz / Echo (Bluetooth)│◀── texto + WAV ──┤ LLM  Groq → Gemini (gratis, con fallback)│──▶ cloud
  └───────────────────────────┘                  │  │                                       │
@@ -35,24 +35,28 @@ duplicados"). Cada proveedor está detrás de una interfaz y se elige por variab
 
 | Capa | Opciones | Por defecto |
 |---|---|---|
-| STT | `local` (faster-whisper), `groq` | `local`, modelo `small` en GPU |
+| STT | `local` (faster-whisper), `groq` | `local`, modelo `small` en CPU |
 | LLM | `groq`, `gemini`, `openrouter`, `ollama` (todos vía API compatible con OpenAI) | `groq,gemini` en cadena |
 | TTS | `piper`, `none` | `piper`, voz `es_ES-davefx-medium` |
 
 Cada respuesta incluye la latencia por etapa (`stt`, `llm`, `tts`, `total`), que también queda en los logs.
 
-## Notas sobre el hardware (i5-10400, 24 GB, GTX 1650)
+## Notas sobre el hardware (i5-10400, 24 GB, GTX 1050 Ti)
 
 - **RAM**: los 16 GB de "ZFS Cache" (ARC) no están ocupados de verdad; ZFS los libera cuando las apps los necesitan.
   El contenedor tiene un límite de 6 GB.
-- **GPU**: comprueba la VRAM real con `nvidia-smi` en la shell de TrueNAS. La GTX 1650 de sobremesa tiene 4 GB
-  (la "Ti" es de portátil). Con 4 GB caben Whisper `small`/`medium` holgadamente, o un LLM pequeño de ~3–4B con
-  Ollama, pero no los dos a la vez con comodidad. Por eso la GPU se dedica a Whisper y el LLM va a la nube.
+- **CPU primero**: el compose viene configurado para CPU (`WHISPER_DEVICE: "cpu"`). Whisper `small` en el i5-10400
+  tarda ~1–2 s por frase; `STT_PROVIDER: "groq"` es más rápido si no te importa que el audio salga a la nube.
+- **GPU (opcional)**: la GTX 1050 Ti (Pascal, 4 GB) solo sirve si `nvidia-smi` funciona en TrueNAS. Si `dmesg` dice
+  `already bound to vfio-pci`, la GPU está reservada para una VM (quítala de la VM y reinicia). Además, las
+  versiones recientes de TrueNAS usan los drivers NVIDIA *open*, que no soportan GPUs Pascal, así que puede que no
+  funcione aunque se libere. Si `nvidia-smi` la ve, descomenta el bloque de GPU del compose y pon
+  `WHISPER_DEVICE: "auto"`.
 - **Piper** va sobrado en la CPU.
 
 ## Instalación en TrueNAS
 
-1. **Drivers NVIDIA**: *Apps → Configuration → Settings → Install NVIDIA Drivers*.
+1. **GPU (opcional)**: ver notas de hardware; no hace falta para empezar.
 2. **Dataset**: crea uno para los modelos, p. ej. `TU_POOL/apps/jarvis`, con propietario el usuario `apps` (568).
 3. **API keys gratuitas**:
    - Groq: <https://console.groq.com/keys>
