@@ -117,6 +117,59 @@ def test_weather_uses_default_city_and_formats():
     assert "Hoy: lluvia débil, 18–28 °C, 40% prob. de lluvia." in out
 
 
+FORECAST = {
+    "current": {"temperature_2m": 20.0, "apparent_temperature": 20.0, "weather_code": 0, "wind_speed_10m": 5.0},
+    "daily": {"time": ["2026-09-26"], "weather_code": [0], "temperature_2m_min": [15.0],
+              "temperature_2m_max": [25.0], "precipitation_probability_max": [0]},
+}
+
+
+def test_geocode_handles_region_suffix_and_missing_accents():
+    searched = []
+
+    def handler(request):
+        if "geocoding" not in request.url.host:
+            return httpx.Response(200, json=FORECAST)
+        name = request.url.params["name"]
+        searched.append(name)
+        if name != "Badia":  # el buscador no entiende "Ciudad, Provincia" ni el nombre sin acento
+            return httpx.Response(200, json={})
+        return httpx.Response(200, json={"results": [
+            {"name": "Badia", "country": "Italia", "admin1": "Toscana", "latitude": 1, "longitude": 1},
+            {"name": "Badia del Vallès", "country": "España", "admin2": "Barcelona", "latitude": 41.5, "longitude": 2.1},
+        ]})
+
+    api = OpenMeteo(httpx.Client(transport=httpx.MockTransport(handler)))
+    out = weather_tool("Badia del Valles, Barcelona", api).fn(ToolContext())
+    assert out.startswith("Badia del Vallès (España) ahora")
+    assert searched == ["Badia del Valles, Barcelona", "Badia del Valles", "Badia"]
+
+
+def test_home_coordinates_skip_geocoding():
+    def handler(request):
+        assert "geocoding" not in request.url.host, "no deberia buscar la ciudad"
+        assert request.url.params["latitude"] == "41.508"
+        return httpx.Response(200, json=FORECAST)
+
+    api = OpenMeteo(httpx.Client(transport=httpx.MockTransport(handler)))
+    tool = weather_tool("Badia del Vallès", api, home_coords=(41.508, 2.117))
+    assert tool.fn(ToolContext()).startswith("Badia del Vallès ahora: despejado, 20 °C")
+    assert tool.fn(ToolContext(), city="badia del valles").startswith("Badia del Vallès ahora")
+
+
+def test_home_coordinates_config(monkeypatch):
+    from jarvis import config
+
+    monkeypatch.setenv("API_TOKEN", "x")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setenv("HOME_LATITUDE", "41,508")
+    monkeypatch.setenv("HOME_LONGITUDE", "2.117")
+    assert config.load_settings().home_coords == (41.508, 2.117)
+    monkeypatch.setenv("HOME_LONGITUDE", "este")
+    with pytest.raises(RuntimeError, match="HOME_LATITUDE"):
+        config.load_settings()
+
+
 def test_weather_unknown_city_is_tool_error():
     api = OpenMeteo(httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))))
     reg = registry(weather_tool("", api))

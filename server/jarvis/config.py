@@ -81,6 +81,7 @@ class Settings:
     tools_disabled: frozenset[str] = frozenset()
     timezone: str = "Europe/Madrid"
     home_city: str = ""
+    home_coords: tuple[float, float] | None = None  # HOME_LATITUDE/HOME_LONGITUDE: evita buscar la ciudad
     truenas_url: str = ""  # p. ej. wss://192.168.1.10/api/current
     truenas_user: str = ""
     truenas_api_key: str = ""
@@ -89,6 +90,15 @@ class Settings:
     @property
     def groq_api_key(self) -> str:
         return _env("GROQ_API_KEY")
+
+
+def _coords(lat: str, lon: str) -> tuple[float, float] | None:
+    if not lat and not lon:
+        return None
+    try:
+        return float(lat.replace(",", ".")), float(lon.replace(",", "."))
+    except ValueError as exc:
+        raise RuntimeError("HOME_LATITUDE y HOME_LONGITUDE deben ser numeros, p. ej. 41.508 y 2.117") from exc
 
 
 def _llm_provider(name: str) -> LLMProviderConfig:
@@ -136,6 +146,7 @@ def load_settings() -> Settings:
         tools_disabled=frozenset(n.strip() for n in _env("TOOLS_DISABLED").split(",") if n.strip()),
         timezone=_env("TZ", "Europe/Madrid"),
         home_city=_env("HOME_CITY"),
+        home_coords=_coords(_env("HOME_LATITUDE"), _env("HOME_LONGITUDE")),
         truenas_url=_env("TRUENAS_URL"),
         truenas_user=_env("TRUENAS_USER"),
         truenas_api_key=_env("TRUENAS_API_KEY"),

@@ -21,7 +21,7 @@ def build_registry(settings: Settings) -> ToolRegistry | None:
         return None
     registry = ToolRegistry(disabled=set(settings.tools_disabled))
     registry.register(datetime_tool(settings.timezone))
-    registry.register(weather_tool(settings.home_city))
+    registry.register(weather_tool(settings.home_city, home_coords=settings.home_coords))
     for tool in pc_tools():
         registry.register(tool)
     if settings.truenas_url and settings.truenas_api_key:
