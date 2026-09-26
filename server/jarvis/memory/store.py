@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
+
+log = logging.getLogger(__name__)
 
 TYPES = ("hecho", "preferencia", "proyecto", "decision", "evento")
 MAX_CONTENT = 500
@@ -63,6 +67,7 @@ class MemoryStore:
         self._db.row_factory = sqlite3.Row
         self._lock = threading.Lock()
         self.fts = True
+        self._listeners: list[Callable[[], None]] = []
         with self._lock, self._db:
             self._db.execute(
                 """CREATE TABLE IF NOT EXISTS memories (
@@ -96,6 +101,19 @@ class MemoryStore:
             except sqlite3.OperationalError:
                 self.fts = False  # SQLite sin FTS5: se busca con LIKE
 
+    # --- avisos de cambio ------------------------------------------------------
+
+    def on_change(self, listener: Callable[[], None]) -> None:
+        """Se llama tras cada alta/cambio/borrado (p. ej. para exportar la memoria a Obsidian)."""
+        self._listeners.append(listener)
+
+    def _changed(self) -> None:
+        for listener in self._listeners:
+            try:
+                listener()
+            except Exception:  # un exportador roto no debe impedir guardar recuerdos
+                log.exception("fallo notificando un cambio de memoria")
+
     # --- escritura -------------------------------------------------------------
 
     def _check(self, content: str, type_: str) -> str:
@@ -126,6 +144,7 @@ class MemoryStore:
                     " VALUES (?, ?, ?, ?, ?, ?)",
                     (type_, content, now, now, source, max(0.0, min(1.0, confidence))),
                 ).lastrowid
+        self._changed()
         return self.get(mid)
 
     def update(self, memory_id: int, content: str, type_: str | None = None) -> Memory:
@@ -136,12 +155,14 @@ class MemoryStore:
                 "UPDATE memories SET content = ?, type = ?, updated_at = ? WHERE id = ?",
                 (content, type_ or current.type, _now(), memory_id),
             )
+        self._changed()
         return self.get(memory_id)
 
     def delete(self, memory_id: int) -> Memory:
         memory = self.get(memory_id)
         with self._lock, self._db:
             self._db.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+        self._changed()
         return memory
 
     # --- lectura ---------------------------------------------------------------

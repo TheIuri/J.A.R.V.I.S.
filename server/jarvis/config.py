@@ -80,6 +80,12 @@ class Settings:
     memory_enabled: bool = True
     memory_max_items: int = 8  # recuerdos inyectados como maximo antes de cada respuesta
 
+    # Obsidian: ruta de la boveda dentro del contenedor ("" = desactivado)
+    obsidian_vault: str = ""
+    obsidian_inbox: str = "Inbox"
+    obsidian_daily: str = "Diario"
+    obsidian_memory_note: bool = True  # JARVIS/Memoria.md con lo que recuerda
+
     # Nivel 2: tools
     tools_enabled: bool = True  # interruptor general
     tools_disabled: frozenset[str] = frozenset()
@@ -148,6 +154,10 @@ def load_settings() -> Settings:
         history_turns=_env_int("HISTORY_TURNS", 6),
         memory_enabled=_env_bool("MEMORY_ENABLED", True),
         memory_max_items=_env_int("MEMORY_MAX_ITEMS", 8),
+        obsidian_vault=_env("OBSIDIAN_VAULT"),
+        obsidian_inbox=_env("OBSIDIAN_INBOX", "Inbox"),
+        obsidian_daily=_env("OBSIDIAN_DAILY_FOLDER", "Diario"),
+        obsidian_memory_note=_env_bool("OBSIDIAN_MEMORY_NOTE", True),
         tools_enabled=_env_bool("TOOLS_ENABLED", True),
         tools_disabled=frozenset(n.strip() for n in _env("TOOLS_DISABLED").split(",") if n.strip()),
         timezone=_env("TZ", "Europe/Madrid"),

@@ -6,8 +6,10 @@ import logging
 
 from ..config import Settings
 from ..memory import MemoryStore
+from ..obsidian import Vault
 from .basic import datetime_tool, weather_tool
 from .memory import memory_tools
+from .obsidian import obsidian_tools
 from .pc import pc_tools
 from .registry import Tool, ToolContext, ToolError, ToolRegistry
 from .truenas import truenas_tool
@@ -17,7 +19,9 @@ log = logging.getLogger(__name__)
 __all__ = ["Tool", "ToolContext", "ToolError", "ToolRegistry", "build_registry"]
 
 
-def build_registry(settings: Settings, memory: MemoryStore | None = None) -> ToolRegistry | None:
+def build_registry(
+    settings: Settings, memory: MemoryStore | None = None, vault: Vault | None = None
+) -> ToolRegistry | None:
     if not settings.tools_enabled:
         log.info("Tools desactivadas (TOOLS_ENABLED=false)")
         return None
@@ -27,6 +31,8 @@ def build_registry(settings: Settings, memory: MemoryStore | None = None) -> Too
     for tool in pc_tools():
         registry.register(tool)
     for tool in memory_tools(memory) if memory else []:
+        registry.register(tool)
+    for tool in obsidian_tools(vault) if vault else []:
         registry.register(tool)
     if settings.truenas_url and settings.truenas_api_key:
         if not settings.truenas_url.startswith("wss://"):
