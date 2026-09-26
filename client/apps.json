@@ -1,0 +1,9 @@
+{
+  "_comentario": "Apps que JARVIS puede abrir en este PC: nombre hablado -> programa, ruta o URI. Solo estas.",
+  "navegador": "https://www.google.com",
+  "spotify": "spotify:",
+  "calculadora": "calc",
+  "bloc de notas": "notepad",
+  "explorador": "explorer",
+  "configuracion": "ms-settings:"
+}

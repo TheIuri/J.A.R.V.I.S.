@@ -21,9 +21,9 @@ services:
       WHISPER_DEVICE: "cpu" # "auto" para usar la GPU si has activado el bloque de GPU de abajo
 
       # --- Cerebro (LLM): cloud gratuito, en orden de preferencia ---
-      LLM_PROVIDERS: "groq,gemini"
+      LLM_PROVIDERS: "groq" # "groq,gemini" para tener reserva (necesita GEMINI_API_KEY)
       GROQ_API_KEY: "" # <<< https://console.groq.com/keys
-      GEMINI_API_KEY: "" # <<< https://aistudio.google.com/apikey (si lo dejas vacio, quitalo de LLM_PROVIDERS)
+      # GEMINI_API_KEY: "" # https://aistudio.google.com/apikey
       # GROQ_MODEL: "openai/gpt-oss-120b" # si Groq lo retira, elige otro en console.groq.com/docs/models
       # GROQ_REASONING_EFFORT: "low" # pon "" si eliges un modelo que no razona
       # GEMINI_MODEL: "gemini-2.5-flash"
@@ -31,6 +31,16 @@ services:
       # --- Voz (TTS): Piper local en CPU ---
       TTS_PROVIDER: "piper"
       PIPER_VOICE: "es_ES-davefx-medium"
+
+      # --- Herramientas (Nivel 2) ---
+      TOOLS_ENABLED: "true" # interruptor general: "false" apaga todas las tools
+      # TOOLS_DISABLED: "pc_open_url,pc_timer" # desactivar tools concretas
+      TZ: "Europe/Madrid"
+      HOME_CITY: "Madrid" # <<< tu ciudad, para el tiempo
+      # Estado del TrueNAS (opcional). Usuario con rol de solo lectura + API key; ver README.
+      # TRUENAS_URL: "wss://IP-DEL-NAS/api/current"
+      # TRUENAS_USER: "jarvis"
+      # TRUENAS_API_KEY: ""
     deploy:
       resources:
         limits:

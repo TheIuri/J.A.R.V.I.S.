@@ -40,6 +40,11 @@ def _env_int(name: str, default: int) -> int:
     return int(value) if value else default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = _env(name).lower()
+    return value in ("1", "true", "yes", "si", "on") if value else default
+
+
 @dataclass(frozen=True)
 class LLMProviderConfig:
     name: str
@@ -70,6 +75,16 @@ class Settings:
     piper_voice: str = "es_ES-davefx-medium"
 
     history_turns: int = 6
+
+    # Nivel 2: tools
+    tools_enabled: bool = True  # interruptor general
+    tools_disabled: frozenset[str] = frozenset()
+    timezone: str = "Europe/Madrid"
+    home_city: str = ""
+    truenas_url: str = ""  # p. ej. wss://192.168.1.10/api/current
+    truenas_user: str = ""
+    truenas_api_key: str = ""
+    truenas_verify_ssl: bool = False  # TrueNAS usa un certificado autofirmado por defecto
 
     @property
     def groq_api_key(self) -> str:
@@ -117,4 +132,12 @@ def load_settings() -> Settings:
         tts_provider=_env("TTS_PROVIDER", "piper").lower(),
         piper_voice=_env("PIPER_VOICE", "es_ES-davefx-medium"),
         history_turns=_env_int("HISTORY_TURNS", 6),
+        tools_enabled=_env_bool("TOOLS_ENABLED", True),
+        tools_disabled=frozenset(n.strip() for n in _env("TOOLS_DISABLED").split(",") if n.strip()),
+        timezone=_env("TZ", "Europe/Madrid"),
+        home_city=_env("HOME_CITY"),
+        truenas_url=_env("TRUENAS_URL"),
+        truenas_user=_env("TRUENAS_USER"),
+        truenas_api_key=_env("TRUENAS_API_KEY"),
+        truenas_verify_ssl=_env_bool("TRUENAS_VERIFY_SSL", False),
     )
