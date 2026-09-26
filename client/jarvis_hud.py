@@ -27,7 +27,8 @@ import httpx
 
 from pc_actions import PCActions, load_apps
 
-STATIC_DIR = Path(__file__).with_name("hud")
+# La interfaz vive en el servidor (tambien la sirve el NAS para el movil); aqui se usa la copia del repo.
+STATIC_DIR = Path(__file__).resolve().parent.parent / "server" / "jarvis" / "web"
 CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
 
 # Rutas del servidor que el HUD puede usar (nada mas se reenvia).
@@ -128,7 +129,7 @@ def make_handler(hud: Hud, port: int):
             if static.suffix in CONTENT_TYPES and static.parent == STATIC_DIR and static.is_file():
                 return self._send(200, static.read_bytes(), CONTENT_TYPES[static.suffix])
             if path == "/hud/config":
-                return self._json(200, {"pc_apps": hud.pc_apps})
+                return self._json(200, {"mode": "local", "pc_apps": hud.pc_apps})
             if path == "/hud/events":
                 return self._json(200, {"events": hud.take_events()})
             if path in PROXY_GET:

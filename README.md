@@ -171,8 +171,38 @@ py jarvis_hud.py        # abre http://localhost:8766 (usa JARVIS_SERVER y JARVIS
   - Las acciones del PC se ejecutan aquí, con `apps.json`. Los temporizadores avisan por voz también en el HUD.
   - Solo escucha en `127.0.0.1` y rechaza peticiones de otras webs (comprueba `Host` y `Origin`).
 - **Micrófono**: el navegador pide permiso la primera vez. Funciona porque `localhost` cuenta como sitio seguro.
-  Para usarlo desde el móvil hará falta HTTPS, que es el siguiente paso.
 - **Opciones**: `--no-actions` (sin acciones en el PC), `--port 8766` y `--no-browser`.
+
+## HUD en el móvil (HTTPS con Tailscale)
+
+El NAS también sirve la interfaz en `/hud/`. Para que el micrófono del móvil funcione hace falta HTTPS, y lo pone
+Tailscale: un contenedor dentro de la app de JARVIS crea un nodo **propio** llamado `jarvis` en tu tailnet y publica
+`https://jarvis.<tu-tailnet>.ts.net` con un certificado válido. Solo lo ven tus dispositivos de Tailscale; no se abre
+ningún puerto a internet y funciona también fuera de casa.
+
+**No interfiere con otros Tailscale del NAS** (por ejemplo, el de otras apps):
+- tiene su propio estado (`<dataset>/tailscale`) y su propio nombre e IP;
+- usa el modo *userspace*, así que no crea interfaces ni toca las rutas del host;
+- no anuncia subredes ni hace de *exit node*;
+- el puerto 443 es el de su propio nodo, no el del NAS.
+
+**Pasos**
+1. **Ajustes de la tailnet** (en https://login.tailscale.com/admin/dns): activa **MagicDNS** y **HTTPS Certificates**
+   si no lo estaban. Esto solo permite pedir certificados y no cambia tus otros nodos. Ten en cuenta que el nombre
+   `jarvis.<tailnet>.ts.net` aparecerá en los registros públicos de certificados (Certificate Transparency).
+2. **Clave de acceso**: en *Settings → Keys → Generate auth key*, genera una de un solo uso. Solo se usa en el primer
+   arranque; después el nodo recuerda su identidad en `<dataset>/tailscale`.
+3. **Carpeta de estado**: en la shell del NAS, `sudo mkdir -p /mnt/Data/jarvis/tailscale`.
+4. **YAML de la app**: en TrueNAS, edita la app, descomenta el servicio `tailscale:` y el bloque `configs:` del final,
+   y pon tu `TS_AUTHKEY` y la ruta. Después guarda.
+5. **Comprobación**: en el panel de Tailscale debe aparecer la máquina `jarvis`. Si algo falla:
+   `sudo docker logs jarvis-tailscale`.
+6. **En el móvil**: instala la app de Tailscale con la misma cuenta y abre `https://jarvis.<tu-tailnet>.ts.net`.
+   Pedirá el token (`API_TOKEN`) una vez. Mantén pulsada la esfera para hablar. Con *Añadir a pantalla de inicio*
+   queda como una app.
+
+Si usas **ACLs** personalizadas en Tailscale, permite el acceso de tus dispositivos al nodo `jarvis` (puerto 443).
+Desde el móvil no hay acciones de PC (abrir apps, volumen); esas siguen en `jarvis_hud.py`.
 
 ## Probar sin TrueNAS (desarrollo)
 
@@ -194,7 +224,8 @@ server/jarvis/
   llm.py        OpenAICompatLLM + FallbackLLM (con tool calling)
   tts.py        PiperTTS (descarga la voz automáticamente), NullTTS
   pipeline.py   Assistant: STT → LLM ⇄ tools → TTS con tiempos por etapa
-  main.py       API HTTP (/health, /api/voice, /api/chat, /api/speak, /api/reset)
+  main.py       API HTTP (/health, /api/voice, /api/chat, /api/speak, /api/reset, /api/memories) + HUD en /hud/
+  web/          HUD (HTML/CSS/JS sin dependencias), servido por el NAS y por jarvis_hud.py
   memory/
     store.py      SQLite + FTS5: guardar, buscar, corregir, borrar; filtro de secretos
     retrieval.py  qué recuerdos se inyectan en cada turno (reglas) y por qué
@@ -206,8 +237,7 @@ server/jarvis/
     truenas.py    estado del TrueNAS (API oficial, solo lectura)
 client/
   jarvis_client.py   push-to-talk para PC (consola)
-  jarvis_hud.py      HUD web local (proxy al NAS + acciones del PC)
-  hud/               página del HUD (HTML/CSS/JS sin dependencias)
+  jarvis_hud.py      HUD web local (proxy al NAS + acciones del PC; usa server/jarvis/web)
   pc_actions.py      ejecuta las acciones permitidas en Windows
   apps.json          apps que JARVIS puede abrir
 deploy/truenas/           docker-compose para "Install via YAML"

@@ -2,7 +2,8 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#05070d">
   <title>J.A.R.V.I.S.</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="hud.css">
@@ -21,7 +22,7 @@
       <p id="subtitle" aria-live="polite"></p>
       <p id="you" class="dim"></p>
       <p id="state" class="mono">EN ESPERA</p>
-      <p class="hint mono">MANTÉN PULSADO EL NÚCLEO O LA BARRA ESPACIADORA</p>
+      <p id="hint" class="hint mono">MANTÉN PULSADO EL NÚCLEO O LA BARRA ESPACIADORA</p>
       <form id="ask" autocomplete="off">
         <input id="text" placeholder="…o escribe aquí y pulsa Enter" aria-label="Mensaje">
       </form>
@@ -42,6 +43,16 @@
       <div id="memory-list"></div>
     </aside>
   </main>
+
+  <div id="login" hidden>
+    <form id="login-form" autocomplete="off">
+      <p class="mono">ACCESO</p>
+      <p class="dim">Introduce el token de JARVIS (API_TOKEN). Se guardará solo en este dispositivo.</p>
+      <input id="token" type="password" placeholder="Token" aria-label="Token">
+      <p id="login-msg" class="error-msg"></p>
+      <button type="submit">ENTRAR</button>
+    </form>
+  </div>
 
   <script src="hud.js"></script>
 </body>

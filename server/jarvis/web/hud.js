@@ -1,5 +1,8 @@
 // HUD de JARVIS: esfera animada, push-to-talk y panel de sesión.
-// Habla con jarvis_hud.py (mismo origen), que añade el token y ejecuta las acciones del PC.
+// Dos modos (lo dice /hud/config):
+//  - "local": servido por jarvis_hud.py en el PC, que añade el token y ejecuta las acciones del PC.
+//  - "server": servido por el NAS (p. ej. en el móvil via HTTPS de Tailscale). El token se pide
+//    una vez y se guarda en este dispositivo; no hay acciones de PC.
 "use strict";
 
 const SESSION = "hud";
@@ -25,7 +28,9 @@ const $ = (id) => document.getElementById(id);
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 let state = "idle";
+let mode = "local";
 let pcApps = null;
+const TOKEN_KEY = "jarvis_token";
 let audioCtx = null;
 let micAnalyser = null; // solo mide: nunca va a los altavoces
 let outAnalyser = null; // voz de JARVIS -> altavoces
@@ -33,6 +38,58 @@ let micStream = null;
 let recorder = null; // {node, source, chunks, startedAt}
 let playing = Promise.resolve();
 const stats = { start: Date.now(), count: 0, peak: 0 };
+
+// --- API y token ---------------------------------------------------------------
+
+function getToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function setToken(token) {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* sin almacenamiento: habrá que escribirlo cada vez */
+  }
+}
+
+async function api(path, init = {}) {
+  const headers = new Headers(init.headers || {});
+  const token = getToken();
+  if (mode === "server" && token) headers.set("Authorization", `Bearer ${token}`);
+  const resp = await fetch(path, { ...init, headers });
+  if (resp.status === 401 && mode === "server") {
+    setToken("");
+    askToken("Token incorrecto o caducado.");
+  }
+  return resp;
+}
+
+function askToken(message = "") {
+  $("login-msg").textContent = message;
+  $("login").hidden = false;
+  $("token").focus();
+}
+
+$("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const token = $("token").value.trim();
+  if (!token) return;
+  setToken(token);
+  $("token").value = "";
+  // Comprobación inofensiva: reiniciar la conversación del HUD exige token.
+  const resp = await api("/api/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session: SESSION }),
+  });
+  if (resp.ok) $("login").hidden = true;
+});
 
 // --- estado -----------------------------------------------------------------
 
@@ -179,7 +236,7 @@ async function ask(path, init) {
   setState("thinking");
   let body;
   try {
-    const resp = await fetch(path, init);
+    const resp = await api(path, init);
     body = await resp.json();
     if (!resp.ok) throw new Error(body.detail || `HTTP ${resp.status}`);
   } catch (err) {
@@ -245,7 +302,7 @@ async function showMemories() {
   const list = $("memory-list");
   list.textContent = "Cargando…";
   try {
-    const resp = await fetch("/api/memories");
+    const resp = await api("/api/memories");
     const body = await resp.json();
     if (!resp.ok) throw new Error(body.detail);
     list.textContent = body.memories.length ? "" : "Sin recuerdos todavía.";
@@ -258,7 +315,7 @@ async function showMemories() {
       const del = document.createElement("button");
       del.textContent = "OLVIDAR";
       del.onclick = async () => {
-        await fetch(`/api/memories/${m.id}`, { method: "DELETE" });
+        await api(`/api/memories/${m.id}`, { method: "DELETE" });
         showMemories();
       };
       row.append(text, del);
@@ -270,7 +327,7 @@ async function showMemories() {
 }
 
 async function resetConversation() {
-  await fetch("/api/reset", {
+  await api("/api/reset", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session: SESSION }),
@@ -440,10 +497,17 @@ async function init() {
   tick();
   requestAnimationFrame(frame);
   try {
-    pcApps = (await (await fetch("/hud/config")).json()).pc_apps;
+    ({ mode, pc_apps: pcApps } = await (await fetch("/hud/config")).json());
   } catch {
     pcApps = null;
   }
-  pollEvents();
+  if (mode === "server") {
+    $("hint").textContent = matchMedia("(pointer: coarse)").matches
+      ? "MANTÉN PULSADO EL NÚCLEO PARA HABLAR"
+      : "MANTÉN PULSADO EL NÚCLEO O LA BARRA ESPACIADORA";
+    if (!getToken()) askToken();
+  } else {
+    pollEvents(); // avisos de temporizador del PC (solo en modo local)
+  }
 }
 init();

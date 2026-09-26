@@ -166,3 +166,14 @@ def test_settings_require_token_and_keys(monkeypatch):
 def test_piper_voice_url_and_cleanup():
     assert _voice_url("es_ES-davefx-medium", ".onnx").endswith("es/es_ES/davefx/medium/es_ES-davefx-medium.onnx")
     assert clean_for_speech("**Hola**,  `señor`") == "Hola, señor"
+
+
+def test_hud_is_served_without_token_but_api_still_needs_it():
+    client = TestClient(create_app(make_assistant(), api_token="secreto"))
+    assert client.get("/", follow_redirects=False).headers["location"] == "/hud/"
+    page = client.get("/hud/")
+    assert page.status_code == 200 and "J.A.R.V.I.S." in page.text
+    assert client.get("/hud/hud.js").status_code == 200
+    assert client.get("/hud/config").json() == {"mode": "server", "pc_apps": None}
+    assert client.get("/hud/../jarvis/config.py").status_code == 404
+    assert client.post("/api/chat", json={"text": "hola"}).status_code == 401

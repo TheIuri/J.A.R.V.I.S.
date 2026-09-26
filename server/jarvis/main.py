@@ -9,6 +9,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -26,6 +28,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)  # evita loguear URLs firma
 log = logging.getLogger("jarvis")
 
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
+WEB_DIR = Path(__file__).with_name("web")  # HUD: lo usan el proxy del PC y el navegador del movil
 
 
 def build_assistant(settings: Settings) -> Assistant:
@@ -183,11 +186,25 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         log.info("recuerdo %d borrado a mano: %s", m.id, m.content)
         return {"deleted": m.__dict__}
 
+    # --- HUD servido por el propio servidor (movil, via HTTPS de Tailscale) -------------
+    # Los ficheros son publicos (no tienen secretos); la API sigue exigiendo el token,
+    # que el navegador pide una vez y guarda en ese dispositivo.
+
+    @app.get("/", include_in_schema=False)
+    @app.get("/hud", include_in_schema=False)
+    def hud_redirect() -> RedirectResponse:
+        return RedirectResponse("/hud/")
+
+    @app.get("/hud/config", include_in_schema=False)
+    def hud_config() -> dict:
+        return {"mode": "server", "pc_apps": None}
+
     @app.post("/api/reset", dependencies=[Depends(require_token)])
     def reset(req: SessionRequest) -> dict:
         state["assistant"].reset(req.session)
         return {"status": "ok"}
 
+    app.mount("/hud", StaticFiles(directory=WEB_DIR, html=True), name="hud")
     return app
 
 

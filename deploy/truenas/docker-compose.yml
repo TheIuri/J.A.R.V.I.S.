@@ -59,3 +59,31 @@ services:
         #     - driver: nvidia
         #       count: all
         #       capabilities: [gpu]
+
+  # --- Acceso desde el movil con HTTPS (opcional) ---------------------------------------
+  # Nodo de Tailscale PROPIO de JARVIS: aparece como "jarvis" en tu tailnet y publica
+  # https://jarvis.<tu-tailnet>.ts.net -> jarvis-core:8765. Es independiente de cualquier
+  # otro Tailscale del NAS (estado propio, modo userspace: no toca la red ni las rutas del host).
+  # Para activarlo descomenta este bloque Y el bloque "configs" del final. Ver README.
+  # tailscale:
+  #   image: tailscale/tailscale:latest
+  #   container_name: jarvis-tailscale
+  #   hostname: jarvis
+  #   restart: unless-stopped
+  #   environment:
+  #     TS_AUTHKEY: "tskey-auth-..." # <<< clave de un solo uso (solo hace falta el primer arranque)
+  #     TS_HOSTNAME: "jarvis"
+  #     TS_STATE_DIR: "/var/lib/tailscale"
+  #     TS_USERSPACE: "true"
+  #     TS_SERVE_CONFIG: "/config/serve.json"
+  #   volumes:
+  #     - /mnt/TU_POOL/apps/jarvis/tailscale:/var/lib/tailscale # <<< misma ruta del dataset + /tailscale
+  #   configs:
+  #     - source: tailscale-serve
+  #       target: /config/serve.json
+
+# configs:
+#   tailscale-serve:
+#     content: |
+#       {"TCP": {"443": {"HTTPS": true}},
+#        "Web": {"$${TS_CERT_DOMAIN}:443": {"Handlers": {"/": {"Proxy": "http://jarvis-core:8765"}}}}}
