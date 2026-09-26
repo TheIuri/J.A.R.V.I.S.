@@ -12,7 +12,7 @@ TrueNAS SCALE; el "cerebro" (LLM) usa capas gratuitas en la nube, con un modelo 
 |---|---|---|
 | 1 · Voz | micro → STT → LLM → TTS → altavoz, push-to-talk | ✅ |
 | 2 · Tools | registro de herramientas tipadas + permisos | ✅ |
-| 3 · Memoria | SQLite (+ Qdrant cuando haga falta) | pendiente |
+| 3 · Memoria | SQLite (+ Qdrant cuando haga falta) | ✅ |
 | 4 · Sentidos | wake word, cámara bajo demanda, event bus | pendiente |
 | 5 · Agentes | orquestador + especialistas | pendiente |
 | 6 · OS personal | gateway, clientes móvil/escritorio | pendiente |
@@ -131,6 +131,29 @@ Ejemplos: *"¿Qué tiempo hará mañana?"*, *"Pon el volumen al 30"*, *"Abre Spo
    - `TRUENAS_API_KEY`
    - `TRUENAS_VERIFY_SSL` queda en `false` por defecto, porque TrueNAS usa un certificado autofirmado.
 
+## Nivel 3: memoria
+
+JARVIS recuerda entre sesiones y reinicios. SQLite (`/data/memory.db` en el dataset) es la fuente de verdad.
+Cada recuerdo guarda tipo (`hecho`, `preferencia`, `proyecto`, `decision`, `evento`), contenido, fechas,
+origen y confianza.
+
+- **Qué guarda**: lo que le pides que recuerde, o datos duraderos que cambian respuestas futuras. No guarda charla
+  trivial ni duplicados.
+- **Qué nunca guarda**: contraseñas, claves, tokens, tarjetas ni IBAN. Se rechazan aunque el LLM lo intente.
+- **Qué usa en cada respuesta**: como máximo `MEMORY_MAX_ITEMS` (8) recuerdos. Las preferencias entran siempre;
+  el resto, por palabras en común con lo que dices (búsqueda FTS5, sin distinguir acentos). El log `jarvis.memory`
+  dice por qué eligió cada recuerdo.
+- **Cómo lo gestiona JARVIS**: con las tools `memory_save`, `memory_search`, `memory_update` y `memory_forget`.
+  "Olvida lo del perro" borra de verdad.
+- **Cómo lo gestionas tú**: en el cliente, `/memoria` lista los recuerdos y `/olvida N` borra uno. También por API:
+  `GET /api/memories` y `DELETE /api/memories/{id}`.
+- **Cómo apagarla**: `MEMORY_ENABLED=false`. Para empezar de cero, borra `memory.db` del dataset.
+- **Siguiente paso** (cuando haya muchos recuerdos o notas largas): búsqueda semántica con embeddings y Qdrant,
+  detrás de la misma interfaz `Retriever`.
+
+Ejemplos: *"Recuerda que mi perro se llama Toby"*, *"Prefiero que me llames Ori"*, *"¿Cómo se llama mi perro?"*,
+*"Olvida lo del perro"*.
+
 ## Probar sin TrueNAS (desarrollo)
 
 ```bash
@@ -152,8 +175,12 @@ server/jarvis/
   tts.py        PiperTTS (descarga la voz automáticamente), NullTTS
   pipeline.py   Assistant: STT → LLM ⇄ tools → TTS con tiempos por etapa
   main.py       API HTTP (/health, /api/voice, /api/chat, /api/speak, /api/reset)
+  memory/
+    store.py      SQLite + FTS5: guardar, buscar, corregir, borrar; filtro de secretos
+    retrieval.py  qué recuerdos se inyectan en cada turno (reglas) y por qué
   tools/
     registry.py   registro, validación, permisos, timeouts y auditoría
+    memory.py     tools de memoria para el LLM
     basic.py      fecha/hora y tiempo (Open-Meteo)
     pc.py         acciones que ejecuta el cliente del PC
     truenas.py    estado del TrueNAS (API oficial, solo lectura)
@@ -173,6 +200,12 @@ Nivel 1:
 - [x] Existe una forma de apagarlo (parar la app en TrueNAS).
 
 Nivel 2:
-- [ ] Cada tool funciona sin LLM (tests en `server/tests/test_tools.py`).
-- [ ] Cada acción tiene permisos claros (lista permitida, `TOOLS_DISABLED`, `--no-actions`).
-- [ ] Cada llamada queda en el log de auditoría.
+- [x] Cada tool funciona sin LLM (tests en `server/tests/test_tools.py`).
+- [x] Cada acción tiene permisos claros (lista permitida, `TOOLS_DISABLED`, `--no-actions`).
+- [x] Cada llamada queda en el log de auditoría.
+
+Nivel 3:
+- [ ] Recuerda algo dicho en una sesión anterior (y tras reiniciar la app).
+- [ ] "Olvida X" lo borra de verdad (`/memoria` ya no lo muestra).
+- [ ] Se niega a guardar una contraseña.
+- [ ] El log `jarvis.memory` explica por qué usó cada recuerdo.

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .llm import FallbackLLM
+from .memory import Retriever, as_prompt
 from .stt import STT
 from .tools import ToolContext, ToolRegistry
 from .tts import TTS
@@ -51,11 +52,13 @@ class Assistant:
         system_prompt: str,
         history_turns: int = 6,
         tools: ToolRegistry | None = None,
+        memory: Retriever | None = None,
     ):
         self.stt = stt
         self.llm = llm
         self.tts = tts
         self.tools = tools
+        self.memory = memory
         self.system_prompt = system_prompt
         # Contexto de la conversacion en curso, solo en RAM (la memoria persistente es el Nivel 3).
         self._history: dict[str, deque[dict[str, str]]] = defaultdict(lambda: deque(maxlen=history_turns * 2))
@@ -94,8 +97,12 @@ class Assistant:
         self, text: str, session: str, speak: bool, timings: dict[str, int], ctx: ToolContext
     ) -> TurnResult:
         history = self._history[session]
+        system = self.system_prompt
+        if self.memory:
+            with _timed(timings, "memory"):
+                system += as_prompt(self.memory.recall(text))
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self.system_prompt},
+            {"role": "system", "content": system},
             *history,
             {"role": "user", "content": text},
         ]

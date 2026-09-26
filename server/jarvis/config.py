@@ -76,6 +76,10 @@ class Settings:
 
     history_turns: int = 6
 
+    # Nivel 3: memoria
+    memory_enabled: bool = True
+    memory_max_items: int = 8  # recuerdos inyectados como maximo antes de cada respuesta
+
     # Nivel 2: tools
     tools_enabled: bool = True  # interruptor general
     tools_disabled: frozenset[str] = frozenset()
@@ -142,6 +146,8 @@ def load_settings() -> Settings:
         tts_provider=_env("TTS_PROVIDER", "piper").lower(),
         piper_voice=_env("PIPER_VOICE", "es_ES-davefx-medium"),
         history_turns=_env_int("HISTORY_TURNS", 6),
+        memory_enabled=_env_bool("MEMORY_ENABLED", True),
+        memory_max_items=_env_int("MEMORY_MAX_ITEMS", 8),
         tools_enabled=_env_bool("TOOLS_ENABLED", True),
         tools_disabled=frozenset(n.strip() for n in _env("TOOLS_DISABLED").split(",") if n.strip()),
         timezone=_env("TZ", "Europe/Madrid"),
