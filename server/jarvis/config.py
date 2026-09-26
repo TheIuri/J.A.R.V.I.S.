@@ -1,0 +1,113 @@
+"""Configuracion leida de variables de entorno.
+
+Todo proveedor es intercambiable cambiando solo variables, sin tocar codigo.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+
+# Proveedores LLM con API compatible con OpenAI: (base_url, variable de la API key, modelo por defecto).
+# Cualquiera se puede sobrescribir con <NOMBRE>_BASE_URL / <NOMBRE>_MODEL / <NOMBRE>_API_KEY.
+LLM_PRESETS: dict[str, tuple[str, str | None, str]] = {
+    "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY", "llama-3.3-70b-versatile"),
+    "gemini": (
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        "GEMINI_API_KEY",
+        "gemini-2.5-flash",
+    ),
+    "openrouter": (
+        "https://openrouter.ai/api/v1",
+        "OPENROUTER_API_KEY",
+        "meta-llama/llama-3.3-70b-instruct:free",
+    ),
+    "ollama": ("http://ollama:11434/v1", None, "qwen2.5:3b"),
+}
+
+
+def _env(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
+
+
+def _env_int(name: str, default: int) -> int:
+    value = _env(name)
+    return int(value) if value else default
+
+
+@dataclass(frozen=True)
+class LLMProviderConfig:
+    name: str
+    base_url: str
+    api_key: str
+    model: str
+
+
+@dataclass(frozen=True)
+class Settings:
+    api_token: str
+    assistant_name: str = "Jarvis"
+    language: str = "es"
+    data_dir: str = "/data"
+
+    stt_provider: str = "local"  # local | groq
+    whisper_model: str = "small"
+    whisper_device: str = "auto"  # auto | cuda | cpu
+    whisper_compute_type: str = "auto"
+    groq_stt_model: str = "whisper-large-v3-turbo"
+
+    llm_providers: list[LLMProviderConfig] = field(default_factory=list)
+    llm_timeout_s: int = 30
+    llm_max_tokens: int = 300
+
+    tts_provider: str = "piper"  # piper | none
+    piper_voice: str = "es_ES-davefx-medium"
+
+    history_turns: int = 6
+
+    @property
+    def groq_api_key(self) -> str:
+        return _env("GROQ_API_KEY")
+
+
+def _llm_provider(name: str) -> LLMProviderConfig:
+    if name not in LLM_PRESETS:
+        raise ValueError(f"Proveedor LLM desconocido: {name!r}. Opciones: {', '.join(LLM_PRESETS)}")
+    base_url, key_var, model = LLM_PRESETS[name]
+    prefix = name.upper()
+    return LLMProviderConfig(
+        name=name,
+        base_url=_env(f"{prefix}_BASE_URL", base_url).rstrip("/"),
+        api_key=_env(f"{prefix}_API_KEY") if key_var else "",
+        model=_env(f"{prefix}_MODEL", model),
+    )
+
+
+def load_settings() -> Settings:
+    token = _env("API_TOKEN")
+    if not token:
+        raise RuntimeError("API_TOKEN es obligatorio: nunca expongas el servidor sin autenticacion.")
+
+    names = [n.strip().lower() for n in _env("LLM_PROVIDERS", "groq").split(",") if n.strip()]
+    providers = [_llm_provider(n) for n in names]
+    missing = [p.name for p in providers if LLM_PRESETS[p.name][1] and not p.api_key]
+    if missing:
+        raise RuntimeError(f"Falta la API key de: {', '.join(missing)}")
+
+    return Settings(
+        api_token=token,
+        assistant_name=_env("ASSISTANT_NAME", "Jarvis"),
+        language=_env("LANGUAGE", "es"),
+        data_dir=_env("DATA_DIR", "/data"),
+        stt_provider=_env("STT_PROVIDER", "local").lower(),
+        whisper_model=_env("WHISPER_MODEL", "small"),
+        whisper_device=_env("WHISPER_DEVICE", "auto"),
+        whisper_compute_type=_env("WHISPER_COMPUTE_TYPE", "auto"),
+        groq_stt_model=_env("GROQ_STT_MODEL", "whisper-large-v3-turbo"),
+        llm_providers=providers,
+        llm_timeout_s=_env_int("LLM_TIMEOUT_S", 30),
+        llm_max_tokens=_env_int("LLM_MAX_TOKENS", 300),
+        tts_provider=_env("TTS_PROVIDER", "piper").lower(),
+        piper_voice=_env("PIPER_VOICE", "es_ES-davefx-medium"),
+        history_turns=_env_int("HISTORY_TURNS", 6),
+    )

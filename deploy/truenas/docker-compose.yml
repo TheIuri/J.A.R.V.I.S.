@@ -1,0 +1,41 @@
+# JARVIS core para TrueNAS SCALE: Apps -> Discover Apps -> Custom App -> "Install via YAML".
+# Antes de pegarlo, cambia TODO lo marcado con <<< (ruta del dataset, token y API keys).
+services:
+  jarvis-core:
+    image: ghcr.io/theiuri/jarvis-core:latest
+    container_name: jarvis-core
+    restart: unless-stopped
+    user: "568:568" # usuario "apps" de TrueNAS; el dataset debe pertenecerle
+    ports:
+      - "8765:8765"
+    volumes:
+      - /mnt/TU_POOL/apps/jarvis:/data # <<< dataset para modelos y voces
+    environment:
+      API_TOKEN: "cambia-esto-por-un-token-largo" # <<< genera uno: openssl rand -hex 32
+      ASSISTANT_NAME: "Jarvis"
+      LANGUAGE: "es"
+
+      # --- Oido (STT): Whisper local en la GTX 1650 ---
+      STT_PROVIDER: "local" # "groq" para usar Whisper en la nube
+      WHISPER_MODEL: "small" # sube a "medium" o "large-v3-turbo" si la VRAM lo permite
+      WHISPER_DEVICE: "auto" # usa CUDA si esta disponible, si no CPU
+
+      # --- Cerebro (LLM): cloud gratuito, en orden de preferencia ---
+      LLM_PROVIDERS: "groq,gemini"
+      GROQ_API_KEY: "" # <<< https://console.groq.com/keys
+      GEMINI_API_KEY: "" # <<< https://aistudio.google.com/apikey (si lo dejas vacio, quitalo de LLM_PROVIDERS)
+      # GROQ_MODEL: "llama-3.3-70b-versatile"
+      # GEMINI_MODEL: "gemini-2.5-flash"
+
+      # --- Voz (TTS): Piper local en CPU ---
+      TTS_PROVIDER: "piper"
+      PIPER_VOICE: "es_ES-davefx-medium"
+    deploy:
+      resources:
+        limits:
+          memory: 6G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
