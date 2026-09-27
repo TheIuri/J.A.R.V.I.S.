@@ -1,4 +1,4 @@
-// HUD de JARVIS: esfera animada, push-to-talk y panel de sesión.
+// HUD de JARVIS: cerebro animado (flujo de pensamiento en directo), push-to-talk y panel de sesión.
 // Dos modos (lo dice /hud/config):
 //  - "local": servido por jarvis_hud.py en el PC, que añade el token y ejecuta las acciones del PC.
 //  - "server": servido por el NAS (p. ej. en el móvil via HTTPS de Tailscale). El token se pide
@@ -234,12 +234,18 @@ function playWav(b64) {
 
 async function ask(path, init) {
   setState("thinking");
+  flowReset();
   let body;
   try {
-    const resp = await api(path, init);
-    body = await resp.json();
-    if (!resp.ok) throw new Error(body.detail || `HTTP ${resp.status}`);
+    let resp = await api(`${path}/stream`, init);
+    if (resp.status === 404) resp = await api(path, init); // servidor antiguo: sin directo
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    body = resp.headers.get("Content-Type")?.includes("ndjson") ? await readFlow(resp) : await resp.json();
   } catch (err) {
+    regionState.forEach((r) => (r.pending = false));
     setState("error", String(err.message || err).slice(0, 120));
     return;
   }
@@ -251,6 +257,29 @@ async function ask(path, init) {
   showTurn(body);
   if (body.audio_wav_b64) await playWav(body.audio_wav_b64);
   else setState("idle");
+  $("flow").classList.add("past");
+}
+
+// Lee la respuesta línea a línea (NDJSON): cada línea es un paso del turno.
+async function readFlow(resp) {
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    let nl;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line) continue;
+      const event = JSON.parse(line);
+      if (event.type === "done") return event;
+      if (event.type === "error") throw new Error(event.detail);
+      onFlow(event);
+    }
+    if (done) throw new Error("la conexión se cortó a mitad de respuesta");
+  }
 }
 
 function showTurn(body) {
@@ -351,30 +380,238 @@ async function pollEvents() {
   setTimeout(pollEvents, 2000);
 }
 
-// --- esfera ------------------------------------------------------------------
+// --- cerebro: flujo de pensamiento en directo -----------------------------------------
+// Un cerebro 3D de partículas. Cada paso del turno enciende su región y un impulso viaja
+// desde la región anterior: oído -> hipocampo (memoria) -> prefrontal (razona) -> tools -> lenguaje -> voz.
+
+const REGIONS = [
+  { id: "prefrontal", name: "PREFRONTAL", role: "razonamiento", pos: [0.8, 0.2, 0], color: [255, 77, 141] },
+  { id: "motor", name: "CÓRTEX MOTOR", role: "acciones", pos: [0.2, 0.66, 0], color: [255, 96, 96] },
+  { id: "association", name: "ASOCIACIÓN", role: "consultas", pos: [-0.42, 0.5, 0], color: [179, 136, 255] },
+  { id: "auditory", name: "AUDITIVO", role: "oído", pos: [0.05, -0.2, 0.5], color: [76, 201, 240] },
+  { id: "hippocampus", name: "HIPOCAMPO", role: "memoria", pos: [-0.2, -0.12, -0.25], color: [94, 227, 161] },
+  { id: "language", name: "LENGUAJE", role: "respuesta", pos: [0.52, -0.24, 0.3], color: [255, 181, 71] },
+  { id: "cerebellum", name: "CEREBELO", role: "voz", pos: [-0.6, -0.52, 0], color: [77, 124, 255] },
+  { id: "visual", name: "VISUAL", role: "cámara · nivel 4", pos: [-0.92, 0.08, 0], color: [45, 212, 191], planned: true },
+];
+const REGION = Object.fromEntries(REGIONS.map((r, i) => [r.id, i]));
+
+const TOOL_LABEL = {
+  get_datetime: "hora",
+  get_weather: "tiempo",
+  memory_save: "guardar recuerdo",
+  memory_search: "buscar recuerdo",
+  memory_update: "corregir recuerdo",
+  memory_forget: "olvidar recuerdo",
+  obsidian_search: "Obsidian · buscar",
+  obsidian_read: "Obsidian · leer",
+  obsidian_create_note: "Obsidian · nota nueva",
+  obsidian_append: "Obsidian · añadir",
+  obsidian_daily_note: "Obsidian · diario",
+  pc_open_app: "PC · abrir app",
+  pc_open_url: "PC · abrir web",
+  pc_volume: "PC · volumen",
+  pc_media: "PC · música",
+  pc_timer: "PC · temporizador",
+  truenas_status: "TrueNAS",
+};
+
+function toolRegion(name) {
+  if (name.startsWith("memory_")) return REGION.hippocampus;
+  if (name.startsWith("pc_") || /^obsidian_(create|append|daily)/.test(name)) return REGION.motor;
+  return REGION.association;
+}
+
+// Forma: cerebro (elipsoide), cerebelo y tronco. Más densidad cerca de la superficie (córtex).
+function insideBrain(x, y, z) {
+  const cerebrum = x * x + ((y - 0.05) / 0.7) ** 2 + (z / 0.62) ** 2;
+  if (cerebrum <= 1 && y > -0.48 && !(x < -0.35 && y < -0.3)) return { q: Math.sqrt(cerebrum), region: null };
+  if (((x + 0.58) / 0.34) ** 2 + ((y + 0.52) / 0.2) ** 2 + (z / 0.42) ** 2 <= 1) return { q: 0.8, region: REGION.cerebellum };
+  if (((x + 0.22) / 0.1) ** 2 + ((y + 0.72) / 0.3) ** 2 + (z / 0.1) ** 2 <= 1) return { q: 0.5, region: REGION.cerebellum };
+  return null;
+}
+
+function nearestRegion(x, y, z) {
+  let best = 0;
+  let bestD = Infinity;
+  REGIONS.forEach((r, i) => {
+    if (i === REGION.cerebellum) return;
+    const d = (x - r.pos[0]) ** 2 + (y - r.pos[1]) ** 2 * 1.2 + (z - r.pos[2]) ** 2 * 0.5;
+    if (d < bestD) [best, bestD] = [i, d];
+  });
+  return best;
+}
+
+const lowPower = matchMedia("(pointer: coarse)").matches;
+const neurons = [];
+const edges = REGIONS.map(() => []); // por región: un único trazo por color
+const fibers = REGIONS.map(() => []);
+(function buildBrain() {
+  const target = lowPower ? 600 : 1100;
+  while (neurons.length < target) {
+    const x = Math.random() * 2 - 1;
+    const y = Math.random() * 1.8 - 1.05;
+    const z = Math.random() * 1.3 - 0.65;
+    const hit = insideBrain(x, y, z);
+    if (!hit || Math.random() > 0.2 + 0.8 * hit.q ** 3) continue;
+    neurons.push({ p: [x, y, z], region: hit.region ?? nearestRegion(x, y, z), tw: Math.random() * 6.28, s: [0, 0, 1] });
+  }
+  for (let i = 0; i < neurons.length; i++) {
+    const a = neurons[i].p;
+    const near = [];
+    for (let j = i + 1; j < neurons.length; j++) {
+      const b = neurons[j].p;
+      const d = (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
+      if (d < 0.03) near.push([d, j]);
+    }
+    near.sort((m, n) => m[0] - n[0]);
+    for (const [, j] of near.slice(0, 2)) edges[neurons[i].region].push([i, j]);
+  }
+  // Fibras largas que salen del córtex (el "pelo" luminoso del vídeo).
+  const surface = neurons.filter((n) => Math.hypot(...n.p) > 0.8);
+  for (let k = 0; k < (lowPower ? 40 : 80); k++) {
+    const n = surface[(Math.random() * surface.length) | 0];
+    const out = 1.35 + Math.random() * 0.55;
+    const bend = () => (Math.random() - 0.5) * 0.5;
+    fibers[n.region].push({
+      a: n.p,
+      c: [n.p[0] * 1.3 + bend(), n.p[1] * 1.3 + bend(), n.p[2] * 1.3 + bend()],
+      b: [n.p[0] * out + bend(), n.p[1] * out + bend(), n.p[2] * out + bend()],
+    });
+  }
+})();
+
+const regionState = REGIONS.map(() => ({ act: 0, base: 0, pending: false, detail: "", fail: false }));
+const pulses = [];
+let lastRegion = null;
+let burst = 0;
+
+function fire(idx, detail) {
+  const r = regionState[idx];
+  r.act = 1;
+  if (detail !== undefined) r.detail = detail;
+  burst = 0.6;
+  if (lastRegion !== null && lastRegion !== idx) {
+    pulses.push({ from: lastRegion, to: idx, t: 0, dur: reducedMotion ? 0.01 : 0.55 });
+  }
+  lastRegion = idx;
+  const name = REGIONS[idx].name;
+  const trail = $("trail");
+  if (!trail.dataset.last || trail.dataset.last !== name) {
+    trail.textContent = trail.textContent ? `${trail.textContent} → ${name}` : name;
+    trail.dataset.last = name;
+  }
+}
+
+function flowReset() {
+  regionState.forEach((r) => Object.assign(r, { pending: false, detail: "", fail: false }));
+  lastRegion = null;
+  $("trail").textContent = "";
+  $("trail").dataset.last = "";
+  $("flow").classList.remove("past");
+}
+
+function argsSummary(args) {
+  return Object.values(args || {})
+    .filter((v) => v !== "" && v != null)
+    .map((v) => (typeof v === "object" ? JSON.stringify(v) : String(v)))
+    .join(" · ");
+}
+
+function onFlow(ev) {
+  switch (ev.type) {
+    case "listening":
+      setState("thinking", "transcribiendo");
+      fire(REGION.auditory, "transcribiendo…");
+      break;
+    case "heard":
+      if (!ev.text) break;
+      $("you").textContent = ev.text;
+      fire(REGION.auditory, ev.text);
+      break;
+    case "memory": {
+      const items = ev.items || [];
+      fire(REGION.hippocampus, items.length ? `${items.length} recuerdo${items.length > 1 ? "s" : ""} · ${items[0].text}` : "sin recuerdos relevantes");
+      break;
+    }
+    case "thinking":
+      setState("thinking", ev.round > 1 ? `razonando · ronda ${ev.round}` : "razonando");
+      fire(REGION.prefrontal, ev.round > 1 ? `ronda ${ev.round}` : "razonando");
+      break;
+    case "tool": {
+      const idx = toolRegion(ev.name);
+      const label = TOOL_LABEL[ev.name] || ev.name;
+      Object.assign(regionState[idx], { pending: true, fail: false });
+      fire(idx, [label, argsSummary(ev.args)].filter(Boolean).join(" · "));
+      setState("thinking", label);
+      break;
+    }
+    case "tool_result": {
+      const idx = toolRegion(ev.name);
+      const label = TOOL_LABEL[ev.name] || ev.name;
+      Object.assign(regionState[idx], { pending: false, fail: !ev.ok });
+      fire(idx, `${ev.ok ? "✓" : "✗"} ${label} · ${ev.ms} ms · ${ev.text}`);
+      break;
+    }
+    case "reply":
+      $("subtitle").textContent = ev.text;
+      fire(REGION.language, ev.text);
+      break;
+    case "speaking":
+      setState("thinking", "poniendo voz");
+      fire(REGION.cerebellum, "sintetizando voz");
+      break;
+  }
+}
+
+// Etiquetas de región (HTML sobre el lienzo) y panel de estado del córtex.
+const labels = REGIONS.map((r, i) => {
+  const el = document.createElement("div");
+  el.className = "region";
+  el.style.setProperty("--c", `rgb(${r.color.join(",")})`);
+  const b = document.createElement("b");
+  b.textContent = r.name;
+  const span = document.createElement("span");
+  el.append(b, span);
+  $("flow").append(el);
+  const row = document.createElement("li");
+  row.style.setProperty("--c", `rgb(${r.color.join(",")})`);
+  const name = document.createElement("span");
+  name.textContent = r.name;
+  const status = document.createElement("em");
+  row.append(name, status);
+  $("cortex").append(row);
+  return { el, span, row, status, i };
+});
+
+function updateCortexPanel() {
+  labels.forEach(({ row, status, i }) => {
+    const r = regionState[i];
+    const text = REGIONS[i].planned ? "PLANIFICADO" : r.pending ? "EJECUTANDO" : r.act > 0.35 ? "ACTIVO" : "EN REPOSO";
+    status.textContent = text;
+    row.className = REGIONS[i].planned ? "planned" : r.act > 0.35 || r.pending ? "live" : "";
+  });
+}
+setInterval(updateCortexPanel, 250);
+
+// --- lienzo -----------------------------------------------------------------------
 
 const canvas = $("orb");
 const g = canvas.getContext("2d");
-const particles = Array.from({ length: 280 }, () => ({
-  r: 0.55 + Math.random() * 0.4, // radio relativo de su órbita
-  a: Math.random() * Math.PI * 2,
-  speed: (0.1 + Math.random() * 0.35) * (Math.random() < 0.5 ? -1 : 1),
-  tilt: (Math.random() - 0.5) * 0.9,
-  size: 0.6 + Math.random() * 1.6,
-}));
 let color = [...COLORS.idle];
 let level = 0;
 let last = performance.now();
 
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
-  const { width } = canvas.getBoundingClientRect();
-  canvas.width = canvas.height = Math.round(width * dpr);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const { width, height } = canvas.getBoundingClientRect();
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
 }
 addEventListener("resize", resize);
 
 function rgba([r, gr, b], alpha) {
-  return `rgba(${r | 0},${gr | 0},${b | 0},${alpha})`;
+  return `rgba(${r | 0},${gr | 0},${b | 0},${Math.max(0, Math.min(1, alpha))})`;
 }
 
 function frame(now) {
@@ -384,71 +621,136 @@ function frame(now) {
   color = color.map((c, i) => c + (target[i] - c) * Math.min(1, dt * 4));
   const lvl = audioLevel();
   level += (lvl - level) * Math.min(1, dt * 12);
-  const thinking = state === "thinking" ? 0.5 + 0.5 * Math.sin(now / 180) : 0;
-
+  burst = Math.max(0, burst - dt * 2);
   if (state !== "error") $("state").style.color = rgba(color, 1);
 
-  const W = canvas.width;
-  const c = W / 2;
-  const R = W * 0.36;
-  g.clearRect(0, 0, W, W);
+  // Actividad de fondo según el estado (micro, pensando, hablando).
+  const think = state === "thinking" ? 0.3 + 0.15 * Math.sin(now / 160) : 0;
+  regionState.forEach((r, i) => {
+    let base = REGIONS[i].planned ? 0.03 : 0.08;
+    if (i === REGION.auditory && state === "listening") base = 0.35 + level * 0.8;
+    if (i === REGION.prefrontal) base = Math.max(base, think);
+    if ((i === REGION.cerebellum || i === REGION.language) && state === "speaking") base = 0.3 + level * 0.7;
+    if (r.pending) base = Math.max(base, 0.6 + 0.3 * Math.sin(now / 90));
+    r.act = Math.max(base, r.act - dt * 0.45);
+  });
 
-  // halo
-  const halo = g.createRadialGradient(c, c, 0, c, c, R * (1.25 + level * 0.3));
-  halo.addColorStop(0, rgba(color, 0.22 + level * 0.25 + thinking * 0.1));
+  const W = canvas.width;
+  const H = canvas.height;
+  const cx = W / 2;
+  const cy = H * 0.5;
+  const S = Math.min(W * (W < H * 1.6 ? 0.4 : 0.34), H * 0.46);
+  g.clearRect(0, 0, W, H);
+
+  // halo del estado
+  const halo = g.createRadialGradient(cx, cy, 0, cx, cy, Math.min(W, H) / 2);
+  halo.addColorStop(0, rgba(color, 0.1 + level * 0.15 + burst * 0.08));
   halo.addColorStop(1, rgba(color, 0));
   g.fillStyle = halo;
-  g.fillRect(0, 0, W, W);
+  g.fillRect(0, 0, W, H);
 
-  // anillo de marcas
-  const ticks = 120;
-  const spin = now / 9000;
-  for (let i = 0; i < ticks; i++) {
-    const ang = (i / ticks) * Math.PI * 2 + spin;
-    const long = i % 5 === 0;
-    const r1 = R * 1.08;
-    const r2 = r1 + (long ? R * 0.07 : R * 0.035) * (1 + level * 1.5);
-    g.strokeStyle = rgba(color, long ? 0.75 : 0.35);
-    g.lineWidth = W * (long ? 0.0028 : 0.0018);
+  // proyección con giro suave (oscila para que el cerebro siga viéndose de lado)
+  const yaw = -0.35 + Math.sin(now / 7000) * 0.45;
+  const pitch = 0.18 + Math.sin(now / 11000) * 0.08;
+  const cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const project = (p, out) => {
+    const x = p[0] * cyw - p[2] * syw;
+    const z1 = p[0] * syw + p[2] * cyw;
+    const y = p[1] * cp - z1 * sp;
+    const z = p[1] * sp + z1 * cp;
+    const f = 3 / (3 + z);
+    out[0] = cx + x * S * f;
+    out[1] = cy - y * S * f;
+    out[2] = f;
+    return out;
+  };
+  for (const n of neurons) project(n.p, n.s);
+
+  g.globalCompositeOperation = "lighter";
+  const px = W / 900;
+
+  // fibras
+  const tmpA = [0, 0, 0], tmpB = [0, 0, 0], tmpC = [0, 0, 0];
+  fibers.forEach((list, i) => {
+    const act = regionState[i].act;
+    g.strokeStyle = rgba(REGIONS[i].color, 0.05 + act * 0.35);
+    g.lineWidth = Math.max(0.6, px * (0.8 + act));
     g.beginPath();
-    g.moveTo(c + Math.cos(ang) * r1, c + Math.sin(ang) * r1);
-    g.lineTo(c + Math.cos(ang) * r2, c + Math.sin(ang) * r2);
+    for (const f of list) {
+      project(f.a, tmpA);
+      project(f.c, tmpC);
+      project(f.b, tmpB);
+      g.moveTo(tmpA[0], tmpA[1]);
+      g.quadraticCurveTo(tmpC[0], tmpC[1], tmpB[0], tmpB[1]);
+    }
     g.stroke();
-  }
+  });
 
-  // arco que barre (más rápido al pensar)
-  const sweep = now / (state === "thinking" ? 350 : 1400);
-  g.strokeStyle = rgba(color, 0.8);
-  g.lineWidth = W * 0.003;
-  g.beginPath();
-  g.ellipse(c, c, R * 0.98, R * 0.35, sweep * 0.3, sweep, sweep + Math.PI * 0.6);
-  g.stroke();
-
-  // partículas en órbitas inclinadas
-  for (const p of particles) {
-    p.a += p.speed * dt * (1 + level * 2 + thinking);
-    const rr = R * p.r * (1 + level * 0.12);
-    const x = Math.cos(p.a) * rr;
-    const y = Math.sin(p.a) * rr * (0.35 + Math.abs(p.tilt));
-    const depth = (Math.sin(p.a) + 1) / 2; // delante/detrás
-    const px = c + x * Math.cos(p.tilt) - y * Math.sin(p.tilt);
-    const py = c + x * Math.sin(p.tilt) + y * Math.cos(p.tilt);
-    g.fillStyle = rgba(color, 0.25 + depth * 0.65);
+  // sinapsis
+  edges.forEach((list, i) => {
+    const act = regionState[i].act;
+    g.strokeStyle = rgba(REGIONS[i].color, 0.1 + act * 0.5);
+    g.lineWidth = Math.max(0.5, px * 0.9);
     g.beginPath();
-    g.arc(px, py, p.size * (W / 600) * (0.6 + depth * 0.6), 0, Math.PI * 2);
-    g.fill();
+    for (const [a, b] of list) {
+      g.moveTo(neurons[a].s[0], neurons[a].s[1]);
+      g.lineTo(neurons[b].s[0], neurons[b].s[1]);
+    }
+    g.stroke();
+  });
+
+  // neuronas
+  for (const n of neurons) {
+    const act = regionState[n.region].act;
+    const tw = 0.5 + 0.5 * Math.sin(now / 700 + n.tw);
+    const size = Math.max(1, px * (1.4 + act * 1.6) * n.s[2]);
+    g.fillStyle = rgba(REGIONS[n.region].color, 0.35 + tw * 0.3 + act * 0.6);
+    g.fillRect(n.s[0] - size / 2, n.s[1] - size / 2, size, size);
+    if (act > 0.3 && tw > 0.6) {
+      // brillo alrededor de las neuronas activas
+      g.fillStyle = rgba(REGIONS[n.region].color, (act - 0.3) * 0.25);
+      g.beginPath();
+      g.arc(n.s[0], n.s[1], size * 2.2, 0, Math.PI * 2);
+      g.fill();
+    }
   }
 
-  // núcleo
-  const coreR = R * (0.2 + level * 0.12 + thinking * 0.03);
-  const core = g.createRadialGradient(c, c, 0, c, c, coreR * 2.2);
-  core.addColorStop(0, "rgba(255,255,255,0.95)");
-  core.addColorStop(0.25, rgba(color, 0.9));
-  core.addColorStop(1, rgba(color, 0));
-  g.fillStyle = core;
-  g.beginPath();
-  g.arc(c, c, coreR * 2.2, 0, Math.PI * 2);
-  g.fill();
+  // impulsos entre regiones
+  const centers = REGIONS.map((r) => project(r.pos, [0, 0, 0]));
+  for (let k = pulses.length - 1; k >= 0; k--) {
+    const p = pulses[k];
+    p.t += dt / p.dur;
+    const a = centers[p.from], b = centers[p.to];
+    const mx = (a[0] + b[0]) / 2 + (((a[0] + b[0]) / 2 - cx) * 0.4);
+    const my = (a[1] + b[1]) / 2 + (((a[1] + b[1]) / 2 - cy) * 0.4) - S * 0.12;
+    const at = (t) => {
+      const u = 1 - t;
+      return [u * u * a[0] + 2 * u * t * mx + t * t * b[0], u * u * a[1] + 2 * u * t * my + t * t * b[1]];
+    };
+    const col = REGIONS[p.to].color;
+    for (let s = 0; s < 8; s++) {
+      const t = Math.min(1, p.t) - s * 0.035;
+      if (t < 0) break;
+      const [x, y] = at(t);
+      g.fillStyle = rgba(col, (1 - s / 8) * 0.9);
+      g.beginPath();
+      g.arc(x, y, px * (4 - s * 0.4), 0, Math.PI * 2);
+      g.fill();
+    }
+    if (p.t >= 1.25) pulses.splice(k, 1);
+  }
+  g.globalCompositeOperation = "source-over";
+
+  // etiquetas de región
+  const dpr = W / canvas.getBoundingClientRect().width || 1;
+  labels.forEach(({ el, span, i }) => {
+    const r = regionState[i];
+    const [x, y] = centers[i];
+    el.style.transform = `translate(${canvas.offsetLeft + x / dpr + 12}px, ${canvas.offsetTop + y / dpr - 12}px)`;
+    el.classList.toggle("on", r.act > 0.35 || r.pending);
+    el.classList.toggle("fail", r.fail);
+    if (span.textContent !== (r.detail || REGIONS[i].role)) span.textContent = r.detail || REGIONS[i].role;
+  });
 
   requestAnimationFrame(frame);
 }
@@ -503,8 +805,8 @@ async function init() {
   }
   if (mode === "server") {
     $("hint").textContent = matchMedia("(pointer: coarse)").matches
-      ? "MANTÉN PULSADO EL NÚCLEO PARA HABLAR"
-      : "MANTÉN PULSADO EL NÚCLEO O LA BARRA ESPACIADORA";
+      ? "MANTÉN PULSADO EL CEREBRO PARA HABLAR"
+      : "MANTÉN PULSADO EL CEREBRO O LA BARRA ESPACIADORA";
     if (!getToken()) askToken();
   } else {
     pollEvents(); // avisos de temporizador del PC (solo en modo local)

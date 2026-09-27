@@ -19,10 +19,12 @@
 
     <section id="stage">
       <canvas id="orb" aria-label="Mantén pulsado para hablar"></canvas>
+      <div id="flow" aria-hidden="true"></div>
+      <p id="trail" class="mono" aria-label="Recorrido del último turno"></p>
       <p id="subtitle" aria-live="polite"></p>
       <p id="you" class="dim"></p>
       <p id="state" class="mono">EN ESPERA</p>
-      <p id="hint" class="hint mono">MANTÉN PULSADO EL NÚCLEO O LA BARRA ESPACIADORA</p>
+      <p id="hint" class="hint mono">MANTÉN PULSADO EL CEREBRO O LA BARRA ESPACIADORA</p>
       <form id="ask" autocomplete="off">
         <input id="text" placeholder="…o escribe aquí y pulsa Enter" aria-label="Mensaje">
       </form>
@@ -38,6 +40,8 @@
         <dt>MODELO</dt><dd id="s-model">—</dd>
         <dt>TOOLS</dt><dd id="s-tools">—</dd>
       </dl>
+      <p class="panel-title">CÓRTEX · ESTADO</p>
+      <ul id="cortex"></ul>
       <button id="memories" type="button">MEMORIA</button>
       <button id="reset" type="button">NUEVA CONVERSACIÓN</button>
       <div id="memory-list"></div>

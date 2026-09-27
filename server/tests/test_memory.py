@@ -140,3 +140,19 @@ def test_search_without_fts5_falls_back_to_like(store):
     store.fts = False
     assert [m.content for m in store.search(["perro"])] == ["Su perro se llama Toby"]
     assert store.search(["perro"], exclude_types=("hecho",)) == []
+
+
+def test_recalled_memories_are_streamed_as_events(tmp_path):
+    from jarvis.memory import MemoryStore, RuleRetriever
+    from jarvis.pipeline import Assistant
+    from tests.test_core import FakeTTS, make_assistant
+
+    store = MemoryStore(tmp_path / "m.db")
+    store.add("Prefiere respuestas cortas", "preferencia")
+    base = make_assistant()
+    assistant = Assistant(None, base.llm, FakeTTS(), "sistema", memory=RuleRetriever(store))
+    events = []
+    assistant.handle_text("hola", on_event=events.append)
+    memory = next(e for e in events if e["type"] == "memory")
+    assert memory["items"][0]["text"] == "Prefiere respuestas cortas"
+    assert memory["items"][0]["reason"] == "preferencia (siempre)"
