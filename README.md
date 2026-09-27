@@ -299,6 +299,20 @@ py jarvis_hud.py
   - `--no-wake` para desactivarlo.
 - **En el móvil** no está disponible: el navegador no puede escuchar en segundo plano. Allí sigues pulsando para hablar.
 
+### Cámara (Nivel 4, región VISUAL)
+
+Pulsa **CÁMARA** en el panel del HUD. En el PC usa la webcam y en el móvil la cámara trasera. Mientras está
+encendida, cada pregunta lleva una foto de ese momento: *"¿Qué ves?"*, *"¿Qué es esto?"*, *"Léeme esta
+etiqueta"*, *"¿Esta planta está bien?"*. Mientras está encendida se ve una miniatura con borde rojo. La foto solo
+sale con tus preguntas y no se guarda en ningún sitio.
+
+Con Home Assistant, también sus cámaras: *"¿Hay alguien en la puerta?"*.
+
+**Modelo de visión**: por defecto usa los proveedores que ya tienes, con Gemini primero si está configurado
+(`gemini-2.5-flash`), y si no, el modelo de visión de Groq (`meta-llama/llama-4-scout-17b-16e-instruct`).
+Se cambia con `VISION_PROVIDERS: "gemini,groq"` y `GROQ_VISION_MODEL` / `GEMINI_VISION_MODEL` (si Groq retira el
+modelo, elige otro de visión en console.groq.com/docs/models). En modo Claude no se usa la cámara.
+
 ### Avisos proactivos (Nivel 4)
 
 JARVIS habla sin que le preguntes. Los avisos salen en el HUD (PC y móvil), se dicen en voz alta y encienden el

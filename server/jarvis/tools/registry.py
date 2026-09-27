@@ -36,6 +36,7 @@ class ToolContext:
     pc_actions: list[dict[str, Any]] = field(default_factory=list)
     pending: PendingAction | None = None  # accion que necesita confirmacion humana
     cards: list[dict[str, Any]] = field(default_factory=list)  # resultados para mostrar en el HUD
+    image: str | None = None  # foto de la camara del HUD en este turno (base64), si esta encendida
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ class Tool:
     destructive: bool = False  # borrar, enviar, pagar... nunca se ofrece al LLM
     confirm: bool = False  # se ofrece, pero solo se ejecuta si el usuario dice "si" en el turno siguiente
     describe: Callable[[dict[str, Any]], str] | None = None  # texto de la pregunta de confirmacion
+    needs_image: bool = False  # solo se ofrece si el turno trae foto de la camara
     timeout_s: float = 10.0
 
 
@@ -96,6 +98,7 @@ class ToolRegistry:
             and not t.destructive
             and (not t.pc or ctx.pc_apps is not None)
             and (t.name != "pc_open_app" or ctx.pc_apps)
+            and (not t.needs_image or ctx.image)
         ]
 
     def specs(self, ctx: ToolContext) -> list[dict[str, Any]]:

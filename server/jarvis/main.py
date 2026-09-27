@@ -32,6 +32,7 @@ from .tools.info import research_tools
 from .tools.calendar import Calendars, parse_calendars
 from .tools.reminders import ReminderStore
 from .tools.truenas import _default_connect
+from .tools.vision import Vision, check_image
 from .tts import NullTTS, PiperTTS
 from .watch import Watcher, briefing_check, calendar_check, reminders_check, truenas_check
 
@@ -78,7 +79,12 @@ def build_assistant(settings: Settings) -> Assistant:
             vault.export_memory(store)
     calendars = Calendars(parse_calendars(settings.calendars), settings.timezone) if settings.calendars else None
     reminders = ReminderStore(data / "reminders.db", settings.timezone) if settings.notify_enabled else None
-    tools = build_registry(settings, store, vault, reminders, calendars)
+    vision = (
+        Vision(FallbackLLM([OpenAICompatLLM(p, settings.llm_timeout_s, 512) for p in settings.vision_providers]))
+        if settings.vision_providers
+        else None
+    )
+    tools = build_registry(settings, store, vault, reminders, calendars, vision)
     retriever = RuleRetriever(store, settings.memory_max_items) if store else None
 
     log.info("STT=%s | LLM=%s | TTS=%s | memoria=%s", stt.name, llm.name, tts.name, "si" if store else "no")
@@ -153,6 +159,7 @@ class ChatRequest(BaseModel):
     speak: bool = True
     pc_apps: list[str] | None = None  # apps que el cliente de PC permite abrir; None = sin acciones de PC
     model: str | None = None  # proveedor elegido en el HUD (groq, gemini...); None = el orden configurado
+    image: str | None = None  # foto de la camara del HUD (JPEG/PNG en base64), solo si esta encendida
 
 
 class SpeakRequest(BaseModel):
@@ -192,7 +199,14 @@ def _parse_apps(raw: str | None) -> list[str] | None:
     return [a.strip() for a in raw.split(",") if a.strip()]
 
 
-def _stream(fn, *args, model: str | None = None) -> StreamingResponse:
+def _image(b64: str | None) -> str | None:
+    try:
+        return check_image(b64)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _stream(fn, *args, model: str | None = None, image: str | None = None) -> StreamingResponse:
     """Ejecuta el turno en un hilo y manda cada evento del pipeline como una linea JSON (NDJSON).
 
     La ultima linea es {"type": "done", ...respuesta completa} o {"type": "error", "detail": ...}.
@@ -201,7 +215,7 @@ def _stream(fn, *args, model: str | None = None) -> StreamingResponse:
 
     def work() -> None:
         try:
-            events.put({"type": "done", **_to_json(fn(*args, on_event=events.put, model=model))})
+            events.put({"type": "done", **_to_json(fn(*args, on_event=events.put, model=model, image=image))})
         except LLMError as exc:
             log.error("%s", exc)
             events.put({"type": "error", "detail": str(exc)})
@@ -297,15 +311,22 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         speak: bool = Form(True),
         pc_apps: str | None = Form(None),
         model: str | None = Form(None),
+        image: str | None = Form(None),
     ) -> StreamingResponse:
         data = _read_audio(audio)  # antes de responder: el fichero se cierra al acabar la peticion
-        return _stream(state["assistant"].handle_audio, data, session, speak, _parse_apps(pc_apps), model=model or None)
+        return _stream(
+            state["assistant"].handle_audio, data, session, speak, _parse_apps(pc_apps),
+            model=model or None, image=_image(image),
+        )
 
     @app.post("/api/chat/stream", dependencies=[Depends(require_token)])
     def chat_stream(req: ChatRequest) -> StreamingResponse:
         if not req.text.strip():
             raise HTTPException(status_code=400, detail="Texto vacio")
-        return _stream(state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps, model=req.model)
+        return _stream(
+            state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps,
+            model=req.model, image=_image(req.image),
+        )
 
     @app.get("/api/models", dependencies=[Depends(require_token)])
     def models() -> dict:

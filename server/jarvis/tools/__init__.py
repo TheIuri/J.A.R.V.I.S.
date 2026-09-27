@@ -19,6 +19,7 @@ from .registry import Tool, ToolContext, ToolError, ToolRegistry
 from .reminders import ReminderStore, reminder_tools
 from .spotify import Spotify, spotify_tools
 from .truenas import truenas_tools
+from .vision import Vision, camera_tool
 from .wol import parse_devices, wol_tool
 
 log = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ def build_registry(
     vault: Vault | None = None,
     reminders: ReminderStore | None = None,
     calendars: Calendars | None = None,
+    vision: Vision | None = None,
 ) -> ToolRegistry | None:
     if not settings.tools_enabled:
         log.info("Tools desactivadas (TOOLS_ENABLED=false)")
@@ -44,6 +46,8 @@ def build_registry(
     for tool in pc_tools():
         registry.register(tool)
     registry.register(delegate_tool())  # solo se ofrece con el HUD del PC
+    if vision:
+        registry.register(camera_tool(vision))  # solo se ofrece si el HUD manda foto
     if calendars is None and settings.calendars:
         calendars = Calendars(parse_calendars(settings.calendars), settings.timezone)
     if calendars:
@@ -51,7 +55,7 @@ def build_registry(
     for tool in reminder_tools(reminders) if reminders else []:
         registry.register(tool)
     if settings.ha_url and settings.ha_token:
-        for tool in ha_tools(HomeAssistant(settings.ha_url, settings.ha_token, settings.ha_entities)):
+        for tool in ha_tools(HomeAssistant(settings.ha_url, settings.ha_token, settings.ha_entities), vision):
             registry.register(tool)
     if settings.spotify_client_id and settings.spotify_client_secret and settings.spotify_refresh_token:
         spotify = Spotify(

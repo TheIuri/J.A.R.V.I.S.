@@ -175,6 +175,53 @@ async function stopRecording() {
   await askVoice(wav);
 }
 
+// --- cámara (región VISUAL) -------------------------------------------------------------
+// Solo mientras está encendida: cada pregunta lleva una foto de ese momento. No se guarda nada.
+
+let camStream = null;
+
+async function toggleCamera() {
+  const btn = $("camera");
+  const visual = REGIONS[REGION.visual];
+  if (camStream) {
+    camStream.getTracks().forEach((t) => t.stop());
+    camStream = null;
+    $("cam").srcObject = null;
+    $("cam").hidden = true;
+    Object.assign(visual, { planned: true, role: "cámara apagada" });
+  } else {
+    try {
+      // En el móvil, la cámara trasera; en el PC, la webcam.
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 } },
+      });
+    } catch {
+      setState("error", "sin acceso a la cámara");
+      return;
+    }
+    $("cam").srcObject = camStream;
+    $("cam").hidden = false;
+    await $("cam").play().catch(() => {});
+    Object.assign(visual, { planned: false, role: "cámara encendida" });
+  }
+  btn.classList.toggle("on", !!camStream);
+  btn.setAttribute("aria-pressed", String(!!camStream));
+  btn.textContent = camStream ? "CÁMARA · ENCENDIDA" : "CÁMARA";
+}
+
+function snapshot() {
+  const video = $("cam");
+  if (!camStream || !video.videoWidth) return null;
+  const scale = Math.min(1, 960 / video.videoWidth);
+  const c = document.createElement("canvas");
+  c.width = Math.round(video.videoWidth * scale);
+  c.height = Math.round(video.videoHeight * scale);
+  c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", 0.75).split(",")[1];
+}
+
+$("camera").addEventListener("click", toggleCamera);
+
 // --- modelo -----------------------------------------------------------------------
 
 function selectedModel() {
@@ -227,6 +274,8 @@ async function askVoice(wav) {
   if (!isClaude()) {
     if (pcApps) form.append("pc_apps", pcApps.join(","));
     if (selectedModel()) form.append("model", selectedModel());
+    const photo = snapshot();
+    if (photo) form.append("image", photo);
     return ask("/api/voice", { method: "POST", body: form });
   }
   setState("thinking", "transcribiendo");
@@ -406,7 +455,7 @@ function showTurn(body) {
 
 async function sendText(text) {
   if (isClaude()) return askClaude(text);
-  const payload = { text, session: SESSION, pc_apps: pcApps, model: selectedModel() || null };
+  const payload = { text, session: SESSION, pc_apps: pcApps, model: selectedModel() || null, image: snapshot() };
   await ask("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -570,7 +619,7 @@ const REGIONS = [
   { id: "hippocampus", name: "HIPOCAMPO", role: "memoria", pos: [-0.2, -0.12, -0.25], color: [94, 227, 161] },
   { id: "language", name: "LENGUAJE", role: "respuesta", pos: [0.52, -0.24, 0.3], color: [255, 181, 71] },
   { id: "cerebellum", name: "CEREBELO", role: "voz", pos: [-0.6, -0.52, 0], color: [77, 124, 255] },
-  { id: "visual", name: "VISUAL", role: "cámara · nivel 4", pos: [-0.92, 0.08, 0], color: [45, 212, 191], planned: true },
+  { id: "visual", name: "VISUAL", role: "cámara apagada", pos: [-0.92, 0.08, 0], color: [45, 212, 191], planned: true },
   { id: "thalamus", name: "TÁLAMO", role: "avisos", pos: [-0.05, 0.12, 0], color: [210, 230, 255] },
 ];
 const REGION = Object.fromEntries(REGIONS.map((r, i) => [r.id, i]));
@@ -602,6 +651,8 @@ const TOOL_LABEL = {
   agent_research: "agente investigador",
   agent_status: "estado del agente",
   delegate_claude: "encargar a Claude",
+  camera_look: "mirar por la cámara",
+  home_camera: "cámara de casa",
   reminder_set: "nuevo recordatorio",
   reminder_list: "recordatorios",
   reminder_cancel: "cancelar recordatorio",
@@ -617,6 +668,7 @@ const MOTOR_TOOLS = new Set(["truenas_app_restart", "wake_on_lan", "home_control
 
 function toolRegion(name) {
   if (name.startsWith("reminder_")) return REGION.thalamus;
+  if (name === "camera_look" || name === "home_camera") return REGION.visual;
   if (name.startsWith("agent_") || name.startsWith("delegate_")) return REGION.prefrontal; // planificar y delegar
   if (name.startsWith("memory_")) return REGION.hippocampus;
   if (name.startsWith("pc_") || /^obsidian_(create|append|daily)/.test(name) || MOTOR_TOOLS.has(name)) return REGION.motor;

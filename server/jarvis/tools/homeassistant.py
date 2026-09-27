@@ -14,7 +14,9 @@ import httpx
 
 from .registry import Tool, ToolContext, ToolError
 
-READ_DOMAINS = ("light", "switch", "fan", "cover", "climate", "media_player", "sensor", "binary_sensor", "scene", "script")
+READ_DOMAINS = (
+    "light", "switch", "fan", "cover", "climate", "media_player", "sensor", "binary_sensor", "scene", "script", "camera",
+)
 # accion -> (dominios permitidos, servicio)
 ACTIONS = {
     "encender": (("light", "switch", "fan", "media_player", "climate"), "turn_on"),
@@ -35,6 +37,7 @@ TYPE_WORDS = {
     "clima": "climate", "calefaccion": "climate", "termostato": "climate", "aire": "climate",
     "sensor": "sensor", "sensores": "sensor", "tele": "media_player", "television": "media_player",
     "altavoz": "media_player", "altavoces": "media_player", "escena": "scene", "escenas": "scene",
+    "camara": "camera", "camaras": "camera",
 }
 
 
@@ -89,6 +92,9 @@ class HomeAssistant:
     def call(self, domain: str, service: str, data: dict) -> None:
         self._request("POST", f"/api/services/{domain}/{service}", json=data)
 
+    def camera_image(self, entity_id: str) -> bytes:
+        return self._request("GET", f"/api/camera_proxy/{entity_id}").content
+
 
 def _label(state: dict) -> str:
     return state.get("attributes", {}).get("friendly_name") or state["entity_id"]
@@ -106,7 +112,7 @@ def _describe(state: dict) -> str:
     return f"{_label(state)}: {value}{(' ' + unit) if unit else ''}{extra}"
 
 
-def ha_tools(ha: HomeAssistant) -> list[Tool]:
+def ha_tools(ha: HomeAssistant, vision=None) -> list[Tool]:
     def status(_ctx: ToolContext, query: str = "") -> str:
         if query:
             try:
@@ -145,7 +151,28 @@ def ha_tools(ha: HomeAssistant) -> list[Tool]:
         ha.call(domain, service, data)
         return f"Hecho: {action} {_label(state)}" + (f" ({value:g})" if value is not None else "") + "."
 
-    return [
+    def camera(_ctx: ToolContext, camera: str, question: str = "") -> str:
+        state = ha.find(camera, ("camera",))
+        return f"{_label(state)}: " + vision.describe(ha.camera_image(state["entity_id"]), question or "¿Qué se ve?")
+
+    camera_tools = [
+        Tool(
+            name="home_camera",
+            description="Mira una cámara de Home Assistant (p. ej. la de la puerta) y responde sobre lo que se ve.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "camera": {"type": "string", "description": "Nombre de la cámara"},
+                    "question": {"type": "string", "description": "Qué quiere saber (p. ej. '¿hay alguien?')"},
+                },
+                "required": ["camera"],
+            },
+            fn=camera,
+            timeout_s=30,
+        )
+    ] if vision else []
+
+    return camera_tools + [
         Tool(
             name="home_status",
             description=(

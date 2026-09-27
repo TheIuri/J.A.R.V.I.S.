@@ -20,6 +20,7 @@
     <section id="stage">
       <canvas id="orb" aria-label="Mantén pulsado para hablar"></canvas>
       <div id="flow" aria-hidden="true"></div>
+      <video id="cam" muted playsinline hidden aria-label="Cámara activa"></video>
       <section id="cards" hidden aria-label="Resultados">
         <header><span class="mono" id="cards-title">RESULTADOS</span><button id="cards-close" type="button" aria-label="Cerrar">×</button></header>
         <div id="cards-list"></div>
@@ -48,6 +49,7 @@
       <select id="model" aria-label="Modelo"></select>
       <p class="panel-title">CÓRTEX · ESTADO</p>
       <ul id="cortex"></ul>
+      <button id="camera" type="button" aria-pressed="false">CÁMARA</button>
       <button id="memories" type="button">MEMORIA</button>
       <button id="reset" type="button">NUEVA CONVERSACIÓN</button>
       <div id="memory-list"></div>

@@ -9,6 +9,13 @@ import os
 from dataclasses import dataclass, field
 
 # Esfuerzo de razonamiento por defecto: bajo, para que un asistente de voz responda rapido.
+# Modelo de vision por proveedor (camara). Se cambia con <NOMBRE>_VISION_MODEL.
+VISION_DEFAULTS = {
+    "groq": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "gemini": "gemini-2.5-flash",
+    "openrouter": "meta-llama/llama-4-scout:free",
+    "ollama": "llava",
+}
 REASONING_DEFAULTS = {"groq": "low"}
 
 # Proveedores LLM con API compatible con OpenAI: (base_url, variable de la API key, modelo por defecto).
@@ -74,6 +81,7 @@ class Settings:
 
     llm_providers: list[LLMProviderConfig] = field(default_factory=list)
     agent_llm_providers: list[LLMProviderConfig] = field(default_factory=list)  # vacio = los mismos
+    vision_providers: list[LLMProviderConfig] = field(default_factory=list)  # camara; vacio = sin vision
     llm_timeout_s: int = 30
     llm_max_tokens: int = 1024  # incluye los tokens de razonamiento
 
@@ -154,6 +162,24 @@ def _llm_provider(name: str) -> LLMProviderConfig:
     )
 
 
+def _vision_order(*chains: list[LLMProviderConfig]) -> list[LLMProviderConfig]:
+    """VISION_PROVIDERS o, por defecto, los proveedores ya configurados (Gemini primero: ve mejor)."""
+    seen: dict[str, LLMProviderConfig] = {}
+    for chain in chains:
+        for p in chain:
+            seen.setdefault(p.name, p)
+    names = [n.strip().lower() for n in _env("VISION_PROVIDERS").split(",") if n.strip()]
+    if names:
+        return [seen.get(n) or _llm_provider(n) for n in names]
+    return sorted(seen.values(), key=lambda p: p.name != "gemini")
+
+
+def _vision(p: LLMProviderConfig) -> LLMProviderConfig:
+    model = _env(f"{p.name.upper()}_VISION_MODEL", VISION_DEFAULTS.get(p.name, p.model))
+    # Los modelos de vision no admiten reasoning_effort.
+    return LLMProviderConfig(name=p.name, base_url=p.base_url, api_key=p.api_key, model=model)
+
+
 def load_settings() -> Settings:
     token = _env("API_TOKEN")
     if not token:
@@ -180,6 +206,7 @@ def load_settings() -> Settings:
         groq_stt_model=_env("GROQ_STT_MODEL", "whisper-large-v3-turbo"),
         llm_providers=providers,
         agent_llm_providers=agent_providers,
+        vision_providers=[_vision(p) for p in _vision_order(providers, agent_providers)],
         llm_timeout_s=_env_int("LLM_TIMEOUT_S", 30),
         llm_max_tokens=_env_int("LLM_MAX_TOKENS", 1024),
         tts_provider=_env("TTS_PROVIDER", "piper").lower(),

@@ -121,6 +121,7 @@ class Assistant:
         pc_apps: list[str] | None = None,
         on_event: EventSink | None = None,
         model: str | None = None,
+        image: str | None = None,
     ) -> TurnResult:
         if self.stt is None:
             raise RuntimeError("No hay proveedor STT configurado")
@@ -134,7 +135,8 @@ class Assistant:
             emit({"type": "heard", "text": transcript, "ms": timings["stt"]})
             if not transcript:
                 return TurnResult("", "", None, None, timings)
-            return self._respond(transcript, session, speak, timings, ToolContext(pc_apps=pc_apps), emit, model)
+            ctx = ToolContext(pc_apps=pc_apps, image=image)
+            return self._respond(transcript, session, speak, timings, ctx, emit, model)
 
     def handle_text(
         self,
@@ -144,12 +146,13 @@ class Assistant:
         pc_apps: list[str] | None = None,
         on_event: EventSink | None = None,
         model: str | None = None,
+        image: str | None = None,
     ) -> TurnResult:
         emit = on_event or _no_events
         with self._lock:
             text = text.strip()
             emit({"type": "heard", "text": text, "ms": 0})
-            return self._respond(text, session, speak, {}, ToolContext(pc_apps=pc_apps), emit, model)
+            return self._respond(text, session, speak, {}, ToolContext(pc_apps=pc_apps, image=image), emit, model)
 
     def transcribe(self, audio: bytes) -> str:
         """Solo STT (modo Claude: el PC transcribe aqui y piensa con Claude Code)."""
