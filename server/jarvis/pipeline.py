@@ -108,6 +108,7 @@ class Assistant:
         self._history: dict[str, deque[dict[str, str]]] = defaultdict(lambda: deque(maxlen=history_turns * 2))
         self._pending: dict[str, tuple[PendingAction, float]] = {}  # accion esperando un "si", por sesion
         self.board = None  # tablon de avisos proactivos (notify.NoticeBoard), si esta activo
+        self.vault = None  # boveda de Obsidian, si esta configurada
         self.watcher = None
         # Un turno cada vez: evita pelearse por la GPU y mantiene el orden del historial.
         self._lock = threading.Lock()

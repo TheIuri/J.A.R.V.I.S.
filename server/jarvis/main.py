@@ -9,6 +9,7 @@ import queue
 import secrets
 import threading
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
@@ -17,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from .agents import ResearchAgent, agent_tools
+from .agents import REPORT_FOLDER, ResearchAgent, agent_tools, split_report
 from .config import Settings, load_settings
 from .llm import FallbackLLM, LLMError, OpenAICompatLLM
 from .memory import MemoryRejected, MemoryStore, RuleRetriever
@@ -90,6 +91,7 @@ def build_assistant(settings: Settings) -> Assistant:
         tools,
         retriever,
     )
+    assistant.vault = vault
     if reminders:
         assistant.board, assistant.watcher = build_watcher(settings, assistant, reminders, calendars)
     if tools and settings.agents_enabled:
@@ -154,6 +156,12 @@ class ChatRequest(BaseModel):
 
 class SpeakRequest(BaseModel):
     text: str
+
+
+class AgentResult(BaseModel):
+    title: str
+    text: str
+    source: str = "claude"
 
 
 class SessionRequest(BaseModel):
@@ -320,6 +328,30 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             return {"notices": [], "last": board.last_id, "enabled": True}
         notices = board.since(after, min(max(wait, 0), NOTIFY_WAIT_MAX_S))
         return {"notices": [board.to_json(n) for n in notices], "last": board.last_id, "enabled": True}
+
+    @app.post("/api/agent_result", dependencies=[Depends(require_token)])
+    def agent_result(req: AgentResult) -> dict:
+        """Informe de un agente externo (Claude Code en el PC): a Obsidian y aviso a todos los HUD."""
+        if not req.text.strip() or len(req.text) > 20000:
+            raise HTTPException(status_code=400, detail="Informe vacío o demasiado largo")
+        a: Assistant = state["assistant"]
+        summary, report = split_report(req.text)
+        title = " ".join(req.title.split())[:100] or "tarea"
+        note = ""
+        vault = getattr(a, "vault", None)
+        if vault:
+            day = datetime.now().strftime("%Y-%m-%d")
+            header = f"> Tarea hecha por {req.source} (membresía) · {day}\n\n"
+            try:
+                note = vault.create(f"{day} {title}"[:120], header + report[:3800], REPORT_FOLDER, check_secrets=False)
+            except Exception as exc:  # sin nota, el aviso llega igual
+                log.warning("no se pudo guardar el informe de %s: %s", req.source, exc)
+        board = getattr(a, "board", None)
+        if board:
+            where = f" Lo tienes en Obsidian, en {note}." if note else ""
+            board.post("info", req.source, f"{req.source.capitalize()} ha terminado: {title}. {summary}{where}")
+        log.info("informe de %s recibido (%d caracteres) -> %s", req.source, len(req.text), note or "sin nota")
+        return {"note": note, "summary": summary}
 
     @app.get("/api/memories", dependencies=[Depends(require_token)])
     def list_memories() -> dict:

@@ -9,6 +9,7 @@ from ..memory import MemoryStore
 from ..obsidian import Vault
 from .basic import datetime_tool, weather_tool
 from .calendar import Calendars, calendar_tool, parse_calendars
+from .delegate import delegate_tool
 from .homeassistant import HomeAssistant, ha_tools
 from .info import info_tools
 from .memory import memory_tools
@@ -42,6 +43,7 @@ def build_registry(
         registry.register(tool)
     for tool in pc_tools():
         registry.register(tool)
+    registry.register(delegate_tool())  # solo se ofrece con el HUD del PC
     if calendars is None and settings.calendars:
         calendars = Calendars(parse_calendars(settings.calendars), settings.timezone)
     if calendars:

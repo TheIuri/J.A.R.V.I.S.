@@ -355,6 +355,23 @@ GEMINI_API_KEY: "..."
 AGENT_LLM_PROVIDERS: "gemini,groq"   # el asistente sigue con LLM_PROVIDERS
 ```
 
+### Delegar en Claude con tu membresía (Pro/Max)
+
+Para lo más complejo, JARVIS puede encargarle la tarea a **Claude Code**, que viene incluido en Claude Pro/Max
+y usa **tu sesión**, sin API de pago: *"Pídele a Claude que compare las placas solares para un piso y me haga un
+resumen"*. Siempre te pregunta antes, porque gasta cupo de tu membresía. Al terminar, el informe va a Obsidian
+(`JARVIS/Investigaciones/`) y te avisa. Solo funciona hablando desde el **HUD del PC**, que es donde se ejecuta.
+
+Instalación, una sola vez en el PC:
+1. Instala Claude Code, siguiendo las instrucciones de [code.claude.com](https://code.claude.com).
+2. Abre una terminal, ejecuta `claude`, inicia sesión con tu cuenta y ciérralo.
+3. Al lanzar `py jarvis_hud.py` debe salir `Claude Code (membresia): disponible`.
+
+**Seguridad**: Claude Code arranca **solo con WebSearch y WebFetch**. No puede ejecutar comandos, editar ni
+**leer archivos del PC** (una web maliciosa podría pedirle leer tus archivos y enviarlos fuera), ni usar
+servidores MCP. Trabaja en una carpeta temporal vacía y la tarea le llega por la entrada estándar, nunca en la
+línea de comandos.
+
 **Seguridad**: el agente **solo tiene herramientas de lectura** (buscar, leer páginas, Wikipedia, noticias). Si
 una web intenta darle órdenes, no tiene con qué cumplirlas; el informe lo guarda el código, no la IA. El lector
 de páginas no abre direcciones de tu red (router, NAS…) ni `localhost`, y comprueba también cada redirección.
@@ -479,6 +496,7 @@ client/
   jarvis_hud.py      HUD web local (proxy al NAS + acciones del PC; usa server/jarvis/web)
   wake.py            "Hey Jarvis": palabra de activación local (openWakeWord) y fin de frase
   spotify_login.py   obtiene el refresh token de Spotify (una vez)
+  delegate.py        encarga tareas complejas a Claude Code con tu membresía (solo buscar y leer webs)
   pc_actions.py      ejecuta las acciones permitidas en Windows
   apps.json          apps que JARVIS puede abrir
 deploy/truenas/           docker-compose para "Install via YAML"

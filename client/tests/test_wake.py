@@ -83,3 +83,46 @@ def test_pc_wol_action_validates_mac():
     pc = PCActions({}, announce=lambda t: None)
     assert pc.run({"action": "wol", "mac": "no-es-una-mac"}) == "MAC no valida"
     assert pc.run({"action": "wol", "mac": "AA:BB:CC:DD:EE:FF", "device": "sobremesa"}) == "encendido enviado a sobremesa"
+
+
+def test_delegate_runs_claude_code_safely(tmp_path):
+    import os
+    import stat
+    import time as t
+
+    from delegate import ALLOWED, Delegate
+
+    # Un "claude" falso que guarda sus argumentos y lo que recibe por la entrada estándar.
+    fake = tmp_path / "claude"
+    fake.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$@" > "{tmp_path}/args"\n'
+        f'cat > "{tmp_path}/stdin"\n'
+        'echo "RESUMEN: Hecho."\necho "# Informe"\n'
+    )
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    reports, spoken = [], []
+    d = Delegate(lambda title, text: reports.append((title, text)), spoken.append, exe=str(fake))
+    task = 'compara placas solares"; rm -rf / #'
+    assert d.start(task) == "tarea enviada a Claude"
+    for _ in range(50):
+        if reports:
+            break
+        t.sleep(0.1)
+    assert reports == [(task, "RESUMEN: Hecho.\n# Informe")] and spoken == []
+    args = (tmp_path / "args").read_text().split("\n")
+    assert task not in "\n".join(args)  # la tarea nunca va en la línea de comandos
+    assert args[args.index("--allowedTools") + 1] == ALLOWED and "--strict-mcp-config" in args
+    assert "Read" in args[args.index("--disallowedTools") + 1]
+    assert task in (tmp_path / "stdin").read_text()
+    assert os.path.exists(fake)
+
+
+def test_delegate_without_claude_installed():
+    from delegate import Delegate
+    from pc_actions import PCActions
+
+    d = Delegate(lambda *a: None, lambda t: None, exe=None)
+    d.available = lambda: None
+    assert PCActions({}, lambda t: None, d).run({"action": "delegate", "task": "x"}) == "Claude Code no está instalado en este PC"
+    assert PCActions({}, lambda t: None).run({"action": "delegate", "task": "x"}).startswith("delegar tareas")

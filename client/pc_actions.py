@@ -68,9 +68,10 @@ def _set_volume(level: int) -> None:
 
 
 class PCActions:
-    def __init__(self, apps: dict[str, str], announce: Callable[[str], None]):
+    def __init__(self, apps: dict[str, str], announce: Callable[[str], None], delegate=None):
         self.apps = apps
         self.announce = announce  # dice un texto en voz alta (para los temporizadores)
+        self.delegate = delegate  # delegate.Delegate: tareas para Claude Code (membresia)
         self.timers: list[threading.Timer] = []
 
     def run(self, action: dict) -> str:
@@ -131,6 +132,10 @@ class PCActions:
                     for port in (9, 7):
                         sock.sendto(packet, ("255.255.255.255", port))
                 return f"encendido enviado a {action.get('device', mac)}"
+            if kind == "delegate":
+                if self.delegate is None:
+                    return "delegar tareas solo funciona con el HUD del PC"
+                return self.delegate.start(str(action.get("task", ""))[:1500])
             return f"accion desconocida: {kind}"
         except Exception as exc:  # una accion fallida no debe cerrar el cliente
             return f"error en {kind}: {exc}"

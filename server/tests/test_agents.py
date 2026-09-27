@@ -88,3 +88,41 @@ def test_research_agent_limits_and_errors():
     broken = ResearchAgent(ScriptedLLM([]).llm(), registry(fake_search()), board=NoticeBoard())
     job = broken.start("algo", background=False)  # el LLM no responde
     assert job.state == "error" and broken.board.since(0)[0].level == "warning"
+
+
+def test_delegate_claude_is_pc_only_and_needs_a_yes():
+    from jarvis.pipeline import Assistant
+    from jarvis.tools.delegate import delegate_tool
+    from tests.test_tools import NoTTS
+
+    reg = registry(delegate_tool())
+    assert reg.specs(ToolContext()) == []  # desde el móvil no se ofrece
+    assert reg.specs(ToolContext(pc_apps=[]))[0]["function"]["name"] == "delegate_claude"
+
+    script = ScriptedLLM([[("delegate_claude", {"task": "compara placas solares para un piso"})], "¿Se lo encargo a Claude?"])
+    assistant = Assistant(None, script.llm(), NoTTS(), "s", tools=reg)
+    first = assistant.handle_text("que Claude compare placas solares", pc_apps=[])
+    assert first.pc_actions == []  # aún no
+    done = assistant.handle_text("sí", pc_apps=[])
+    assert done.pc_actions == [{"action": "delegate", "agent": "claude", "task": "compara placas solares para un piso"}]
+
+
+def test_agent_result_endpoint_saves_note_and_notifies(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from jarvis.main import create_app
+    from tests.test_core import make_assistant
+
+    assistant = make_assistant()
+    assistant.vault = Vault(tmp_path)
+    assistant.board = NoticeBoard()
+    client = TestClient(create_app(assistant, api_token="s"))
+    auth = {"Authorization": "Bearer s"}
+    body = {"title": "placas solares", "text": "RESUMEN: Compensa en 7 años.\n# Placas\nDetalle con puntos clave."}
+    assert client.post("/api/agent_result", json=body).status_code == 401
+    out = client.post("/api/agent_result", json=body, headers=auth).json()
+    assert out["summary"] == "Compensa en 7 años." and out["note"].startswith("JARVIS/Investigaciones/")
+    assert "puntos clave" in (tmp_path / out["note"]).read_text()
+    notice = assistant.board.since(0)[0]
+    assert notice.source == "claude" and notice.text.startswith("Claude ha terminado: placas solares. Compensa")
+    assert client.post("/api/agent_result", json={"title": "x", "text": "a" * 20001}, headers=auth).status_code == 400

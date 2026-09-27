@@ -29,6 +29,7 @@ from pathlib import Path
 
 import httpx
 
+from delegate import Delegate
 from pc_actions import PCActions, load_apps
 
 # La interfaz vive en el servidor (tambien la sirve el NAS para el movil); aqui se usa la copia del repo.
@@ -49,7 +50,8 @@ class Hud:
         self.api = httpx.Client(base_url=server.rstrip("/"), headers={"Authorization": f"Bearer {token}"}, timeout=90)
         self._events: list[dict] = []
         self._cond = threading.Condition()
-        self.actions = PCActions(load_apps(apps_path), self.announce) if actions_enabled else None
+        delegate = Delegate(self.report, self.announce)
+        self.actions = PCActions(load_apps(apps_path), self.announce, delegate) if actions_enabled else None
         self.wake = None  # WakeListener si "Hey Jarvis" esta activo
 
     @property
@@ -64,6 +66,14 @@ class Hud:
         except httpx.HTTPError as exc:
             print(f"(no se pudo generar la voz del aviso: {exc})")
         self.push({"type": "announce", "text": text, "audio_wav_b64": audio})
+
+    def report(self, title: str, text: str) -> None:
+        """Informe de Claude Code: el servidor lo guarda en Obsidian y avisa a todos los HUD (y al movil)."""
+        try:
+            self.api.post("/api/agent_result", json={"title": title, "text": text, "source": "claude"}).raise_for_status()
+        except httpx.HTTPError as exc:
+            print(f"(no se pudo entregar el informe de Claude: {exc})")
+            self.announce("Claude ha terminado, pero no he podido guardar el informe.")
 
     def push(self, event: dict) -> None:
         with self._cond:
@@ -254,6 +264,9 @@ def main() -> None:
         except Exception as exc:  # microfono ocupado, descarga fallida...
             print(f'"Hey Jarvis" desactivado: {exc}')
 
+    if hud.actions:
+        found = hud.actions.delegate.available()
+        print(f"Claude Code (membresia): {'disponible' if found else 'no instalado (opcional)'}")
     httpd = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(hud, args.port))
     url = f"http://localhost:{args.port}"
     print(f"HUD en {url}  (Ctrl+C para salir)")
