@@ -33,7 +33,7 @@ from .tools.calendar import Calendars, parse_calendars
 from .tools.reminders import ReminderStore
 from .tools.truenas import _default_connect
 from .tools.vision import Vision, check_image
-from .tts import NullTTS, PiperTTS
+from .tts import EdgeTTS, NullTTS, PiperTTS
 from .turnlog import TurnLog
 from .watch import Watcher, briefing_check, calendar_check, reminders_check, summary_check, truenas_check
 
@@ -64,11 +64,12 @@ def build_assistant(settings: Settings) -> Assistant:
     llm = FallbackLLM(
         [OpenAICompatLLM(p, settings.llm_timeout_s, settings.llm_max_tokens) for p in settings.llm_providers]
     )
-    tts = (
-        PiperTTS(settings.piper_voice, data / "piper", settings.piper_speaker, settings.piper_speed)
-        if settings.tts_provider == "piper"
-        else NullTTS()
-    )
+    if settings.tts_provider in ("piper", "edge"):
+        tts = PiperTTS(settings.piper_voice, data / "piper", settings.piper_speaker, settings.piper_speed)
+        if settings.tts_provider == "edge":
+            tts = EdgeTTS(settings.edge_voice, settings.edge_rate, settings.edge_pitch, fallback=tts)
+    else:
+        tts = NullTTS()
 
     store = MemoryStore(data / "memory.db") if settings.memory_enabled else None
     vault = None

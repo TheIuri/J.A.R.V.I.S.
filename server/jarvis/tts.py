@@ -89,3 +89,66 @@ class PiperTTS:
             else:
                 self.voice.synthesize(text, wav)
         return buf.getvalue()
+
+
+class EdgeTTS:
+    """Voces neuronales de Microsoft Edge ("Álvaro", "Elvira"...): muy naturales y gratis.
+
+    No es un servicio oficial: si falla (sin internet, Microsoft lo cambia...), habla el respaldo
+    (Piper), asi JARVIS nunca se queda mudo. Edge devuelve MP3; se convierte a WAV para que todos
+    los clientes lo reproduzcan igual.
+    """
+
+    TIMEOUT_S = 15
+
+    def __init__(self, voice: str = "es-ES-AlvaroNeural", rate: str = "+0%", pitch: str = "+0Hz", fallback: TTS | None = None):
+        import edge_tts  # noqa: F401 - falla al arrancar si no esta instalado
+
+        if not re.fullmatch(r"[+-]\d{1,3}%", rate) or not re.fullmatch(r"[+-]\d{1,3}Hz", pitch):
+            raise ValueError("EDGE_RATE debe ser como +10% y EDGE_PITCH como -5Hz")
+        self.voice, self.rate, self.pitch = voice, rate, pitch
+        self.fallback = fallback
+        self.name = f"edge:{voice}" + (f" (respaldo {fallback.name})" if fallback else "")
+
+    async def _mp3(self, text: str) -> bytes:
+        import asyncio
+
+        import edge_tts
+
+        async def collect() -> bytes:
+            audio = b""
+            async for chunk in edge_tts.Communicate(text, self.voice, rate=self.rate, pitch=self.pitch).stream():
+                if chunk["type"] == "audio":
+                    audio += chunk["data"]
+            return audio
+
+        return await asyncio.wait_for(collect(), self.TIMEOUT_S)
+
+    def synthesize(self, text: str) -> bytes | None:
+        import asyncio
+
+        text = clean_for_speech(text)
+        if not text:
+            return None
+        try:
+            mp3 = asyncio.run(self._mp3(text))
+            if not mp3:
+                raise RuntimeError("Edge no ha devuelto audio")
+            return to_wav(mp3)
+        except Exception as exc:  # sin voz de Edge, habla el respaldo
+            log.warning("Edge TTS ha fallado (%s); uso el respaldo", type(exc).__name__)
+            return self.fallback.synthesize(text) if self.fallback else None
+
+
+def to_wav(audio: bytes, rate: int = 24000) -> bytes:
+    """MP3 (o WAV/FLAC) -> WAV mono 16 bits."""
+    import miniaudio
+
+    decoded = miniaudio.decode(audio, output_format=miniaudio.SampleFormat.SIGNED16, nchannels=1, sample_rate=rate)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(rate)
+        wav.writeframes(decoded.samples.tobytes())
+    return buf.getvalue()

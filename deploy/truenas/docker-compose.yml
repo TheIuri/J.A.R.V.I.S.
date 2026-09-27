@@ -31,7 +31,8 @@ services:
       # AGENT_LLM_PROVIDERS: "gemini,groq" # el agente investigador con otra cadena (mas limite de tokens)
 
       # --- Voz (TTS): Piper local en CPU ---
-      TTS_PROVIDER: "piper"
+      TTS_PROVIDER: "piper" # "edge" = voces de Microsoft (mas naturales), con Piper de respaldo
+      # EDGE_VOICE: "es-ES-AlvaroNeural"
       PIPER_VOICE: "es_ES-davefx-medium" # otras: es_ES-sharvard-medium, es_MX-claude-high, es_AR-daniela-high
       # PIPER_SPEAKER: "0" # solo voces con varios locutores (sharvard: 0 hombre, 1 mujer)
       # PIPER_SPEED: "1.0" # 1.2 = un 20% mas rapido

@@ -496,6 +496,20 @@ edita las variables de la app en TrueNAS y haz redeploy:
 
 `PIPER_SPEED` cambia la velocidad (`1.2` = un 20 % más rápido; entre 0.5 y 2).
 
+### Voz más natural: Edge TTS
+
+Las voces neuronales de Microsoft Edge suenan casi humanas, son gratis y no necesitan clave:
+
+```yaml
+TTS_PROVIDER: "edge"
+EDGE_VOICE: "es-ES-AlvaroNeural"   # también es-ES-ElviraNeural, es-ES-XimenaNeural, es-MX-JorgeNeural...
+# EDGE_RATE: "+10%"                 # velocidad
+# EDGE_PITCH: "-2Hz"                # tono
+```
+
+Van por internet y **no son un servicio oficial**: si fallan o Microsoft las cambia, JARVIS habla con **Piper**
+automáticamente (se sigue usando `PIPER_VOICE` como respaldo), así que nunca se queda mudo.
+
 ## Probar sin TrueNAS (desarrollo)
 
 ```bash
