@@ -40,6 +40,9 @@ main { display: grid; grid-template-columns: 280px 1fr 240px; height: calc(100% 
 #log .u { color: var(--dim); }
 #log .a { margin-top: 4px; }
 #log .meta { font-family: var(--mono); font-size: 10px; color: var(--dim); margin-top: 4px; }
+#log .notice { border-left: 2px solid #d2e6ff; padding-left: 8px; }
+#log .notice.warning { border-color: var(--accent); }
+#log .notice.critical { border-color: var(--error); }
 
 #panel { border-left: 1px solid var(--line); padding: 16px; overflow-y: auto; }
 #panel dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 10px; margin: 0 0 18px; }
@@ -82,7 +85,39 @@ main { display: grid; grid-template-columns: 280px 1fr 240px; height: calc(100% 
 #flow.past .region.on { opacity: .7; }
 #trail { margin: 0; min-height: 1.2em; font-size: 9.5px; text-align: center; max-width: 90%; opacity: .8; }
 
-.panel-title { margin: 0 0 8px; color: var(--dim); }
+/* --- ventana de resultados (búsquedas, Wikipedia, noticias) ---------------------- */
+#cards { position: absolute; top: 16px; right: 16px; width: 320px; max-height: calc(100% - 32px); display: flex;
+  flex-direction: column; border: 1px solid var(--line); border-radius: 10px; background: rgba(11, 15, 26, .88);
+  backdrop-filter: blur(6px); box-shadow: 0 10px 40px rgba(0, 0, 0, .5); z-index: 2; animation: cards-in .35s ease-out; }
+#cards[hidden] { display: none; }
+#cards header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px;
+  border-bottom: 1px solid var(--line); }
+#cards header button { background: none; border: none; color: var(--dim); font-size: 18px; cursor: pointer; line-height: 1; }
+#cards header button:hover { color: var(--text); }
+#cards-list { overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.card { display: block; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text);
+  text-decoration: none; background: rgba(5, 7, 13, .5); transition: border-color .2s, transform .2s; }
+a.card:hover { border-color: var(--accent); transform: translateX(-2px); }
+.card img.photo { width: 100%; max-height: 180px; object-fit: cover; border-radius: 6px; margin-bottom: 6px; }
+.card .src { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 9.5px;
+  letter-spacing: .08em; color: var(--dim); text-transform: uppercase; }
+.card .src img { width: 14px; height: 14px; border-radius: 3px; }
+.card .t { margin: 3px 0; font-size: 13px; font-weight: 600; line-height: 1.3; }
+.card .d { font-size: 12px; color: var(--dim); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical; overflow: hidden; }
+.card.wiki .d { -webkit-line-clamp: 6; }
+@keyframes cards-in { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+
+#model { width: 100%; margin: 0 0 18px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: var(--text); font: 12px var(--mono); letter-spacing: .06em; }
+#model:focus { border-color: var(--accent); outline: none; }
+/* --- cámara: miniatura siempre visible mientras está encendida ------------------- */
+#cam { position: absolute; left: 16px; bottom: 16px; width: 180px; aspect-ratio: 4 / 3; object-fit: cover;
+  border: 2px solid var(--error); border-radius: 8px; background: #000; z-index: 2; }
+#cam[hidden] { display: none; }
+#panel button#camera.on { border-color: var(--error); color: var(--error); }
+
+.panel-title { display: block;  margin: 0 0 8px; color: var(--dim); }
 #cortex { list-style: none; margin: 0 0 18px; padding: 0; }
 #cortex li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0 4px 10px;
   border-bottom: 1px solid var(--line); position: relative; font-size: 10px; }
@@ -94,6 +129,8 @@ main { display: grid; grid-template-columns: 280px 1fr 240px; height: calc(100% 
 #cortex li.planned { opacity: .5; }
 
 @media (max-width: 900px) {
+  #cards { position: static; width: 100%; max-height: 50vh; }
+  #cam { width: 110px; left: 10px; bottom: auto; top: 10px; }
   #flow .region { max-width: 120px; font-size: 9.5px; }
   html, body { overflow: auto; }
   header { padding: 12px 16px; }
@@ -108,4 +145,5 @@ main { display: grid; grid-template-columns: 280px 1fr 240px; height: calc(100% 
 @media (prefers-reduced-motion: reduce) {
   #orb { animation: none; }
   #flow .region { transition: none; }
+  #cards, a.card { animation: none; transition: none; }
 }

@@ -41,6 +41,7 @@ class LLMReply:
 class OpenAICompatLLM:
     def __init__(self, cfg: LLMProviderConfig, timeout_s: int, max_tokens: int, client: httpx.Client | None = None):
         self.name = f"{cfg.name}:{cfg.model}"
+        self.provider = cfg.name
         self.model = cfg.model
         self.max_tokens = max_tokens
         self.reasoning_effort = cfg.reasoning_effort
@@ -87,9 +88,15 @@ class FallbackLLM:
     def name(self) -> str:
         return " -> ".join(p.name for p in self.providers)
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> LLMReply:
+    def models(self) -> list[dict[str, str]]:
+        """Para el selector del HUD: id = nombre del proveedor (groq, gemini...)."""
+        return [{"id": p.provider, "label": p.name} for p in self.providers]
+
+    def chat(self, messages: list[dict], tools: list[dict] | None = None, prefer: str | None = None) -> LLMReply:
+        """prefer: proveedor elegido en el HUD; va primero y el resto quedan de respaldo."""
         errors = []
-        for provider in self.providers:
+        order = sorted(self.providers, key=lambda p: p.provider != prefer) if prefer else self.providers
+        for provider in order:
             try:
                 msg = provider.chat(messages, tools)
                 return LLMReply(msg.text, provider.name, msg.tool_calls)

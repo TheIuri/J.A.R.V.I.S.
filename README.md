@@ -272,6 +272,10 @@ py jarvis_hud.py        # abre http://localhost:8766 (usa JARVIS_SERVER y JARVIS
 - **Micrófono**: el navegador pide permiso la primera vez. Funciona porque `localhost` cuenta como sitio seguro.
 - **Opciones**: `--no-actions` (sin acciones en el PC), `--port 8766` y `--no-browser`.
 
+**Ventana de resultados**: cuando busca en internet, Wikipedia o noticias, aparece al lado del cerebro una ventana
+con los resultados: foto (Wikipedia, o Brave si usas su clave), icono de la web, título y fragmento. Clic para
+abrir la página; se cierra con la × o al hacer otra pregunta. En el móvil sale debajo del cerebro.
+
 ### "Hey Jarvis" (Nivel 4)
 
 El HUD del PC puede escuchar la palabra de activación, sin pulsar nada. La detección es 100 % local con
@@ -294,6 +298,111 @@ py jarvis_hud.py
   - `--wake-device N` para elegir otro micrófono (lista con `py jarvis_client.py --list-devices`).
   - `--no-wake` para desactivarlo.
 - **En el móvil** no está disponible: el navegador no puede escuchar en segundo plano. Allí sigues pulsando para hablar.
+
+### Cámara (Nivel 4, región VISUAL)
+
+Pulsa **CÁMARA** en el panel del HUD. En el PC usa la webcam y en el móvil la cámara trasera. Mientras está
+encendida, cada pregunta lleva una foto de ese momento: *"¿Qué ves?"*, *"¿Qué es esto?"*, *"Léeme esta
+etiqueta"*, *"¿Esta planta está bien?"*. Mientras está encendida se ve una miniatura con borde rojo. La foto solo
+sale con tus preguntas y no se guarda en ningún sitio.
+
+Con Home Assistant, también sus cámaras: *"¿Hay alguien en la puerta?"*.
+
+**Modelo de visión**: por defecto usa los proveedores que ya tienes, con Gemini primero si está configurado
+(`gemini-2.5-flash`), y si no, el modelo de visión de Groq (`meta-llama/llama-4-scout-17b-16e-instruct`).
+Se cambia con `VISION_PROVIDERS: "gemini,groq"` y `GROQ_VISION_MODEL` / `GEMINI_VISION_MODEL` (si Groq retira el
+modelo, elige otro de visión en console.groq.com/docs/models). En modo Claude no se usa la cámara.
+
+### Avisos proactivos (Nivel 4)
+
+JARVIS habla sin que le preguntes. Los avisos salen en el HUD (PC y móvil), se dicen en voz alta y encienden el
+**TÁLAMO** del cerebro. Si llegan mientras está pensando o hablando, esperan a que termine. Solo habla la pestaña
+visible, así que no suenan a la vez el PC y el móvil.
+
+| Vigilante | Qué avisa | Cada |
+|---|---|---|
+| Recordatorios | *"Recuérdame a las 18:00 llamar a mamá"*, *"...dentro de 20 minutos"*, *"...mañana a las 9"* | 20 s |
+| Agenda (`CALENDARS`) | tus citas, 15 minutos antes (`CALENDAR_REMIND_MINUTES`) | 1 min |
+| TrueNAS (`TRUENAS_*`) | pool con problemas, disco a ≥ 50 °C (`DISK_TEMP_WARN`), app caída / recuperada, alertas nuevas, copias fallidas | 5 min |
+
+- Cada aviso se da **una sola vez**, también tras reiniciar el contenedor.
+- `NOTIFY_QUIET: "23:00-08:00"` hace que esas horas los avisos se vean pero no se digan, salvo los **críticos**.
+- `NOTIFY_ENABLED: "false"` lo desactiva todo, recordatorios incluidos.
+
+**En el móvil aunque el HUD esté cerrado** (opcional), con [ntfy](https://ntfy.sh), que es gratis:
+1. Instala la app **ntfy** en el móvil y suscríbete a un tema con un nombre **largo y difícil de adivinar**,
+   por ejemplo `jarvis-ori-7f3k9x2q`. En ntfy.sh, quien sepa el nombre del tema puede leerlo; si prefieres,
+   instala ntfy como app en TrueNAS y usa tu propio servidor.
+2. Añade `NTFY_URL: "https://ntfy.sh/jarvis-ori-7f3k9x2q"` a las variables de la app.
+
+## Nivel 6: rutinas
+
+**Buenos días**: di *"Buenos días"* o *"¿Qué tengo hoy?"* y te resume el día: fecha, tiempo, agenda y
+recordatorios de hoy, un par de titulares y problemas del servidor si los hay. Para que te lo diga **solo, cada
+mañana**, en el HUD y como push al móvil:
+
+```yaml
+BRIEFING_AT: "08:00"
+# BRIEFING_WEEKENDS: "false"   # solo de lunes a viernes
+```
+
+Se da una vez al día. Si el servidor arranca más de 2 horas tarde, ese día se salta.
+
+## Nivel 5: agentes
+
+**Agente investigador**: *"Investiga qué placas solares me convienen para un piso"*. JARVIS responde al momento
+que se pone con ello, y un agente trabaja en segundo plano:
+1. Busca en internet, lee de 2 a 5 páginas y contrasta con Wikipedia o noticias. Hace como máximo 10 rondas.
+2. Escribe un informe con resumen, ideas principales y fuentes, y lo guarda en Obsidian, en
+   `JARVIS/Investigaciones/AAAA-MM-DD tema.md`.
+3. Avisa al terminar: lo dice en el HUD, y llega al móvil si tienes ntfy.
+
+*"¿Cómo va la investigación?"* te da el estado. Puede haber 2 investigaciones a la vez, y `AGENTS_ENABLED: "false"`
+lo desactiva.
+
+**Modelo del agente**: lee páginas largas y el plan gratuito de Groq tiene un límite bajo de tokens por minuto.
+Si ves que las investigaciones fallan, dale al agente otra cadena de modelos, por ejemplo Gemini primero (clave
+gratis en [aistudio.google.com](https://aistudio.google.com/apikey)):
+
+```yaml
+GEMINI_API_KEY: "..."
+AGENT_LLM_PROVIDERS: "gemini,groq"   # el asistente sigue con LLM_PROVIDERS
+```
+
+### Delegar en Claude con tu membresía (Pro/Max)
+
+Para lo más complejo, JARVIS puede encargarle la tarea a **Claude Code**, que viene incluido en Claude Pro/Max
+y usa **tu sesión**, sin API de pago: *"Pídele a Claude que compare las placas solares para un piso y me haga un
+resumen"*. Siempre te pregunta antes, porque gasta cupo de tu membresía. Al terminar, el informe va a Obsidian
+(`JARVIS/Investigaciones/`) y te avisa. Solo funciona hablando desde el **HUD del PC**, que es donde se ejecuta.
+
+Instalación, una sola vez en el PC:
+1. Instala Claude Code, siguiendo las instrucciones de [code.claude.com](https://code.claude.com).
+2. Abre una terminal, ejecuta `claude`, inicia sesión con tu cuenta y ciérralo.
+3. Al lanzar `py jarvis_hud.py` debe salir `Claude Code (membresia): disponible`.
+
+### Modo Claude y selector de modelo
+
+En el panel derecho del HUD, **CEREBRO** elige quién piensa:
+- **Automático (JARVIS)**: la cadena de `LLM_PROVIDERS` (por defecto Groq).
+- **Un proveedor concreto** (`groq`, `gemini`...): va primero y el resto queda de respaldo. En el PC y en el móvil.
+- **Claude Sonnet / Opus / Haiku · membresía** (solo en el HUD del PC, con Claude Code instalado): toda la
+  conversación la piensa Claude con tu membresía. Mantiene el contexto entre preguntas y conoce tus recuerdos de
+  JARVIS. La voz no cambia: el NAS transcribe y habla. En este modo **solo busca y lee en internet**; para
+  acciones (PC, casa, música, recordatorios, notas) vuelve a Automático. Responde más despacio que Groq y gasta
+  cupo de la membresía, así que es mejor para conversaciones que merecen la pena.
+
+La elección se guarda en ese navegador. *Nueva conversación* también empieza una sesión nueva con Claude.
+
+**Seguridad**: Claude Code arranca **solo con WebSearch y WebFetch**. No puede ejecutar comandos, editar ni
+**leer archivos del PC** (una web maliciosa podría pedirle leer tus archivos y enviarlos fuera), ni usar
+servidores MCP. Trabaja en una carpeta temporal vacía y la tarea le llega por la entrada estándar, nunca en la
+línea de comandos.
+
+**Seguridad**: el agente **solo tiene herramientas de lectura** (buscar, leer páginas, Wikipedia, noticias). Si
+una web intenta darle órdenes, no tiene con qué cumplirlas; el informe lo guarda el código, no la IA. El lector
+de páginas no abre direcciones de tu red (router, NAS…) ni `localhost`, y comprueba también cada redirección.
+Por eso `web_read` es solo del agente, no del asistente principal, que sí puede actuar (PC, casa, Spotify…).
 
 ## HUD en el móvil (HTTPS con Tailscale)
 
@@ -414,6 +523,8 @@ client/
   jarvis_hud.py      HUD web local (proxy al NAS + acciones del PC; usa server/jarvis/web)
   wake.py            "Hey Jarvis": palabra de activación local (openWakeWord) y fin de frase
   spotify_login.py   obtiene el refresh token de Spotify (una vez)
+  delegate.py        encarga tareas complejas a Claude Code con tu membresía (solo buscar y leer webs)
+  claude_mode.py     modo Claude: la conversación la piensa Claude Code (membresía) en el PC
   pc_actions.py      ejecuta las acciones permitidas en Windows
   apps.json          apps que JARVIS puede abrir
 deploy/truenas/           docker-compose para "Install via YAML"

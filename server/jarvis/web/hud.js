@@ -30,6 +30,8 @@ const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 let state = "idle";
 let mode = "local";
 let pcApps = null;
+let claudeModels = []; // modo Claude (membresía) disponible en el HUD del PC
+const MODEL_KEY = "jarvis_model";
 let wakeEnabled = false; // "Hey Jarvis" en el PC (modo local con openwakeword)
 let wakeActive = false; // se oyó "Hey Jarvis" y se espera la frase
 let busySent = false;
@@ -91,13 +93,17 @@ $("login-form").addEventListener("submit", async (e) => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session: SESSION }),
   });
-  if (resp.ok) $("login").hidden = true;
+  if (resp.ok) {
+    $("login").hidden = true;
+    loadModels(); // con token ya se pueden pedir los modelos
+  }
 });
 
 // --- estado -----------------------------------------------------------------
 
 function setState(next, detail) {
   state = next;
+  if (next === "idle" && queuedNotices.length) setTimeout(flushNotices, 400);
   const busy = next === "listening" || next === "thinking" || next === "speaking";
   if (wakeEnabled && busy !== busySent) {
     busySent = busy; // mientras piensa o habla, el PC no escucha "Hey Jarvis" (su propia voz)
@@ -166,11 +172,133 @@ async function stopRecording() {
     return;
   }
   const wav = encodeWav(downsample(concat(chunks), audioCtx.sampleRate, TARGET_RATE), TARGET_RATE);
+  await askVoice(wav);
+}
+
+// --- cámara (región VISUAL) -------------------------------------------------------------
+// Solo mientras está encendida: cada pregunta lleva una foto de ese momento. No se guarda nada.
+
+let camStream = null;
+
+async function toggleCamera() {
+  const btn = $("camera");
+  const visual = REGIONS[REGION.visual];
+  if (camStream) {
+    camStream.getTracks().forEach((t) => t.stop());
+    camStream = null;
+    $("cam").srcObject = null;
+    $("cam").hidden = true;
+    Object.assign(visual, { planned: true, role: "cámara apagada" });
+  } else {
+    try {
+      // En el móvil, la cámara trasera; en el PC, la webcam.
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 } },
+      });
+    } catch {
+      setState("error", "sin acceso a la cámara");
+      return;
+    }
+    $("cam").srcObject = camStream;
+    $("cam").hidden = false;
+    await $("cam").play().catch(() => {});
+    Object.assign(visual, { planned: false, role: "cámara encendida" });
+  }
+  btn.classList.toggle("on", !!camStream);
+  btn.setAttribute("aria-pressed", String(!!camStream));
+  btn.textContent = camStream ? "CÁMARA · ENCENDIDA" : "CÁMARA";
+}
+
+function snapshot() {
+  const video = $("cam");
+  if (!camStream || !video.videoWidth) return null;
+  const scale = Math.min(1, 960 / video.videoWidth);
+  const c = document.createElement("canvas");
+  c.width = Math.round(video.videoWidth * scale);
+  c.height = Math.round(video.videoHeight * scale);
+  c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", 0.75).split(",")[1];
+}
+
+$("camera").addEventListener("click", toggleCamera);
+
+// --- modelo -----------------------------------------------------------------------
+
+function selectedModel() {
+  return $("model").value || "";
+}
+
+function isClaude() {
+  return selectedModel().startsWith("claude-");
+}
+
+async function loadModels() {
+  const select = $("model");
+  const options = [{ id: "", label: "Automático (JARVIS)" }];
+  try {
+    const resp = await api("/api/models");
+    if (resp.ok) (await resp.json()).models.forEach((m) => options.push(m));
+  } catch {
+    /* servidor antiguo: solo automático */
+  }
+  claudeModels.forEach((m) => options.push({ id: m.id, label: `${m.label} · membresía` }));
+  select.textContent = "";
+  for (const m of options) {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    opt.textContent = m.label;
+    select.append(opt);
+  }
+  let saved = "";
+  try {
+    saved = localStorage.getItem(MODEL_KEY) || "";
+  } catch {
+    /* sin almacenamiento */
+  }
+  select.value = options.some((m) => m.id === saved) ? saved : "";
+}
+
+$("model").addEventListener("change", () => {
+  try {
+    localStorage.setItem(MODEL_KEY, selectedModel());
+  } catch {
+    /* sin almacenamiento */
+  }
+});
+
+// Voz: normal (el NAS transcribe y piensa) o modo Claude (el NAS transcribe y Claude piensa en el PC).
+async function askVoice(wav) {
   const form = new FormData();
   form.append("audio", wav, "audio.wav");
   form.append("session", SESSION);
-  if (pcApps) form.append("pc_apps", pcApps.join(","));
-  await ask("/api/voice", { method: "POST", body: form });
+  if (!isClaude()) {
+    if (pcApps) form.append("pc_apps", pcApps.join(","));
+    if (selectedModel()) form.append("model", selectedModel());
+    const photo = snapshot();
+    if (photo) form.append("image", photo);
+    return ask("/api/voice", { method: "POST", body: form });
+  }
+  setState("thinking", "transcribiendo");
+  let text = "";
+  try {
+    const resp = await api("/api/transcribe", { method: "POST", body: form });
+    text = (await resp.json()).text || "";
+  } catch (err) {
+    return setState("error", String(err.message || err).slice(0, 120));
+  }
+  if (!text) {
+    $("subtitle").textContent = "No te he oído bien, prueba otra vez.";
+    return setState("idle");
+  }
+  return askClaude(text);
+}
+
+function askClaude(text) {
+  return ask("/claude/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, session: SESSION, model: selectedModel() }),
+  });
 }
 
 function concat(chunks) {
@@ -262,6 +390,7 @@ async function ask(path, init) {
     setState("idle");
     return;
   }
+  if (body.cards?.length && $("cards").hidden) showCards(body.cards); // servidor sin directo
   showTurn(body);
   if (body.audio_wav_b64) await playWav(body.audio_wav_b64);
   else setState("idle");
@@ -325,7 +454,8 @@ function showTurn(body) {
 }
 
 async function sendText(text) {
-  const payload = { text, session: SESSION, pc_apps: pcApps };
+  if (isClaude()) return askClaude(text);
+  const payload = { text, session: SESSION, pc_apps: pcApps, model: selectedModel() || null, image: snapshot() };
   await ask("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -374,6 +504,51 @@ async function resetConversation() {
   $("you").textContent = "";
 }
 
+// --- avisos proactivos (recordatorios, agenda, TrueNAS...) ----------------------------
+
+const queuedNotices = [];
+
+async function noticesLoop(after = -1) {
+  let next = after;
+  let delay = 0;
+  if (mode === "server" && !getToken()) return setTimeout(() => noticesLoop(after), 3000); // aún sin token
+  try {
+    const resp = await api(`/api/notifications?after=${after}&wait=${after < 0 ? 0 : 25}`);
+    if (!resp.ok) throw new Error(resp.status);
+    const body = await resp.json();
+    if (!body.enabled) return; // avisos desactivados en el servidor
+    if (after >= 0) body.notices.forEach((n) => queuedNotices.push(n));
+    next = body.last;
+    flushNotices();
+  } catch {
+    delay = 5000; // sin conexión o sin token todavía: se reintenta
+  }
+  setTimeout(() => noticesLoop(next), delay);
+}
+
+// Los avisos esperan a que JARVIS no esté escuchando, pensando ni hablando.
+function flushNotices() {
+  if (state !== "idle" && state !== "error") return;
+  while (queuedNotices.length) {
+    const n = queuedNotices.shift();
+    $("subtitle").textContent = n.text;
+    fire(REGION.thalamus, n.text);
+    const turn = document.createElement("div");
+    turn.className = `turn notice ${n.level}`;
+    const a = document.createElement("div");
+    a.className = "a";
+    a.textContent = n.text;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `AVISO · ${n.source} · ${n.created.slice(11, 16)}`;
+    turn.append(a, meta);
+    $("log").append(turn);
+    $("log").scrollTop = $("log").scrollHeight;
+    // Solo habla la pestaña visible (si tienes el HUD abierto en el PC y en el móvil, no suenan los dos).
+    if (n.speak && n.audio_wav_b64 && document.visibilityState === "visible") playWav(n.audio_wav_b64);
+  }
+}
+
 async function pollEvents() {
   // El proxy del PC contesta en cuanto hay un aviso (o a los 20 s sin nada): reacción inmediata.
   let delay = 0;
@@ -404,11 +579,7 @@ function onPcEvent(ev) {
       if (!wakeActive) break;
       wakeActive = false;
       const bytes = Uint8Array.from(atob(ev.audio_wav_b64), (c) => c.charCodeAt(0));
-      const form = new FormData();
-      form.append("audio", new Blob([bytes], { type: "audio/wav" }), "audio.wav");
-      form.append("session", SESSION);
-      if (pcApps) form.append("pc_apps", pcApps.join(","));
-      ask("/api/voice", { method: "POST", body: form });
+      askVoice(new Blob([bytes], { type: "audio/wav" }));
       break;
     }
     case "wake_cancel":
@@ -448,7 +619,8 @@ const REGIONS = [
   { id: "hippocampus", name: "HIPOCAMPO", role: "memoria", pos: [-0.2, -0.12, -0.25], color: [94, 227, 161] },
   { id: "language", name: "LENGUAJE", role: "respuesta", pos: [0.52, -0.24, 0.3], color: [255, 181, 71] },
   { id: "cerebellum", name: "CEREBELO", role: "voz", pos: [-0.6, -0.52, 0], color: [77, 124, 255] },
-  { id: "visual", name: "VISUAL", role: "cámara · nivel 4", pos: [-0.92, 0.08, 0], color: [45, 212, 191], planned: true },
+  { id: "visual", name: "VISUAL", role: "cámara apagada", pos: [-0.92, 0.08, 0], color: [45, 212, 191], planned: true },
+  { id: "thalamus", name: "TÁLAMO", role: "avisos", pos: [-0.05, 0.12, 0], color: [210, 230, 255] },
 ];
 const REGION = Object.fromEntries(REGIONS.map((r, i) => [r.id, i]));
 
@@ -476,6 +648,14 @@ const TOOL_LABEL = {
   news: "noticias",
   convert: "conversión",
   calendar_agenda: "agenda",
+  agent_research: "agente investigador",
+  agent_status: "estado del agente",
+  delegate_claude: "encargar a Claude",
+  camera_look: "mirar por la cámara",
+  home_camera: "cámara de casa",
+  reminder_set: "nuevo recordatorio",
+  reminder_list: "recordatorios",
+  reminder_cancel: "cancelar recordatorio",
   wake_on_lan: "encender equipo",
   home_status: "casa · estado",
   home_control: "casa · control",
@@ -487,6 +667,9 @@ const TOOL_LABEL = {
 const MOTOR_TOOLS = new Set(["truenas_app_restart", "wake_on_lan", "home_control", "spotify_play", "spotify_control"]);
 
 function toolRegion(name) {
+  if (name.startsWith("reminder_")) return REGION.thalamus;
+  if (name === "camera_look" || name === "home_camera") return REGION.visual;
+  if (name.startsWith("agent_") || name.startsWith("delegate_")) return REGION.prefrontal; // planificar y delegar
   if (name.startsWith("memory_")) return REGION.hippocampus;
   if (name.startsWith("pc_") || /^obsidian_(create|append|daily)/.test(name) || MOTOR_TOOLS.has(name)) return REGION.motor;
   return REGION.association;
@@ -577,7 +760,69 @@ function fire(idx, detail) {
   }
 }
 
+// --- ventana de resultados ------------------------------------------------------------
+
+const CARD_LABEL = { web: "WEB", wiki: "WIKIPEDIA", news: "NOTICIAS" };
+
+function hideCards() {
+  $("cards").hidden = true;
+  $("cards-list").textContent = "";
+}
+
+function showCards(cards) {
+  const list = $("cards-list");
+  for (const c of cards) {
+    // Contenido de terceros: siempre como texto, y enlaces solo http(s).
+    const safeUrl = /^https?:\/\//.test(c.url || "") ? c.url : "";
+    const el = document.createElement(safeUrl ? "a" : "div");
+    el.className = `card ${c.kind || ""}`;
+    if (safeUrl) {
+      el.href = safeUrl;
+      el.target = "_blank";
+      el.rel = "noopener noreferrer";
+    }
+    if (c.image) {
+      const img = document.createElement("img");
+      img.className = "photo";
+      img.src = c.image;
+      img.alt = "";
+      img.loading = "lazy";
+      img.referrerPolicy = "no-referrer";
+      img.onerror = () => img.remove();
+      el.append(img);
+    }
+    const src = document.createElement("div");
+    src.className = "src";
+    if (c.icon) {
+      const icon = document.createElement("img");
+      icon.src = c.icon;
+      icon.alt = "";
+      icon.referrerPolicy = "no-referrer";
+      icon.onerror = () => icon.remove();
+      src.append(icon);
+    }
+    src.append(document.createTextNode(c.source || CARD_LABEL[c.kind] || ""));
+    const title = document.createElement("div");
+    title.className = "t";
+    title.textContent = c.title || "";
+    el.append(src, title);
+    if (c.text) {
+      const d = document.createElement("div");
+      d.className = "d";
+      d.textContent = c.text;
+      el.append(d);
+    }
+    list.append(el);
+  }
+  const n = list.children.length;
+  $("cards-title").textContent = `RESULTADOS · ${n}`;
+  $("cards").hidden = n === 0;
+}
+
+$("cards-close").addEventListener("click", hideCards);
+
 function flowReset() {
+  hideCards();
   regionState.forEach((r) => Object.assign(r, { pending: false, detail: "", fail: false }));
   lastRegion = null;
   $("trail").textContent = "";
@@ -627,6 +872,9 @@ function onFlow(ev) {
       fire(idx, `${ev.ok ? "✓" : "✗"} ${label} · ${ev.ms} ms · ${ev.text}`);
       break;
     }
+    case "cards":
+      showCards(ev.cards || []);
+      break;
     case "reply":
       $("subtitle").textContent = ev.text;
       fire(REGION.language, ev.text);
@@ -877,10 +1125,14 @@ async function init() {
   tick();
   requestAnimationFrame(frame);
   try {
-    ({ mode, pc_apps: pcApps, wake: wakeEnabled = false } = await (await fetch("/hud/config")).json());
+    ({ mode, pc_apps: pcApps, wake: wakeEnabled = false, claude_models: claudeModels = [] } = await (
+      await fetch("/hud/config")
+    ).json());
   } catch {
     pcApps = null;
   }
+  noticesLoop();
+  loadModels();
   if (mode === "server") {
     $("hint").textContent = matchMedia("(pointer: coarse)").matches
       ? "MANTÉN PULSADO EL CEREBRO PARA HABLAR"

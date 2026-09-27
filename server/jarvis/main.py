@@ -9,6 +9,7 @@ import queue
 import secrets
 import threading
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
@@ -17,21 +18,30 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+from .agents import REPORT_FOLDER, ResearchAgent, agent_tools, split_report
 from .config import Settings, load_settings
 from .llm import FallbackLLM, LLMError, OpenAICompatLLM
 from .memory import MemoryRejected, MemoryStore, RuleRetriever
+from .notify import NoticeBoard, NtfyPush, parse_quiet
 from .obsidian import Vault
 from .pipeline import Assistant, TurnResult
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
-from .tools import build_registry
+from .tools import ToolRegistry, build_registry
+from .tools.info import research_tools
+from .tools.calendar import Calendars, parse_calendars
+from .tools.reminders import ReminderStore
+from .tools.truenas import _default_connect
+from .tools.vision import Vision, check_image
 from .tts import NullTTS, PiperTTS
+from .watch import Watcher, briefing_check, calendar_check, reminders_check, truenas_check
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # evita loguear URLs firmadas y ruido
 log = logging.getLogger("jarvis")
 
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
+NOTIFY_WAIT_MAX_S = 25
 WEB_DIR = Path(__file__).with_name("web")  # HUD: lo usan el proxy del PC y el navegador del movil
 
 
@@ -67,11 +77,18 @@ def build_assistant(settings: Settings) -> Assistant:
         if store and settings.obsidian_memory_note:
             store.on_change(lambda: vault.export_memory(store))
             vault.export_memory(store)
-    tools = build_registry(settings, store, vault)
+    calendars = Calendars(parse_calendars(settings.calendars), settings.timezone) if settings.calendars else None
+    reminders = ReminderStore(data / "reminders.db", settings.timezone) if settings.notify_enabled else None
+    vision = (
+        Vision(FallbackLLM([OpenAICompatLLM(p, settings.llm_timeout_s, 512) for p in settings.vision_providers]))
+        if settings.vision_providers
+        else None
+    )
+    tools = build_registry(settings, store, vault, reminders, calendars, vision)
     retriever = RuleRetriever(store, settings.memory_max_items) if store else None
 
     log.info("STT=%s | LLM=%s | TTS=%s | memoria=%s", stt.name, llm.name, tts.name, "si" if store else "no")
-    return Assistant(
+    assistant = Assistant(
         stt,
         llm,
         tts,
@@ -80,6 +97,60 @@ def build_assistant(settings: Settings) -> Assistant:
         tools,
         retriever,
     )
+    assistant.vault = vault
+    if reminders:
+        assistant.board, assistant.watcher = build_watcher(settings, assistant, reminders, calendars)
+    if tools and settings.agents_enabled:
+        agent_registry = ToolRegistry()
+        for tool in research_tools(settings.brave_api_key, settings.timezone):
+            agent_registry.register(tool)
+        # Informes largos: mas tokens de salida que una respuesta hablada.
+        agent_llm = FallbackLLM(
+            [OpenAICompatLLM(p, settings.llm_timeout_s * 2, max(4096, settings.llm_max_tokens))
+             for p in settings.agent_llm_providers or settings.llm_providers]
+        )
+        agent = ResearchAgent(agent_llm, agent_registry, vault, assistant.board, settings.timezone)
+        for tool in agent_tools(agent):
+            tools.register(tool)
+        log.info("Agente investigador activo (informes en %s)", "Obsidian" if vault else "memoria")
+    return assistant
+
+
+def build_watcher(
+    settings: Settings, assistant: Assistant, reminders: ReminderStore, calendars: Calendars | None
+) -> tuple[NoticeBoard, Watcher]:
+    """Avisos proactivos: tablon (voz + push opcional) y vigilantes de lo que este configurado."""
+    push = NtfyPush(settings.ntfy_url, settings.ntfy_token) if settings.ntfy_url else None
+    board = NoticeBoard(
+        assistant.speak,
+        settings.timezone,
+        parse_quiet(settings.notify_quiet),
+        push,
+        Path(settings.data_dir) / "notices_seen.json",
+    )
+    checks = [reminders_check(reminders)]
+    if calendars:
+        checks.append(calendar_check(calendars, settings.calendar_remind_minutes))
+    if settings.truenas_url and settings.truenas_api_key:
+        checks.append(
+            truenas_check(
+                lambda: _default_connect(
+                    settings.truenas_url, settings.truenas_user, settings.truenas_api_key, settings.truenas_verify_ssl
+                ),
+                settings.disk_temp_warn,
+                settings.truenas_watch_minutes * 60,
+            )
+        )
+    if settings.briefing_at:
+
+        def ask(text: str) -> str:
+            # Sesion propia: no mezcla el resumen con tu conversacion ni guarda historial.
+            reply = assistant.handle_text(text, session="briefing", speak=False).reply
+            assistant.reset("briefing")
+            return reply
+
+        checks.append(briefing_check(ask, settings.briefing_at, settings.timezone, settings.briefing_weekends))
+    return board, Watcher(board, checks)
 
 
 class ChatRequest(BaseModel):
@@ -87,10 +158,18 @@ class ChatRequest(BaseModel):
     session: str = "default"
     speak: bool = True
     pc_apps: list[str] | None = None  # apps que el cliente de PC permite abrir; None = sin acciones de PC
+    model: str | None = None  # proveedor elegido en el HUD (groq, gemini...); None = el orden configurado
+    image: str | None = None  # foto de la camara del HUD (JPEG/PNG en base64), solo si esta encendida
 
 
 class SpeakRequest(BaseModel):
     text: str
+
+
+class AgentResult(BaseModel):
+    title: str
+    text: str
+    source: str = "claude"
 
 
 class SessionRequest(BaseModel):
@@ -105,6 +184,7 @@ def _to_json(result: TurnResult) -> dict:
         "timings_ms": result.timings_ms,
         "tools_used": result.tools_used,
         "pc_actions": result.pc_actions,
+        "cards": result.cards,
         "audio_wav_b64": _b64(result.audio),
     }
 
@@ -119,7 +199,14 @@ def _parse_apps(raw: str | None) -> list[str] | None:
     return [a.strip() for a in raw.split(",") if a.strip()]
 
 
-def _stream(fn, *args) -> StreamingResponse:
+def _image(b64: str | None) -> str | None:
+    try:
+        return check_image(b64)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _stream(fn, *args, model: str | None = None, image: str | None = None) -> StreamingResponse:
     """Ejecuta el turno en un hilo y manda cada evento del pipeline como una linea JSON (NDJSON).
 
     La ultima linea es {"type": "done", ...respuesta completa} o {"type": "error", "detail": ...}.
@@ -128,7 +215,7 @@ def _stream(fn, *args) -> StreamingResponse:
 
     def work() -> None:
         try:
-            events.put({"type": "done", **_to_json(fn(*args, on_event=events.put))})
+            events.put({"type": "done", **_to_json(fn(*args, on_event=events.put, model=model, image=image))})
         except LLMError as exc:
             log.error("%s", exc)
             events.put({"type": "error", "detail": str(exc)})
@@ -168,7 +255,12 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             settings = load_settings()
             state["token"] = settings.api_token
             state["assistant"] = build_assistant(settings)
+        watcher = getattr(state["assistant"], "watcher", None)
+        if watcher:
+            watcher.start()
         yield
+        if watcher:
+            watcher.stop()
 
     app = FastAPI(title="JARVIS core", version="0.1.0", lifespan=lifespan)
     bearer = HTTPBearer(auto_error=False)
@@ -218,15 +310,31 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         session: str = Form("default"),
         speak: bool = Form(True),
         pc_apps: str | None = Form(None),
+        model: str | None = Form(None),
+        image: str | None = Form(None),
     ) -> StreamingResponse:
         data = _read_audio(audio)  # antes de responder: el fichero se cierra al acabar la peticion
-        return _stream(state["assistant"].handle_audio, data, session, speak, _parse_apps(pc_apps))
+        return _stream(
+            state["assistant"].handle_audio, data, session, speak, _parse_apps(pc_apps),
+            model=model or None, image=_image(image),
+        )
 
     @app.post("/api/chat/stream", dependencies=[Depends(require_token)])
     def chat_stream(req: ChatRequest) -> StreamingResponse:
         if not req.text.strip():
             raise HTTPException(status_code=400, detail="Texto vacio")
-        return _stream(state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps)
+        return _stream(
+            state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps,
+            model=req.model, image=_image(req.image),
+        )
+
+    @app.get("/api/models", dependencies=[Depends(require_token)])
+    def models() -> dict:
+        return {"models": state["assistant"].llm.models()}
+
+    @app.post("/api/transcribe", dependencies=[Depends(require_token)])
+    def transcribe(audio: UploadFile = File(...)) -> dict:
+        return {"text": state["assistant"].transcribe(_read_audio(audio))}
 
     @app.post("/api/speak", dependencies=[Depends(require_token)])
     def speak(req: SpeakRequest) -> dict:
@@ -239,6 +347,42 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         if a.memory is None:
             raise HTTPException(status_code=404, detail="Memoria desactivada")
         return a.memory.store
+
+    @app.get("/api/notifications", dependencies=[Depends(require_token)])
+    def notifications(after: int = -1, wait: float = 0) -> dict:
+        """Avisos proactivos. after=-1: solo el ultimo id (para empezar sin repetir los viejos).
+        Con wait>0 espera hasta que haya uno nuevo (maximo 25 s)."""
+        board: NoticeBoard | None = getattr(state["assistant"], "board", None)
+        if board is None:
+            return {"notices": [], "last": 0, "enabled": False}
+        if after < 0:
+            return {"notices": [], "last": board.last_id, "enabled": True}
+        notices = board.since(after, min(max(wait, 0), NOTIFY_WAIT_MAX_S))
+        return {"notices": [board.to_json(n) for n in notices], "last": board.last_id, "enabled": True}
+
+    @app.post("/api/agent_result", dependencies=[Depends(require_token)])
+    def agent_result(req: AgentResult) -> dict:
+        """Informe de un agente externo (Claude Code en el PC): a Obsidian y aviso a todos los HUD."""
+        if not req.text.strip() or len(req.text) > 20000:
+            raise HTTPException(status_code=400, detail="Informe vacío o demasiado largo")
+        a: Assistant = state["assistant"]
+        summary, report = split_report(req.text)
+        title = " ".join(req.title.split())[:100] or "tarea"
+        note = ""
+        vault = getattr(a, "vault", None)
+        if vault:
+            day = datetime.now().strftime("%Y-%m-%d")
+            header = f"> Tarea hecha por {req.source} (membresía) · {day}\n\n"
+            try:
+                note = vault.create(f"{day} {title}"[:120], header + report[:3800], REPORT_FOLDER, check_secrets=False)
+            except Exception as exc:  # sin nota, el aviso llega igual
+                log.warning("no se pudo guardar el informe de %s: %s", req.source, exc)
+        board = getattr(a, "board", None)
+        if board:
+            where = f" Lo tienes en Obsidian, en {note}." if note else ""
+            board.post("info", req.source, f"{req.source.capitalize()} ha terminado: {title}. {summary}{where}")
+        log.info("informe de %s recibido (%d caracteres) -> %s", req.source, len(req.text), note or "sin nota")
+        return {"note": note, "summary": summary}
 
     @app.get("/api/memories", dependencies=[Depends(require_token)])
     def list_memories() -> dict:

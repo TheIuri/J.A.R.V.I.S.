@@ -9,14 +9,17 @@ from ..memory import MemoryStore
 from ..obsidian import Vault
 from .basic import datetime_tool, weather_tool
 from .calendar import Calendars, calendar_tool, parse_calendars
+from .delegate import delegate_tool
 from .homeassistant import HomeAssistant, ha_tools
 from .info import info_tools
 from .memory import memory_tools
 from .obsidian import obsidian_tools
 from .pc import pc_tools
 from .registry import Tool, ToolContext, ToolError, ToolRegistry
+from .reminders import ReminderStore, reminder_tools
 from .spotify import Spotify, spotify_tools
 from .truenas import truenas_tools
+from .vision import Vision, camera_tool
 from .wol import parse_devices, wol_tool
 
 log = logging.getLogger(__name__)
@@ -25,7 +28,12 @@ __all__ = ["Tool", "ToolContext", "ToolError", "ToolRegistry", "build_registry"]
 
 
 def build_registry(
-    settings: Settings, memory: MemoryStore | None = None, vault: Vault | None = None
+    settings: Settings,
+    memory: MemoryStore | None = None,
+    vault: Vault | None = None,
+    reminders: ReminderStore | None = None,
+    calendars: Calendars | None = None,
+    vision: Vision | None = None,
 ) -> ToolRegistry | None:
     if not settings.tools_enabled:
         log.info("Tools desactivadas (TOOLS_ENABLED=false)")
@@ -37,10 +45,17 @@ def build_registry(
         registry.register(tool)
     for tool in pc_tools():
         registry.register(tool)
-    if settings.calendars:
-        registry.register(calendar_tool(Calendars(parse_calendars(settings.calendars), settings.timezone)))
+    registry.register(delegate_tool())  # solo se ofrece con el HUD del PC
+    if vision:
+        registry.register(camera_tool(vision))  # solo se ofrece si el HUD manda foto
+    if calendars is None and settings.calendars:
+        calendars = Calendars(parse_calendars(settings.calendars), settings.timezone)
+    if calendars:
+        registry.register(calendar_tool(calendars))
+    for tool in reminder_tools(reminders) if reminders else []:
+        registry.register(tool)
     if settings.ha_url and settings.ha_token:
-        for tool in ha_tools(HomeAssistant(settings.ha_url, settings.ha_token, settings.ha_entities)):
+        for tool in ha_tools(HomeAssistant(settings.ha_url, settings.ha_token, settings.ha_entities), vision):
             registry.register(tool)
     if settings.spotify_client_id and settings.spotify_client_secret and settings.spotify_refresh_token:
         spotify = Spotify(

@@ -178,3 +178,38 @@ def test_hud_is_served_without_token_but_api_still_needs_it():
     assert client.get("/hud/config").json() == {"mode": "server", "pc_apps": None}
     assert client.get("/hud/../jarvis/config.py").status_code == 404
     assert client.post("/api/chat", json={"text": "hola"}).status_code == 401
+
+
+def test_agent_can_use_its_own_llm_chain(monkeypatch):
+    monkeypatch.setenv("API_TOKEN", "x")
+    monkeypatch.setenv("LLM_PROVIDERS", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.delenv("AGENT_LLM_PROVIDERS", raising=False)
+    assert [p.name for p in config.load_settings().agent_llm_providers] == ["groq"]
+    monkeypatch.setenv("AGENT_LLM_PROVIDERS", "gemini,groq")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="gemini"):
+        config.load_settings()
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    settings = config.load_settings()
+    assert [p.name for p in settings.agent_llm_providers] == ["gemini", "groq"]
+    assert [p.name for p in settings.llm_providers] == ["groq"]
+
+
+def test_hud_can_choose_the_provider_and_others_stay_as_fallback():
+    llm = FallbackLLM([llm_with(ok_handler("soy groq"), "groq"), llm_with(ok_handler("soy gemini"), "gemini")])
+    assert llm.models() == [{"id": "groq", "label": "groq:m"}, {"id": "gemini", "label": "gemini:m"}]
+    assert llm.chat([{"role": "user", "content": "hola"}]).text == "soy groq"
+    assert llm.chat([{"role": "user", "content": "hola"}], prefer="gemini").text == "soy gemini"
+    broken = FallbackLLM([llm_with(ok_handler("soy groq"), "groq"), llm_with(fail_handler, "gemini")])
+    assert broken.chat([{"role": "user", "content": "hola"}], prefer="gemini").text == "soy groq"
+
+    assistant = Assistant(FakeSTT(), llm, FakeTTS(), "s")
+    client = TestClient(create_app(assistant, api_token="s"))
+    auth = {"Authorization": "Bearer s"}
+    assert [m["id"] for m in client.get("/api/models", headers=auth).json()["models"]] == ["groq", "gemini"]
+    resp = client.post("/api/chat/stream", json={"text": "hola", "model": "gemini"}, headers=auth)
+    assert json.loads(resp.text.splitlines()[-1])["reply"] == "soy gemini"
+    text = client.post("/api/transcribe", files={"audio": ("a.wav", b"wav", "audio/wav")}, headers=auth).json()
+    assert text == {"text": "hola jarvis"}
+    assert client.post("/api/transcribe", files={"audio": ("a.wav", b"wav", "audio/wav")}).status_code == 401

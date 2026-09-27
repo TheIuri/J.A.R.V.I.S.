@@ -100,18 +100,19 @@ class Vault:
 
     # --- escritura (solo crear y añadir) ---------------------------------------
 
-    def _check_text(self, text: str) -> str:
+    def _check_text(self, text: str, check_secrets: bool = True) -> str:
         text = text.strip()
         if not text:
             raise VaultError("el texto está vacío")
         if len(text) > MAX_WRITE_CHARS:
             raise VaultError(f"texto demasiado largo (máx. {MAX_WRITE_CHARS} caracteres)")
-        if looks_secret(text):
+        if check_secrets and looks_secret(text):
             raise VaultError("parece un dato sensible (contraseña, clave, tarjeta...); no lo escribo")
         return text
 
-    def create(self, title: str, content: str, folder: str = "") -> str:
-        content = self._check_text(content)
+    def create(self, title: str, content: str, folder: str = "", check_secrets: bool = True) -> str:
+        """check_secrets=False solo para textos que no dicta el usuario (informes de agentes)."""
+        content = self._check_text(content, check_secrets)
         name = _BAD_NAME.sub("", title).strip().strip(".")
         if not name:
             raise VaultError("título no válido")

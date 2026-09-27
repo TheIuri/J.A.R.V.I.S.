@@ -46,9 +46,11 @@ def test_duckduckgo_results_skip_ads_and_unwrap_links():
 def test_brave_is_used_when_key_is_set():
     def handler(request):
         assert request.headers["X-Subscription-Token"] == "k"
-        return httpx.Response(200, json={"web": {"results": [{"title": "T", "url": "https://t.es", "description": "D"}]}})
+        return httpx.Response(200, json={"web": {"results": [
+            {"title": "T", "url": "https://t.es", "description": "D", "thumbnail": {"src": "https://img.es/t.jpg"}}]}})
 
-    assert WebSearch("k", client(handler)).search("x") == [{"title": "T", "url": "https://t.es", "snippet": "D"}]
+    assert WebSearch("k", client(handler)).search("x") == [
+        {"title": "T", "url": "https://t.es", "snippet": "D", "image": "https://img.es/t.jpg"}]
 
 
 def test_search_errors_become_tool_errors():
@@ -126,3 +128,33 @@ def test_currency_uses_ecb_rates():
     assert out == "50 USD = 45 EUR (cambio del BCE del 2026-09-26)"
     with pytest.raises(ToolError, match="no soportada"):
         Currency(client(lambda r: httpx.Response(404))).convert(1, "EUR", "XXX")
+
+
+def test_tools_fill_cards_for_the_hud():
+    ctx = ToolContext()
+    web_search_tool(WebSearch(client=client(lambda r: httpx.Response(200, text=DUCK_HTML)))).fn(ctx, query="barça")
+    assert ctx.cards[0] == {
+        "kind": "web", "title": "FC Barcelona & web oficial", "url": "https://www.fcbarcelona.es/es/",
+        "text": "El Barça ganó 3-1 al Madrid.", "source": "fcbarcelona.es", "image": "",
+        "icon": "https://icons.duckduckgo.com/ip3/fcbarcelona.es.ico",
+    }
+
+    def wiki(request):
+        return wiki_page(title="Torre Eiffel", extract="Mide 330 m.", fullurl="https://es.wikipedia.org/wiki/Torre_Eiffel",
+                         thumbnail={"source": "https://upload.wikimedia.org/eiffel.jpg"})
+
+    ctx = ToolContext()
+    wikipedia_tool(Wikipedia(client=client(wiki))).fn(ctx, topic="torre eiffel")
+    assert ctx.cards[0]["image"] == "https://upload.wikimedia.org/eiffel.jpg" and ctx.cards[0]["source"] == "Wikipedia"
+
+    ctx = ToolContext()
+    news_tool(News(client=client(lambda r: httpx.Response(200, text=RSS)))).fn(ctx)
+    assert [c["source"] for c in ctx.cards] == ["El País", "RTVE"] and ctx.cards[0]["kind"] == "news"
+
+
+def test_cards_only_allow_web_links_and_https_images():
+    from jarvis.tools.info import add_card
+
+    ctx = ToolContext()
+    add_card(ctx, "web", "x", "javascript:alert(1)", image="http://inseguro/img.jpg")
+    assert ctx.cards[0]["url"] == "" and ctx.cards[0]["image"] == ""

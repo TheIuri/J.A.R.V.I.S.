@@ -9,6 +9,13 @@ import os
 from dataclasses import dataclass, field
 
 # Esfuerzo de razonamiento por defecto: bajo, para que un asistente de voz responda rapido.
+# Modelo de vision por proveedor (camara). Se cambia con <NOMBRE>_VISION_MODEL.
+VISION_DEFAULTS = {
+    "groq": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "gemini": "gemini-2.5-flash",
+    "openrouter": "meta-llama/llama-4-scout:free",
+    "ollama": "llava",
+}
 REASONING_DEFAULTS = {"groq": "low"}
 
 # Proveedores LLM con API compatible con OpenAI: (base_url, variable de la API key, modelo por defecto).
@@ -73,6 +80,8 @@ class Settings:
     groq_stt_model: str = "whisper-large-v3-turbo"
 
     llm_providers: list[LLMProviderConfig] = field(default_factory=list)
+    agent_llm_providers: list[LLMProviderConfig] = field(default_factory=list)  # vacio = los mismos
+    vision_providers: list[LLMProviderConfig] = field(default_factory=list)  # camara; vacio = sin vision
     llm_timeout_s: int = 30
     llm_max_tokens: int = 1024  # incluye los tokens de razonamiento
 
@@ -113,6 +122,16 @@ class Settings:
     spotify_client_secret: str = ""
     spotify_refresh_token: str = ""
     spotify_device: str = ""  # dispositivo preferido si no hay ninguno sonando
+    notify_enabled: bool = True  # avisos proactivos (vigilantes + recordatorios)
+    agents_enabled: bool = True  # Nivel 5: agente investigador en segundo plano
+    notify_quiet: str = ""  # "23:00-08:00": avisos sin voz (salvo criticos)
+    ntfy_url: str = ""  # push al movil: https://ntfy.sh/<tema-secreto> o tu servidor ntfy
+    ntfy_token: str = ""
+    calendar_remind_minutes: int = 15
+    truenas_watch_minutes: int = 5
+    disk_temp_warn: int = 50
+    briefing_at: str = ""  # "08:00": resumen de buenos dias automatico
+    briefing_weekends: bool = True
     wol_broadcast: str = "255.255.255.255"
 
     @property
@@ -143,6 +162,24 @@ def _llm_provider(name: str) -> LLMProviderConfig:
     )
 
 
+def _vision_order(*chains: list[LLMProviderConfig]) -> list[LLMProviderConfig]:
+    """VISION_PROVIDERS o, por defecto, los proveedores ya configurados (Gemini primero: ve mejor)."""
+    seen: dict[str, LLMProviderConfig] = {}
+    for chain in chains:
+        for p in chain:
+            seen.setdefault(p.name, p)
+    names = [n.strip().lower() for n in _env("VISION_PROVIDERS").split(",") if n.strip()]
+    if names:
+        return [seen.get(n) or _llm_provider(n) for n in names]
+    return sorted(seen.values(), key=lambda p: p.name != "gemini")
+
+
+def _vision(p: LLMProviderConfig) -> LLMProviderConfig:
+    model = _env(f"{p.name.upper()}_VISION_MODEL", VISION_DEFAULTS.get(p.name, p.model))
+    # Los modelos de vision no admiten reasoning_effort.
+    return LLMProviderConfig(name=p.name, base_url=p.base_url, api_key=p.api_key, model=model)
+
+
 def load_settings() -> Settings:
     token = _env("API_TOKEN")
     if not token:
@@ -150,7 +187,10 @@ def load_settings() -> Settings:
 
     names = [n.strip().lower() for n in _env("LLM_PROVIDERS", "groq").split(",") if n.strip()]
     providers = [_llm_provider(n) for n in names]
-    missing = [p.name for p in providers if LLM_PRESETS[p.name][1] and not p.api_key]
+    # El agente investigador lee paginas largas: puede ir con otra cadena (p. ej. "gemini,groq").
+    agent_names = [n.strip().lower() for n in _env("AGENT_LLM_PROVIDERS").split(",") if n.strip()]
+    agent_providers = [_llm_provider(n) for n in agent_names] or providers
+    missing = sorted({p.name for p in providers + agent_providers if LLM_PRESETS[p.name][1] and not p.api_key})
     if missing:
         raise RuntimeError(f"Falta la API key de: {', '.join(missing)}")
 
@@ -165,6 +205,8 @@ def load_settings() -> Settings:
         whisper_compute_type=_env("WHISPER_COMPUTE_TYPE", "auto"),
         groq_stt_model=_env("GROQ_STT_MODEL", "whisper-large-v3-turbo"),
         llm_providers=providers,
+        agent_llm_providers=agent_providers,
+        vision_providers=[_vision(p) for p in _vision_order(providers, agent_providers)],
         llm_timeout_s=_env_int("LLM_TIMEOUT_S", 30),
         llm_max_tokens=_env_int("LLM_MAX_TOKENS", 1024),
         tts_provider=_env("TTS_PROVIDER", "piper").lower(),
@@ -197,5 +239,15 @@ def load_settings() -> Settings:
         spotify_client_secret=_env("SPOTIFY_CLIENT_SECRET"),
         spotify_refresh_token=_env("SPOTIFY_REFRESH_TOKEN"),
         spotify_device=_env("SPOTIFY_DEVICE"),
+        notify_enabled=_env_bool("NOTIFY_ENABLED", True),
+        agents_enabled=_env_bool("AGENTS_ENABLED", True),
+        notify_quiet=_env("NOTIFY_QUIET"),
+        ntfy_url=_env("NTFY_URL"),
+        ntfy_token=_env("NTFY_TOKEN"),
+        calendar_remind_minutes=_env_int("CALENDAR_REMIND_MINUTES", 15),
+        truenas_watch_minutes=_env_int("TRUENAS_WATCH_MINUTES", 5),
+        disk_temp_warn=_env_int("DISK_TEMP_WARN", 50),
+        briefing_at=_env("BRIEFING_AT"),
+        briefing_weekends=_env_bool("BRIEFING_WEEKENDS", True),
         wol_broadcast=_env("WOL_BROADCAST", "255.255.255.255"),
     )
