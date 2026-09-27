@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+from .agents import ResearchAgent, agent_tools
 from .config import Settings, load_settings
 from .llm import FallbackLLM, LLMError, OpenAICompatLLM
 from .memory import MemoryRejected, MemoryStore, RuleRetriever
@@ -25,7 +26,8 @@ from .obsidian import Vault
 from .pipeline import Assistant, TurnResult
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
-from .tools import build_registry
+from .tools import ToolRegistry, build_registry
+from .tools.info import research_tools
 from .tools.calendar import Calendars, parse_calendars
 from .tools.reminders import ReminderStore
 from .tools.truenas import _default_connect
@@ -90,6 +92,14 @@ def build_assistant(settings: Settings) -> Assistant:
     )
     if reminders:
         assistant.board, assistant.watcher = build_watcher(settings, assistant, reminders, calendars)
+    if tools and settings.agents_enabled:
+        agent_registry = ToolRegistry()
+        for tool in research_tools(settings.brave_api_key, settings.timezone):
+            agent_registry.register(tool)
+        agent = ResearchAgent(llm, agent_registry, vault, assistant.board, settings.timezone)
+        for tool in agent_tools(agent):
+            tools.register(tool)
+        log.info("Agente investigador activo (informes en %s)", "Obsidian" if vault else "memoria")
     return assistant
 
 

@@ -114,6 +114,7 @@ class Settings:
     spotify_refresh_token: str = ""
     spotify_device: str = ""  # dispositivo preferido si no hay ninguno sonando
     notify_enabled: bool = True  # avisos proactivos (vigilantes + recordatorios)
+    agents_enabled: bool = True  # Nivel 5: agente investigador en segundo plano
     notify_quiet: str = ""  # "23:00-08:00": avisos sin voz (salvo criticos)
     ntfy_url: str = ""  # push al movil: https://ntfy.sh/<tema-secreto> o tu servidor ntfy
     ntfy_token: str = ""
@@ -205,6 +206,7 @@ def load_settings() -> Settings:
         spotify_refresh_token=_env("SPOTIFY_REFRESH_TOKEN"),
         spotify_device=_env("SPOTIFY_DEVICE"),
         notify_enabled=_env_bool("NOTIFY_ENABLED", True),
+        agents_enabled=_env_bool("AGENTS_ENABLED", True),
         notify_quiet=_env("NOTIFY_QUIET"),
         ntfy_url=_env("NTFY_URL"),
         ntfy_token=_env("NTFY_TOKEN"),

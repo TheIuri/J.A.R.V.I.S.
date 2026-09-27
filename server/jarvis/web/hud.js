@@ -523,6 +523,8 @@ const TOOL_LABEL = {
   news: "noticias",
   convert: "conversión",
   calendar_agenda: "agenda",
+  agent_research: "agente investigador",
+  agent_status: "estado del agente",
   reminder_set: "nuevo recordatorio",
   reminder_list: "recordatorios",
   reminder_cancel: "cancelar recordatorio",
@@ -538,6 +540,7 @@ const MOTOR_TOOLS = new Set(["truenas_app_restart", "wake_on_lan", "home_control
 
 function toolRegion(name) {
   if (name.startsWith("reminder_")) return REGION.thalamus;
+  if (name.startsWith("agent_")) return REGION.prefrontal; // planificar y delegar
   if (name.startsWith("memory_")) return REGION.hippocampus;
   if (name.startsWith("pc_") || /^obsidian_(create|append|daily)/.test(name) || MOTOR_TOOLS.has(name)) return REGION.motor;
   return REGION.association;

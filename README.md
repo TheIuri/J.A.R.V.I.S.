@@ -317,6 +317,23 @@ visible, así que no suenan a la vez el PC y el móvil.
    instala ntfy como app en TrueNAS y usa tu propio servidor.
 2. Añade `NTFY_URL: "https://ntfy.sh/jarvis-ori-7f3k9x2q"` a las variables de la app.
 
+## Nivel 5: agentes
+
+**Agente investigador**: *"Investiga qué placas solares me convienen para un piso"*. JARVIS responde al momento
+que se pone con ello, y un agente trabaja en segundo plano:
+1. Busca en internet, lee de 2 a 5 páginas y contrasta con Wikipedia o noticias. Hace como máximo 10 rondas.
+2. Escribe un informe con resumen, ideas principales y fuentes, y lo guarda en Obsidian, en
+   `JARVIS/Investigaciones/AAAA-MM-DD tema.md`.
+3. Avisa al terminar: lo dice en el HUD, y llega al móvil si tienes ntfy.
+
+*"¿Cómo va la investigación?"* te da el estado. Puede haber 2 investigaciones a la vez, y `AGENTS_ENABLED: "false"`
+lo desactiva.
+
+**Seguridad**: el agente **solo tiene herramientas de lectura** (buscar, leer páginas, Wikipedia, noticias). Si
+una web intenta darle órdenes, no tiene con qué cumplirlas; el informe lo guarda el código, no la IA. El lector
+de páginas no abre direcciones de tu red (router, NAS…) ni `localhost`, y comprueba también cada redirección.
+Por eso `web_read` es solo del agente, no del asistente principal, que sí puede actuar (PC, casa, Spotify…).
+
 ## HUD en el móvil (HTTPS con Tailscale)
 
 El NAS también sirve la interfaz en `/hud/`. Para que el micrófono del móvil funcione hace falta HTTPS, y lo pone
