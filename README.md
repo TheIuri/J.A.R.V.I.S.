@@ -143,6 +143,36 @@ Ejemplos: *"¿Qué tiempo hará mañana?"*, *"Pon el volumen al 30"*, *"Abre Spo
 Ejemplos: *"¿Cómo quedó ayer el Barça?"*, *"¿Quién fue Ramón y Cajal?"*, *"¿Qué noticias hay hoy?"*,
 *"¿Cuántas millas son 42 kilómetros?"*, *"¿Cuánto son 50 dólares en euros?"*.
 
+### Agenda (Google Calendar y Outlook)
+
+JARVIS lee tus calendarios con su **dirección secreta iCal**, sin OAuth ni proyectos en la nube (solo lectura):
+
+- **Google Calendar**: en la web, ⚙️ → Configuración → (tu calendario) → *Integrar el calendario* →
+  **Dirección secreta en formato iCal**.
+- **Outlook / Microsoft 365**: Outlook web → ⚙️ → Calendario → *Calendarios compartidos* → **Publicar un
+  calendario** → permiso "Puede ver todos los detalles" → copia el enlace **ICS**.
+
+```yaml
+CALENDARS: "personal=https://calendar.google.com/calendar/ical/.../basic.ics;trabajo=https://outlook.office365.com/owa/calendar/.../calendar.ics"
+```
+
+Esos enlaces dan acceso a tu agenda: trátalos como una contraseña (solo en las variables de la app, nunca en el
+repositorio). Ejemplos: *"¿Qué tengo mañana?"*, *"¿Qué tengo esta semana en el trabajo?"*.
+
+### Wake-on-LAN
+
+Enciende otro equipo de casa: *"Enciende el sobremesa"*.
+
+```yaml
+WOL_DEVICES: "sobremesa=AA:BB:CC:DD:EE:FF"   # la MAC de su tarjeta de red (varios: separados por ';')
+# WOL_BROADCAST: "192.168.1.255"             # por defecto 255.255.255.255
+```
+
+En el equipo a encender, activa Wake-on-LAN en la BIOS y en Windows (Administrador de dispositivos → tarjeta de red →
+*Administración de energía*: "Permitir que este dispositivo reactive el equipo"; y en *Opciones avanzadas*,
+"Wake on Magic Packet"). El paquete lo envía el NAS y, si tienes el HUD del PC abierto, también el PC. Si desde el
+móvil no enciende pero desde el PC sí, es la red interna de Docker del NAS, que no deja pasar el broadcast.
+
 ### Acciones con confirmación
 
 Lo que tiene consecuencias (por ahora, reiniciar una app de TrueNAS) nunca se hace a la primera: JARVIS

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import socket
 import sys
 import threading
 import webbrowser
@@ -119,6 +121,16 @@ class PCActions:
                 timer.start()
                 self.timers.append(timer)
                 return f"temporizador de {seconds}s"
+            if kind == "wol":
+                mac = str(action.get("mac", ""))
+                if not re.fullmatch(r"([0-9A-F]{2}:){5}[0-9A-F]{2}", mac):
+                    return "MAC no valida"
+                packet = b"\xff" * 6 + bytes.fromhex(mac.replace(":", "")) * 16
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                    for port in (9, 7):
+                        sock.sendto(packet, ("255.255.255.255", port))
+                return f"encendido enviado a {action.get('device', mac)}"
             return f"accion desconocida: {kind}"
         except Exception as exc:  # una accion fallida no debe cerrar el cliente
             return f"error en {kind}: {exc}"

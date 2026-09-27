@@ -104,6 +104,9 @@ class Settings:
     truenas_api_key: str = ""
     truenas_verify_ssl: bool = False  # TrueNAS usa un certificado autofirmado por defecto
     brave_api_key: str = ""  # opcional: busqueda web con Brave en vez de DuckDuckGo
+    wol_devices: str = ""  # "sobremesa=AA:BB:CC:DD:EE:FF;otro=..."
+    calendars: str = ""  # "personal=https://...ics;trabajo=https://...ics" (enlaces secretos iCal)
+    wol_broadcast: str = "255.255.255.255"
 
     @property
     def groq_api_key(self) -> str:
@@ -178,4 +181,7 @@ def load_settings() -> Settings:
         truenas_api_key=_env("TRUENAS_API_KEY"),
         truenas_verify_ssl=_env_bool("TRUENAS_VERIFY_SSL", False),
         brave_api_key=_env("BRAVE_API_KEY"),
+        wol_devices=_env("WOL_DEVICES"),
+        calendars=_env("CALENDARS"),
+        wol_broadcast=_env("WOL_BROADCAST", "255.255.255.255"),
     )

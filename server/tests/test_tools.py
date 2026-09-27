@@ -406,3 +406,30 @@ def test_stream_endpoint_reports_llm_errors_inside_the_stream():
     resp = client.post("/api/chat/stream", json={"text": "hola"}, headers={"Authorization": "Bearer s"})
     last = json.loads(resp.text.splitlines()[-1])
     assert last["type"] == "error" and "503" in last["detail"]
+
+
+# --- Wake-on-LAN -------------------------------------------------------------------
+
+def test_wol_devices_and_packet():
+    from jarvis.tools.wol import magic_packet, parse_devices
+
+    assert parse_devices("Sobremesa=aa-bb-cc-dd-ee-ff; nas2=11:22:33:44:55:66") == {
+        "sobremesa": "AA:BB:CC:DD:EE:FF", "nas2": "11:22:33:44:55:66"}
+    with pytest.raises(ValueError, match="no válida"):
+        parse_devices("pc=zz:zz")
+    packet = magic_packet("AA:BB:CC:DD:EE:FF")
+    assert len(packet) == 102 and packet[:6] == b"\xff" * 6 and packet[6:12] == bytes.fromhex("AABBCCDDEEFF")
+
+
+def test_wol_tool_sends_from_server_and_pc():
+    from jarvis.tools.wol import wol_tool
+
+    sent = []
+    tool = wol_tool({"sobremesa": "AA:BB:CC:DD:EE:FF"}, "192.168.1.255", send=lambda mac, b: sent.append((mac, b)))
+    reg = registry(tool)
+    assert reg.specs(ToolContext())[0]["function"]["parameters"]["properties"]["device"]["enum"] == ["sobremesa"]
+    ctx = ToolContext(pc_apps=[])
+    out = reg.execute("wake_on_lan", '{"device": "sobremesa"}', ctx)
+    assert "desde el servidor y el PC" in out and sent == [("AA:BB:CC:DD:EE:FF", "192.168.1.255")]
+    assert ctx.pc_actions == [{"action": "wol", "mac": "AA:BB:CC:DD:EE:FF", "device": "sobremesa"}]
+    assert "ERROR" in reg.execute("wake_on_lan", '{"device": "tostadora"}', ToolContext())

@@ -8,12 +8,14 @@ from ..config import Settings
 from ..memory import MemoryStore
 from ..obsidian import Vault
 from .basic import datetime_tool, weather_tool
+from .calendar import Calendars, calendar_tool, parse_calendars
 from .info import info_tools
 from .memory import memory_tools
 from .obsidian import obsidian_tools
 from .pc import pc_tools
 from .registry import Tool, ToolContext, ToolError, ToolRegistry
 from .truenas import truenas_tools
+from .wol import parse_devices, wol_tool
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +35,10 @@ def build_registry(
         registry.register(tool)
     for tool in pc_tools():
         registry.register(tool)
+    if settings.calendars:
+        registry.register(calendar_tool(Calendars(parse_calendars(settings.calendars), settings.timezone)))
+    if settings.wol_devices:
+        registry.register(wol_tool(parse_devices(settings.wol_devices), settings.wol_broadcast))
     for tool in memory_tools(memory) if memory else []:
         registry.register(tool)
     for tool in obsidian_tools(vault) if vault else []:

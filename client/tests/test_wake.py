@@ -75,3 +75,11 @@ def test_busy_pauses_wake_detection():
     assert hud.wake.paused.is_set()
     hud.set_busy(False)
     assert not hud.wake.paused.is_set()
+
+
+def test_pc_wol_action_validates_mac():
+    from pc_actions import PCActions
+
+    pc = PCActions({}, announce=lambda t: None)
+    assert pc.run({"action": "wol", "mac": "no-es-una-mac"}) == "MAC no valida"
+    assert pc.run({"action": "wol", "mac": "AA:BB:CC:DD:EE:FF", "device": "sobremesa"}) == "encendido enviado a sobremesa"
