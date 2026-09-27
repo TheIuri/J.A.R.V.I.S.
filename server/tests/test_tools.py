@@ -300,3 +300,47 @@ def test_api_chat_returns_pc_actions_and_speak_endpoint():
     assert body["tools_used"] == ["pc_media"]
     assert client.post("/api/speak", json={"text": "hola"}, headers=auth).status_code == 200
     assert client.post("/api/speak", json={"text": "hola"}).status_code == 401
+
+
+# --- flujo de pensamiento en directo --------------------------------------------
+
+def test_turn_emits_live_events_in_order():
+    script = ScriptedLLM([[("echo", {"n": 2}), ("echo", {"n": 9})], "Listo."])
+    assistant = Assistant(None, script.llm(), NoTTS(), "sistema", tools=registry(echo_tool()))
+    events = []
+    assistant.handle_text(" dime dos ", on_event=events.append)
+
+    assert [e["type"] for e in events] == [
+        "heard", "thinking", "tool", "tool_result", "tool", "tool_result", "thinking", "reply", "speaking",
+    ]
+    assert events[0]["text"] == "dime dos"
+    assert events[2] == {"type": "tool", "id": "c0", "name": "echo", "args": {"n": 2}}
+    assert events[3]["ok"] is True and events[3]["text"] == "a2"
+    assert events[5]["ok"] is False and events[5]["text"].startswith("ERROR")  # 9 fuera de rango
+    assert events[7]["text"] == "Listo."
+
+
+def test_stream_endpoint_sends_ndjson_and_ends_with_done():
+    script = ScriptedLLM([[("echo", {"n": 1})], "Hecho."])
+    assistant = Assistant(None, script.llm(), NoTTS(), "sistema", tools=registry(echo_tool()))
+    client = TestClient(create_app(assistant, api_token="s"))
+    auth = {"Authorization": "Bearer s"}
+
+    assert client.post("/api/chat/stream", json={"text": "hola"}).status_code == 401
+    resp = client.post("/api/chat/stream", json={"text": "hola"}, headers=auth)
+    assert resp.status_code == 200 and resp.headers["content-type"].startswith("application/x-ndjson")
+    events = [json.loads(line) for line in resp.text.splitlines()]
+    assert [e["type"] for e in events][-3:] == ["reply", "speaking", "done"]
+    assert events[-1]["reply"] == "Hecho." and events[-1]["tools_used"] == ["echo"]
+
+
+def test_stream_endpoint_reports_llm_errors_inside_the_stream():
+    def down(request):
+        return httpx.Response(503, json={"error": "caido"})
+
+    cfg = LLMProviderConfig(name="fake", base_url="http://llm", api_key="k", model="m")
+    llm = FallbackLLM([OpenAICompatLLM(cfg, 5, 100, client=httpx.Client(base_url="http://llm", transport=httpx.MockTransport(down)))])
+    client = TestClient(create_app(Assistant(None, llm, NoTTS(), "sistema"), api_token="s"))
+    resp = client.post("/api/chat/stream", json={"text": "hola"}, headers={"Authorization": "Bearer s"})
+    last = json.loads(resp.text.splitlines()[-1])
+    assert last["type"] == "error" and "503" in last["detail"]

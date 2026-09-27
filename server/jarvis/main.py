@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import queue
 import secrets
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -112,6 +115,46 @@ def _parse_apps(raw: str | None) -> list[str] | None:
     return [a.strip() for a in raw.split(",") if a.strip()]
 
 
+def _stream(fn, *args) -> StreamingResponse:
+    """Ejecuta el turno en un hilo y manda cada evento del pipeline como una linea JSON (NDJSON).
+
+    La ultima linea es {"type": "done", ...respuesta completa} o {"type": "error", "detail": ...}.
+    """
+    events: queue.Queue = queue.Queue()
+
+    def work() -> None:
+        try:
+            events.put({"type": "done", **_to_json(fn(*args, on_event=events.put))})
+        except LLMError as exc:
+            log.error("%s", exc)
+            events.put({"type": "error", "detail": str(exc)})
+        except Exception as exc:  # el cliente ya recibio 200: el error va dentro del flujo
+            log.exception("fallo en el turno")
+            events.put({"type": "error", "detail": f"fallo interno ({type(exc).__name__})"})
+
+    def lines():
+        threading.Thread(target=work, name="turn", daemon=True).start()
+        while True:
+            event = events.get()
+            yield json.dumps(event, ensure_ascii=False) + "\n"
+            if event["type"] in ("done", "error"):
+                return
+
+    # X-Accel-Buffering: que ningun proxy intermedio acumule las lineas.
+    return StreamingResponse(
+        lines(), media_type="application/x-ndjson", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"}
+    )
+
+
+def _read_audio(audio: UploadFile) -> bytes:
+    data = audio.file.read(MAX_AUDIO_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="Audio vacio")
+    if len(data) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Audio demasiado largo")
+    return data
+
+
 def create_app(assistant: Assistant | None = None, api_token: str | None = None) -> FastAPI:
     state: dict = {"assistant": assistant, "token": api_token}
 
@@ -156,18 +199,30 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         speak: bool = Form(True),
         pc_apps: str | None = Form(None),  # separadas por comas
     ) -> dict:
-        data = audio.file.read(MAX_AUDIO_BYTES + 1)
-        if not data:
-            raise HTTPException(status_code=400, detail="Audio vacio")
-        if len(data) > MAX_AUDIO_BYTES:
-            raise HTTPException(status_code=413, detail="Audio demasiado largo")
-        return run(state["assistant"].handle_audio, data, session, speak, _parse_apps(pc_apps))
+        return run(state["assistant"].handle_audio, _read_audio(audio), session, speak, _parse_apps(pc_apps))
 
     @app.post("/api/chat", dependencies=[Depends(require_token)])
     def chat(req: ChatRequest) -> dict:
         if not req.text.strip():
             raise HTTPException(status_code=400, detail="Texto vacio")
         return run(state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps)
+
+    # Igual que /api/voice y /api/chat, pero en directo: el HUD dibuja cada paso según ocurre.
+    @app.post("/api/voice/stream", dependencies=[Depends(require_token)])
+    def voice_stream(
+        audio: UploadFile = File(...),
+        session: str = Form("default"),
+        speak: bool = Form(True),
+        pc_apps: str | None = Form(None),
+    ) -> StreamingResponse:
+        data = _read_audio(audio)  # antes de responder: el fichero se cierra al acabar la peticion
+        return _stream(state["assistant"].handle_audio, data, session, speak, _parse_apps(pc_apps))
+
+    @app.post("/api/chat/stream", dependencies=[Depends(require_token)])
+    def chat_stream(req: ChatRequest) -> StreamingResponse:
+        if not req.text.strip():
+            raise HTTPException(status_code=400, detail="Texto vacio")
+        return _stream(state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps)
 
     @app.post("/api/speak", dependencies=[Depends(require_token)])
     def speak(req: SpeakRequest) -> dict:

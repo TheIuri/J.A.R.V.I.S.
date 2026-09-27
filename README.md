@@ -156,16 +156,33 @@ Ejemplos: *"Recuerda que mi perro se llama Toby"*, *"Prefiero que me llames Ori"
 
 ## Interfaz (HUD) en el PC
 
-Una interfaz web con una esfera animada que cambia de color según el estado (en espera, escuchando, pensando,
-hablando) y late con la voz. Incluye subtítulos, historial, un panel de sesión (intercambios, latencia, pico,
-tiempo por etapa, modelo y tools usadas) y la lista de recuerdos con botón para olvidar.
+Una interfaz web con un **cerebro 3D de neuronas** que gira sobre sí mismo y muestra el flujo de pensamiento en directo. Incluye
+subtítulos, historial, un panel de sesión (intercambios, latencia, pico, tiempo por etapa, modelo y tools usadas),
+el estado de cada región del córtex y la lista de recuerdos con botón para olvidar.
+
+**Flujo de pensamiento**: el servidor emite cada paso del turno según ocurre (`/api/chat/stream` y
+`/api/voice/stream`, una línea JSON por evento). Cada paso enciende su región y un impulso viaja desde la anterior:
+
+| Región | Se enciende cuando… |
+|---|---|
+| AUDITIVO | te escucha / transcribe lo que dices |
+| HIPOCAMPO | consulta la memoria (y las tools `memory_*`) |
+| PREFRONTAL | el modelo razona (cada ronda) |
+| ASOCIACIÓN | consulta algo: tiempo, hora, Obsidian (buscar/leer), TrueNAS |
+| CÓRTEX MOTOR | actúa: PC (apps, volumen, música, temporizador) y escribir en Obsidian |
+| LENGUAJE | redacta la respuesta |
+| CEREBELO | pone la voz |
+| VISUAL | reservada para la cámara (Nivel 4) |
+
+Debajo del cerebro queda el recorrido del turno (p. ej. `AUDITIVO → HIPOCAMPO → PREFRONTAL → ASOCIACIÓN → LENGUAJE`).
+Si el servidor es de una versión anterior sin streaming, el HUD usa los endpoints de siempre.
 
 ```bash
 cd client
 py jarvis_hud.py        # abre http://localhost:8766 (usa JARVIS_SERVER y JARVIS_TOKEN)
 ```
 
-- **Para hablar**: mantén pulsada la **barra espaciadora** o la esfera. También puedes escribir abajo.
+- **Para hablar**: mantén pulsada la **barra espaciadora** o el cerebro. También puedes escribir abajo.
 - **Cómo funciona**: `jarvis_hud.py` corre en tu PC, sirve la página y reenvía las peticiones al NAS.
   - El token **no llega al navegador**.
   - Las acciones del PC se ejecutan aquí, con `apps.json`. Los temporizadores avisan por voz también en el HUD.
@@ -259,7 +276,7 @@ server/jarvis/
   llm.py        OpenAICompatLLM + FallbackLLM (con tool calling)
   tts.py        PiperTTS (descarga la voz automáticamente), NullTTS
   pipeline.py   Assistant: STT → LLM ⇄ tools → TTS con tiempos por etapa
-  main.py       API HTTP (/health, /api/voice, /api/chat, /api/speak, /api/reset, /api/memories) + HUD en /hud/
+  main.py       API HTTP (/health, /api/voice, /api/chat [+ /stream], /api/speak, /api/reset, /api/memories) + HUD en /hud/
   web/          HUD (HTML/CSS/JS sin dependencias), servido por el NAS y por jarvis_hud.py
   obsidian.py   bóveda de Obsidian: buscar, leer, crear, añadir, diario y nota de memoria
   memory/

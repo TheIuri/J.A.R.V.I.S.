@@ -33,6 +33,7 @@ CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; c
 
 # Rutas del servidor que el HUD puede usar (nada mas se reenvia).
 PROXY_POST = {"/api/chat", "/api/voice", "/api/reset"}
+STREAM_POST = {"/api/chat/stream", "/api/voice/stream"}  # flujo de pensamiento en directo (NDJSON)
 PROXY_GET = {"/api/memories", "/health"}
 MEMORY_DELETE = re.compile(r"^/api/memories/\d+$")
 MAX_BODY = 12 * 1024 * 1024
@@ -117,6 +118,38 @@ def make_handler(hud: Hud, port: int):
             else:
                 self._send(resp.status_code, resp.content, resp.headers.get("Content-Type", "application/json"))
 
+        def _forward_stream(self, path: str, body: bytes) -> None:
+            """Reenvia el flujo linea a linea; al llegar la respuesta final ejecuta las acciones del PC."""
+            headers = {"Content-Type": self.headers.get("Content-Type", "application/json")}
+            started = False
+            try:
+                with hud.api.stream("POST", path, content=body, headers=headers) as resp:
+                    if resp.status_code != 200:
+                        ctype = resp.headers.get("Content-Type", "application/json")
+                        return self._send(resp.status_code, resp.read(), ctype)
+                    # Sin Content-Length: con HTTP/1.0 el cuerpo termina al cerrar la conexion.
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/x-ndjson")
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    started = True
+                    for line in resp.iter_lines():
+                        if not line:
+                            continue
+                        event = json.loads(line)
+                        if event.get("type") == "done":
+                            event = hud.run_actions(event)
+                        self.wfile.write((json.dumps(event, ensure_ascii=False) + "\n").encode())
+                        self.wfile.flush()
+            except httpx.HTTPError as exc:
+                detail = f"No puedo conectar con el servidor: {exc}"
+                if started:
+                    self.wfile.write((json.dumps({"type": "error", "detail": detail}) + "\n").encode())
+                else:
+                    self._json(502, {"detail": detail})
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # el navegador cerro la pagina a mitad de turno
+
         # --- rutas -------------------------------------------------------------
 
         def do_GET(self):
@@ -145,6 +178,8 @@ def make_handler(hud: Hud, port: int):
             body = self.rfile.read(length)
             if self.path in PROXY_POST:
                 return self._forward("POST", self.path, body)
+            if self.path in STREAM_POST:
+                return self._forward_stream(self.path, body)
             self._json(404, {"detail": "no encontrado"})
 
         def do_DELETE(self):
