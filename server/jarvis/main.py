@@ -96,7 +96,12 @@ def build_assistant(settings: Settings) -> Assistant:
         agent_registry = ToolRegistry()
         for tool in research_tools(settings.brave_api_key, settings.timezone):
             agent_registry.register(tool)
-        agent = ResearchAgent(llm, agent_registry, vault, assistant.board, settings.timezone)
+        # Informes largos: mas tokens de salida que una respuesta hablada.
+        agent_llm = FallbackLLM(
+            [OpenAICompatLLM(p, settings.llm_timeout_s * 2, max(4096, settings.llm_max_tokens))
+             for p in settings.agent_llm_providers or settings.llm_providers]
+        )
+        agent = ResearchAgent(agent_llm, agent_registry, vault, assistant.board, settings.timezone)
         for tool in agent_tools(agent):
             tools.register(tool)
         log.info("Agente investigador activo (informes en %s)", "Obsidian" if vault else "memoria")

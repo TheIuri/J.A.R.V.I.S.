@@ -28,6 +28,7 @@ services:
       # GROQ_MODEL: "openai/gpt-oss-120b" # si Groq lo retira, elige otro en console.groq.com/docs/models
       # GROQ_REASONING_EFFORT: "low" # pon "" si eliges un modelo que no razona
       # GEMINI_MODEL: "gemini-2.5-flash"
+      # AGENT_LLM_PROVIDERS: "gemini,groq" # el agente investigador con otra cadena (mas limite de tokens)
 
       # --- Voz (TTS): Piper local en CPU ---
       TTS_PROVIDER: "piper"

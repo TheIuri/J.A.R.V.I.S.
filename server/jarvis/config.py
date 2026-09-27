@@ -73,6 +73,7 @@ class Settings:
     groq_stt_model: str = "whisper-large-v3-turbo"
 
     llm_providers: list[LLMProviderConfig] = field(default_factory=list)
+    agent_llm_providers: list[LLMProviderConfig] = field(default_factory=list)  # vacio = los mismos
     llm_timeout_s: int = 30
     llm_max_tokens: int = 1024  # incluye los tokens de razonamiento
 
@@ -160,7 +161,10 @@ def load_settings() -> Settings:
 
     names = [n.strip().lower() for n in _env("LLM_PROVIDERS", "groq").split(",") if n.strip()]
     providers = [_llm_provider(n) for n in names]
-    missing = [p.name for p in providers if LLM_PRESETS[p.name][1] and not p.api_key]
+    # El agente investigador lee paginas largas: puede ir con otra cadena (p. ej. "gemini,groq").
+    agent_names = [n.strip().lower() for n in _env("AGENT_LLM_PROVIDERS").split(",") if n.strip()]
+    agent_providers = [_llm_provider(n) for n in agent_names] or providers
+    missing = sorted({p.name for p in providers + agent_providers if LLM_PRESETS[p.name][1] and not p.api_key})
     if missing:
         raise RuntimeError(f"Falta la API key de: {', '.join(missing)}")
 
@@ -175,6 +179,7 @@ def load_settings() -> Settings:
         whisper_compute_type=_env("WHISPER_COMPUTE_TYPE", "auto"),
         groq_stt_model=_env("GROQ_STT_MODEL", "whisper-large-v3-turbo"),
         llm_providers=providers,
+        agent_llm_providers=agent_providers,
         llm_timeout_s=_env_int("LLM_TIMEOUT_S", 30),
         llm_max_tokens=_env_int("LLM_MAX_TOKENS", 1024),
         tts_provider=_env("TTS_PROVIDER", "piper").lower(),

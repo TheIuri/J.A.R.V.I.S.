@@ -178,3 +178,19 @@ def test_hud_is_served_without_token_but_api_still_needs_it():
     assert client.get("/hud/config").json() == {"mode": "server", "pc_apps": None}
     assert client.get("/hud/../jarvis/config.py").status_code == 404
     assert client.post("/api/chat", json={"text": "hola"}).status_code == 401
+
+
+def test_agent_can_use_its_own_llm_chain(monkeypatch):
+    monkeypatch.setenv("API_TOKEN", "x")
+    monkeypatch.setenv("LLM_PROVIDERS", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.delenv("AGENT_LLM_PROVIDERS", raising=False)
+    assert [p.name for p in config.load_settings().agent_llm_providers] == ["groq"]
+    monkeypatch.setenv("AGENT_LLM_PROVIDERS", "gemini,groq")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="gemini"):
+        config.load_settings()
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    settings = config.load_settings()
+    assert [p.name for p in settings.agent_llm_providers] == ["gemini", "groq"]
+    assert [p.name for p in settings.llm_providers] == ["groq"]

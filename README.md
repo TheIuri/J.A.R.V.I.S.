@@ -346,6 +346,15 @@ que se pone con ello, y un agente trabaja en segundo plano:
 *"¿Cómo va la investigación?"* te da el estado. Puede haber 2 investigaciones a la vez, y `AGENTS_ENABLED: "false"`
 lo desactiva.
 
+**Modelo del agente**: lee páginas largas y el plan gratuito de Groq tiene un límite bajo de tokens por minuto.
+Si ves que las investigaciones fallan, dale al agente otra cadena de modelos, por ejemplo Gemini primero (clave
+gratis en [aistudio.google.com](https://aistudio.google.com/apikey)):
+
+```yaml
+GEMINI_API_KEY: "..."
+AGENT_LLM_PROVIDERS: "gemini,groq"   # el asistente sigue con LLM_PROVIDERS
+```
+
 **Seguridad**: el agente **solo tiene herramientas de lectura** (buscar, leer páginas, Wikipedia, noticias). Si
 una web intenta darle órdenes, no tiene con qué cumplirlas; el informe lo guarda el código, no la IA. El lector
 de páginas no abre direcciones de tu red (router, NAS…) ni `localhost`, y comprueba también cada redirección.
