@@ -32,7 +32,7 @@ from .tools.calendar import Calendars, parse_calendars
 from .tools.reminders import ReminderStore
 from .tools.truenas import _default_connect
 from .tts import NullTTS, PiperTTS
-from .watch import Watcher, calendar_check, reminders_check, truenas_check
+from .watch import Watcher, briefing_check, calendar_check, reminders_check, truenas_check
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # evita loguear URLs firmadas y ruido
@@ -128,6 +128,15 @@ def build_watcher(
                 settings.truenas_watch_minutes * 60,
             )
         )
+    if settings.briefing_at:
+
+        def ask(text: str) -> str:
+            # Sesion propia: no mezcla el resumen con tu conversacion ni guarda historial.
+            reply = assistant.handle_text(text, session="briefing", speak=False).reply
+            assistant.reset("briefing")
+            return reply
+
+        checks.append(briefing_check(ask, settings.briefing_at, settings.timezone, settings.briefing_weekends))
     return board, Watcher(board, checks)
 
 

@@ -95,6 +95,32 @@ def calendar_check(calendars: Calendars, minutes: int = 15) -> Check:
     return Check("agenda", 60, fn)
 
 
+BRIEFING_REQUEST = (
+    "Dame mi resumen de buenos dias: la fecha, el tiempo de hoy, mi agenda de hoy, los recordatorios de hoy, "
+    "tres titulares importantes y, solo si hay algun problema, el estado del servidor. Hablado y natural, "
+    "maximo seis frases; usa las herramientas que tengas."
+)
+
+
+def briefing_check(ask: Callable[[str], str], at: str, timezone: str, weekends: bool = True) -> Check:
+    """Resumen matinal a la hora indicada (una vez al dia; si el servidor arranca mas de 2 h tarde, se salta)."""
+    from datetime import time as dtime
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo(timezone)
+    hour = dtime.fromisoformat(at)
+
+    def fn() -> list[Alert]:
+        now = datetime.now(tz)
+        start = datetime.combine(now.date(), hour, tz)
+        if not start <= now < start + timedelta(hours=2) or (not weekends and now.weekday() >= 5):
+            return []
+        key = f"briefing:{now.date().isoformat()}"
+        return [(key, "info", "buenos días", ask(BRIEFING_REQUEST))]
+
+    return Check("buenos dias", 30, fn)
+
+
 def truenas_check(
     connect: Callable[[], Any], temp_warn: float = 50, interval_s: float = 300
 ) -> Check:
@@ -152,4 +178,4 @@ def truenas_check(
     return Check("truenas", interval_s, fn)
 
 
-__all__ = ["Check", "Watcher", "calendar_check", "reminders_check", "truenas_check", "OK_STATES"]
+__all__ = ["Check", "Watcher", "briefing_check", "calendar_check", "reminders_check", "truenas_check", "OK_STATES"]

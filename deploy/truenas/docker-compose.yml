@@ -44,6 +44,7 @@ services:
       # --- Avisos proactivos: recordatorios, agenda y TrueNAS (ver README) ---
       # NOTIFY_QUIET: "23:00-08:00" # esas horas sin voz (salvo criticos)
       # NTFY_URL: "https://ntfy.sh/<tema-largo-y-secreto>" # push al movil con la app ntfy
+      # BRIEFING_AT: "08:00" # resumen de buenos dias automatico
 
       # --- Home Assistant (opcional) ---
       # HA_URL: "http://192.168.1.X:8123"

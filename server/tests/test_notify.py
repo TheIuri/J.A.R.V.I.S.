@@ -150,3 +150,22 @@ def test_notifications_endpoint():
     assert [n["text"] for n in body["notices"]] == ["nuevo"] and body["last"] == 2
     off = TestClient(create_app(make_assistant(), api_token="s")).get("/api/notifications", headers=auth).json()
     assert off["enabled"] is False
+
+
+def test_briefing_once_a_day_in_its_window():
+    from jarvis.watch import briefing_check
+
+    asked = []
+    now = datetime.now(TZ)
+    inside = (now - timedelta(minutes=5)).strftime("%H:%M")
+    check = briefing_check(lambda t: asked.append(t) or "Buenos días. Hoy 22 grados.", inside, "Europe/Madrid")
+    alerts = check.fn()
+    assert alerts == [(f"briefing:{now.date().isoformat()}", "info", "buenos días", "Buenos días. Hoy 22 grados.")]
+    assert "agenda de hoy" in asked[0]
+    board = NoticeBoard()
+    for key, level, source, text in alerts * 2:
+        board.post(level, source, text, key)
+    assert len(board.since(0)) == 1  # una vez al día
+    late = (now - timedelta(hours=3)).strftime("%H:%M")
+    if (now - timedelta(hours=3)).date() == now.date():
+        assert briefing_check(lambda t: "x", late, "Europe/Madrid").fn() == []  # arrancó tarde: se salta

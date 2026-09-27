@@ -317,6 +317,19 @@ visible, así que no suenan a la vez el PC y el móvil.
    instala ntfy como app en TrueNAS y usa tu propio servidor.
 2. Añade `NTFY_URL: "https://ntfy.sh/jarvis-ori-7f3k9x2q"` a las variables de la app.
 
+## Nivel 6: rutinas
+
+**Buenos días**: di *"Buenos días"* o *"¿Qué tengo hoy?"* y te resume el día: fecha, tiempo, agenda y
+recordatorios de hoy, un par de titulares y problemas del servidor si los hay. Para que te lo diga **solo, cada
+mañana**, en el HUD y como push al móvil:
+
+```yaml
+BRIEFING_AT: "08:00"
+# BRIEFING_WEEKENDS: "false"   # solo de lunes a viernes
+```
+
+Se da una vez al día. Si el servidor arranca más de 2 horas tarde, ese día se salta.
+
 ## Nivel 5: agentes
 
 **Agente investigador**: *"Investiga qué placas solares me convienen para un piso"*. JARVIS responde al momento

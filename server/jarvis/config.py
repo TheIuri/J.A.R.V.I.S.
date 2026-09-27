@@ -121,6 +121,8 @@ class Settings:
     calendar_remind_minutes: int = 15
     truenas_watch_minutes: int = 5
     disk_temp_warn: int = 50
+    briefing_at: str = ""  # "08:00": resumen de buenos dias automatico
+    briefing_weekends: bool = True
     wol_broadcast: str = "255.255.255.255"
 
     @property
@@ -213,5 +215,7 @@ def load_settings() -> Settings:
         calendar_remind_minutes=_env_int("CALENDAR_REMIND_MINUTES", 15),
         truenas_watch_minutes=_env_int("TRUENAS_WATCH_MINUTES", 5),
         disk_temp_warn=_env_int("DISK_TEMP_WARN", 50),
+        briefing_at=_env("BRIEFING_AT"),
+        briefing_weekends=_env_bool("BRIEFING_WEEKENDS", True),
         wol_broadcast=_env("WOL_BROADCAST", "255.255.255.255"),
     )
