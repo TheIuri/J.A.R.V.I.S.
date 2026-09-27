@@ -433,3 +433,17 @@ def test_wol_tool_sends_from_server_and_pc():
     assert "desde el servidor y el PC" in out and sent == [("AA:BB:CC:DD:EE:FF", "192.168.1.255")]
     assert ctx.pc_actions == [{"action": "wol", "mac": "AA:BB:CC:DD:EE:FF", "device": "sobremesa"}]
     assert "ERROR" in reg.execute("wake_on_lan", '{"device": "tostadora"}', ToolContext())
+
+
+def test_cards_are_streamed_and_returned():
+    def card_tool(ctx, n):
+        ctx.cards.append({"kind": "web", "title": f"r{n}"})
+        return "ok"
+
+    tool = Tool("buscar", "b", {"type": "object", "properties": {"n": {"type": "integer"}}}, card_tool)
+    script = ScriptedLLM([[("buscar", {"n": 1})], "Aquí tienes."])
+    assistant = Assistant(None, script.llm(), NoTTS(), "sistema", tools=registry(tool))
+    events = []
+    result = assistant.handle_text("busca", on_event=events.append)
+    assert {"type": "cards", "cards": [{"kind": "web", "title": "r1"}]} in events
+    assert result.cards == [{"kind": "web", "title": "r1"}]

@@ -35,6 +35,7 @@ class ToolContext:
     pc_apps: list[str] | None = None  # None = no hay cliente de PC capaz de ejecutar acciones
     pc_actions: list[dict[str, Any]] = field(default_factory=list)
     pending: PendingAction | None = None  # accion que necesita confirmacion humana
+    cards: list[dict[str, Any]] = field(default_factory=list)  # resultados para mostrar en el HUD
 
 
 @dataclass(frozen=True)

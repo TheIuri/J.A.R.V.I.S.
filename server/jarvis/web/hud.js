@@ -263,6 +263,7 @@ async function ask(path, init) {
     setState("idle");
     return;
   }
+  if (body.cards?.length && $("cards").hidden) showCards(body.cards); // servidor sin directo
   showTurn(body);
   if (body.audio_wav_b64) await playWav(body.audio_wav_b64);
   else setState("idle");
@@ -631,7 +632,69 @@ function fire(idx, detail) {
   }
 }
 
+// --- ventana de resultados ------------------------------------------------------------
+
+const CARD_LABEL = { web: "WEB", wiki: "WIKIPEDIA", news: "NOTICIAS" };
+
+function hideCards() {
+  $("cards").hidden = true;
+  $("cards-list").textContent = "";
+}
+
+function showCards(cards) {
+  const list = $("cards-list");
+  for (const c of cards) {
+    // Contenido de terceros: siempre como texto, y enlaces solo http(s).
+    const safeUrl = /^https?:\/\//.test(c.url || "") ? c.url : "";
+    const el = document.createElement(safeUrl ? "a" : "div");
+    el.className = `card ${c.kind || ""}`;
+    if (safeUrl) {
+      el.href = safeUrl;
+      el.target = "_blank";
+      el.rel = "noopener noreferrer";
+    }
+    if (c.image) {
+      const img = document.createElement("img");
+      img.className = "photo";
+      img.src = c.image;
+      img.alt = "";
+      img.loading = "lazy";
+      img.referrerPolicy = "no-referrer";
+      img.onerror = () => img.remove();
+      el.append(img);
+    }
+    const src = document.createElement("div");
+    src.className = "src";
+    if (c.icon) {
+      const icon = document.createElement("img");
+      icon.src = c.icon;
+      icon.alt = "";
+      icon.referrerPolicy = "no-referrer";
+      icon.onerror = () => icon.remove();
+      src.append(icon);
+    }
+    src.append(document.createTextNode(c.source || CARD_LABEL[c.kind] || ""));
+    const title = document.createElement("div");
+    title.className = "t";
+    title.textContent = c.title || "";
+    el.append(src, title);
+    if (c.text) {
+      const d = document.createElement("div");
+      d.className = "d";
+      d.textContent = c.text;
+      el.append(d);
+    }
+    list.append(el);
+  }
+  const n = list.children.length;
+  $("cards-title").textContent = `RESULTADOS · ${n}`;
+  $("cards").hidden = n === 0;
+}
+
+$("cards-close").addEventListener("click", hideCards);
+
 function flowReset() {
+  hideCards();
   regionState.forEach((r) => Object.assign(r, { pending: false, detail: "", fail: false }));
   lastRegion = null;
   $("trail").textContent = "";
@@ -681,6 +744,9 @@ function onFlow(ev) {
       fire(idx, `${ev.ok ? "✓" : "✗"} ${label} · ${ev.ms} ms · ${ev.text}`);
       break;
     }
+    case "cards":
+      showCards(ev.cards || []);
+      break;
     case "reply":
       $("subtitle").textContent = ev.text;
       fire(REGION.language, ev.text);

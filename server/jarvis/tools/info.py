@@ -24,6 +24,34 @@ UA = "JARVIS/1.0 (https://github.com/TheIuri/J.A.R.V.I.S.; asistente personal)"
 MAX_SNIPPET = 220
 
 
+MAX_CARDS = 12
+
+
+def _https(url: str) -> str:
+    """Solo enlaces e imagenes https en las tarjetas del HUD."""
+    return url if isinstance(url, str) and url.startswith("https://") else ""
+
+
+def _domain(url: str) -> str:
+    return (urlparse(url).hostname or "").removeprefix("www.")
+
+
+def add_card(ctx: ToolContext, kind: str, title: str, url: str = "", text: str = "", source: str = "",
+             image: str = "") -> None:
+    if len(ctx.cards) >= MAX_CARDS:
+        return
+    domain = _domain(url)
+    ctx.cards.append({
+        "kind": kind,
+        "title": title[:160],
+        "url": _https(url) or (url if url.startswith("http://") else ""),
+        "text": text[:400],
+        "source": source or domain,
+        "image": _https(image),
+        "icon": f"https://icons.duckduckgo.com/ip3/{domain}.ico" if domain else "",
+    })
+
+
 def _clean(text: str, limit: int = MAX_SNIPPET) -> str:
     text = " ".join(html.unescape(re.sub(r"<[^>]+>", "", text or "")).split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
@@ -79,7 +107,7 @@ class WebSearch:
         except httpx.HTTPError as exc:
             raise ToolError(f"el buscador no responde ({type(exc).__name__})") from exc
         return [
-            {"title": _clean(r["title"], 120), "url": r["url"], "snippet": _clean(r["snippet"])}
+            {"title": _clean(r["title"], 120), "url": r["url"], "snippet": _clean(r["snippet"]), "image": r.get("image", "")}
             for r in results
             if r.get("title") and r.get("url", "").startswith("http")
         ][:limit]
@@ -101,16 +129,23 @@ class WebSearch:
         )
         resp.raise_for_status()
         return [
-            {"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("description", "")}
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": r.get("description", ""),
+                "image": (r.get("thumbnail") or {}).get("src", ""),
+            }
             for r in resp.json().get("web", {}).get("results", [])
         ]
 
 
 def web_search_tool(search: WebSearch) -> Tool:
-    def run(_ctx: ToolContext, query: str, max_results: int = 5) -> str:
+    def run(ctx: ToolContext, query: str, max_results: int = 5) -> str:
         results = search.search(query, max_results)
         if not results:
             return f"Sin resultados para '{query}'."
+        for r in results:
+            add_card(ctx, "web", r["title"], r["url"], r["snippet"], image=r.get("image", ""))
         return "\n".join(f"{i}. {r['title']} — {r['snippet']} ({r['url']})" for i, r in enumerate(results, 1))
 
     return Tool(
@@ -257,7 +292,8 @@ class Wikipedia:
         # Una sola peticion al API clasico: busca y devuelve la introduccion del mejor resultado.
         params = {
             "action": "query", "generator": "search", "gsrsearch": query, "gsrlimit": 1,
-            "prop": "extracts|pageprops|info", "exintro": 1, "explaintext": 1, "exchars": 1200,
+            "prop": "extracts|pageprops|info|pageimages", "exintro": 1, "explaintext": 1, "exchars": 1200,
+            "piprop": "thumbnail", "pithumbsize": 480,
             "inprop": "url", "ppprop": "disambiguation", "redirects": 1, "format": "json", "formatversion": 2,
         }
         try:
@@ -274,12 +310,14 @@ class Wikipedia:
             "extract": _clean(page.get("extract", ""), 1200),
             "url": page.get("fullurl", ""),
             "ambiguous": "disambiguation" in (page.get("pageprops") or {}),
+            "image": (page.get("thumbnail") or {}).get("source", ""),
         }
 
 
 def wikipedia_tool(wiki: Wikipedia) -> Tool:
-    def run(_ctx: ToolContext, topic: str) -> str:
+    def run(ctx: ToolContext, topic: str) -> str:
         s = wiki.summary(topic)
+        add_card(ctx, "wiki", s["title"], s["url"], s["extract"], "Wikipedia", s.get("image", ""))
         note = " (página de desambiguación: pide al usuario que concrete)" if s["ambiguous"] else ""
         return f"{s['title']}{note}: {s['extract']}"
 
@@ -329,15 +367,17 @@ class News:
                 when = parsedate_to_datetime(item.findtext("pubDate", "")).astimezone(self.tz).strftime("%d/%m %H:%M")
             except (TypeError, ValueError):
                 when = ""
-            items.append({"title": _clean(title, 160), "source": source, "when": when})
+            items.append({"title": _clean(title, 160), "source": source, "when": when, "url": item.findtext("link", "")})
             if len(items) >= limit:
                 break
         return items
 
 
 def news_tool(news: News) -> Tool:
-    def run(_ctx: ToolContext, topic: str = "", max_results: int = 6) -> str:
+    def run(ctx: ToolContext, topic: str = "", max_results: int = 6) -> str:
         items = news.headlines(topic, max_results)
+        for n in items:
+            add_card(ctx, "news", n["title"], n.get("url", ""), n["when"], n["source"])
         if not items:
             return "No hay noticias" + (f" sobre '{topic}'." if topic else ".")
         return "\n".join(f"- {n['title']} ({n['source']}, {n['when']})" for n in items)

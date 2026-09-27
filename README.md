@@ -272,6 +272,10 @@ py jarvis_hud.py        # abre http://localhost:8766 (usa JARVIS_SERVER y JARVIS
 - **Micrófono**: el navegador pide permiso la primera vez. Funciona porque `localhost` cuenta como sitio seguro.
 - **Opciones**: `--no-actions` (sin acciones en el PC), `--port 8766` y `--no-browser`.
 
+**Ventana de resultados**: cuando busca en internet, Wikipedia o noticias, aparece al lado del cerebro una ventana
+con los resultados: foto (Wikipedia, o Brave si usas su clave), icono de la web, título y fragmento. Clic para
+abrir la página; se cierra con la × o al hacer otra pregunta. En el móvil sale debajo del cerebro.
+
 ### "Hey Jarvis" (Nivel 4)
 
 El HUD del PC puede escuchar la palabra de activación, sin pulsar nada. La detección es 100 % local con

@@ -163,6 +163,7 @@ def _to_json(result: TurnResult) -> dict:
         "timings_ms": result.timings_ms,
         "tools_used": result.tools_used,
         "pc_actions": result.pc_actions,
+        "cards": result.cards,
         "audio_wav_b64": _b64(result.audio),
     }
 

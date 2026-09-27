@@ -75,6 +75,7 @@ class TurnResult:
     timings_ms: dict[str, int] = field(default_factory=dict)
     tools_used: list[str] = field(default_factory=list)
     pc_actions: list[dict[str, Any]] = field(default_factory=list)
+    cards: list[dict[str, Any]] = field(default_factory=list)
 
 
 @contextmanager
@@ -232,6 +233,7 @@ class Assistant:
                     used.append(call.name)
                     emit({"type": "tool", "id": call.id, "name": call.name, "args": _args(call.arguments)})
                     start = time.perf_counter()
+                    shown = len(ctx.cards)
                     result = self.tools.execute(call.name, call.arguments, ctx)
                     emit(
                         {
@@ -243,6 +245,8 @@ class Assistant:
                             "text": _short(result),
                         }
                     )
+                    if len(ctx.cards) > shown:  # la ventana de resultados del HUD aparece ya
+                        emit({"type": "cards", "cards": ctx.cards[shown:]})
                     messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
             else:
                 # Sigue pidiendo tools: ultima vuelta sin ellas para forzar una respuesta.
@@ -264,4 +268,4 @@ class Assistant:
             log.info("[%s] TTS %dms", session, timings["tts"])
 
         timings["total"] = sum(timings.values())
-        return TurnResult(text, reply.text, reply.provider, audio, timings, used, ctx.pc_actions)
+        return TurnResult(text, reply.text, reply.provider, audio, timings, used, ctx.pc_actions, ctx.cards)
