@@ -77,6 +77,8 @@ main { display: grid; grid-template-columns: 280px 1fr 240px; height: calc(100% 
 #flow .region.on { opacity: 1; background: rgba(5, 7, 13, .8); z-index: 1; }
 #flow .region.on span { color: var(--text); }
 #flow .region.fail { --c: var(--error); }
+#flow .region.back:not(.on) { opacity: .12; }
+#flow .region.back.on { opacity: .75; }
 #flow.past .region.on { opacity: .7; }
 #trail { margin: 0; min-height: 1.2em; font-size: 9.5px; text-align: center; max-width: 90%; opacity: .8; }
 

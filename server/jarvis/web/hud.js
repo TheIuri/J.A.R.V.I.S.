@@ -425,7 +425,10 @@ function toolRegion(name) {
 // Forma: cerebro (elipsoide), cerebelo y tronco. Más densidad cerca de la superficie (córtex).
 function insideBrain(x, y, z) {
   const cerebrum = x * x + ((y - 0.05) / 0.7) ** 2 + (z / 0.62) ** 2;
-  if (cerebrum <= 1 && y > -0.48 && !(x < -0.35 && y < -0.3)) return { q: Math.sqrt(cerebrum), region: null };
+  if (cerebrum <= 1 && y > -0.48 && !(x < -0.35 && y < -0.3)) {
+    if (Math.abs(z) < 0.045 && y > -0.2) return null; // cisura entre los dos hemisferios
+    return { q: Math.sqrt(cerebrum), region: null };
+  }
   if (((x + 0.58) / 0.34) ** 2 + ((y + 0.52) / 0.2) ** 2 + (z / 0.42) ** 2 <= 1) return { q: 0.8, region: REGION.cerebellum };
   if (((x + 0.22) / 0.1) ** 2 + ((y + 0.72) / 0.3) ** 2 + (z / 0.1) ** 2 <= 1) return { q: 0.5, region: REGION.cerebellum };
   return null;
@@ -454,7 +457,7 @@ const fibers = REGIONS.map(() => []);
     const z = Math.random() * 1.3 - 0.65;
     const hit = insideBrain(x, y, z);
     if (!hit || Math.random() > 0.2 + 0.8 * hit.q ** 3) continue;
-    neurons.push({ p: [x, y, z], region: hit.region ?? nearestRegion(x, y, z), tw: Math.random() * 6.28, s: [0, 0, 1] });
+    neurons.push({ p: [x, y, z], region: hit.region ?? nearestRegion(x, y, z), tw: Math.random() * 6.28, s: [0, 0, 1, 1] });
   }
   for (let i = 0; i < neurons.length; i++) {
     const a = neurons[i].p;
@@ -485,6 +488,7 @@ const regionState = REGIONS.map(() => ({ act: 0, base: 0, pending: false, detail
 const pulses = [];
 let lastRegion = null;
 let burst = 0;
+let spin = -0.6; // giro acumulado del modelo (una vuelta cada ~40 s)
 
 function fire(idx, detail) {
   const r = regionState[idx];
@@ -627,7 +631,7 @@ function frame(now) {
   // Actividad de fondo según el estado (micro, pensando, hablando).
   const think = state === "thinking" ? 0.3 + 0.15 * Math.sin(now / 160) : 0;
   regionState.forEach((r, i) => {
-    let base = REGIONS[i].planned ? 0.03 : 0.08;
+    let base = REGIONS[i].planned ? 0.05 : 0.15;
     if (i === REGION.auditory && state === "listening") base = 0.35 + level * 0.8;
     if (i === REGION.prefrontal) base = Math.max(base, think);
     if ((i === REGION.cerebellum || i === REGION.language) && state === "speaking") base = 0.3 + level * 0.7;
@@ -649,9 +653,10 @@ function frame(now) {
   g.fillStyle = halo;
   g.fillRect(0, 0, W, H);
 
-  // proyección con giro suave (oscila para que el cerebro siga viéndose de lado)
-  const yaw = -0.35 + Math.sin(now / 7000) * 0.45;
-  const pitch = 0.18 + Math.sin(now / 11000) * 0.08;
+  // modelo 3D girando sobre su eje vertical, algo inclinado para ver la parte de arriba
+  spin += dt * 0.16;
+  const yaw = spin;
+  const pitch = 0.22 + Math.sin(now / 9000) * 0.08;
   const cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
   const project = (p, out) => {
     const x = p[0] * cyw - p[2] * syw;
@@ -662,6 +667,7 @@ function frame(now) {
     out[0] = cx + x * S * f;
     out[1] = cy - y * S * f;
     out[2] = f;
+    out[3] = Math.max(0, Math.min(1, (f - 0.75) / 0.75)); // 0 = al fondo, 1 = delante
     return out;
   };
   for (const n of neurons) project(n.p, n.s);
@@ -670,7 +676,7 @@ function frame(now) {
   const px = W / 900;
 
   // fibras
-  const tmpA = [0, 0, 0], tmpB = [0, 0, 0], tmpC = [0, 0, 0];
+  const tmpA = [0, 0, 0, 0], tmpB = [0, 0, 0, 0], tmpC = [0, 0, 0, 0];
   fibers.forEach((list, i) => {
     const act = regionState[i].act;
     g.strokeStyle = rgba(REGIONS[i].color, 0.05 + act * 0.35);
@@ -703,10 +709,11 @@ function frame(now) {
   for (const n of neurons) {
     const act = regionState[n.region].act;
     const tw = 0.5 + 0.5 * Math.sin(now / 700 + n.tw);
+    const depth = 0.35 + 0.65 * n.s[3];
     const size = Math.max(1, px * (1.4 + act * 1.6) * n.s[2]);
-    g.fillStyle = rgba(REGIONS[n.region].color, 0.35 + tw * 0.3 + act * 0.6);
+    g.fillStyle = rgba(REGIONS[n.region].color, (0.35 + tw * 0.3 + act * 0.6) * depth);
     g.fillRect(n.s[0] - size / 2, n.s[1] - size / 2, size, size);
-    if (act > 0.3 && tw > 0.6) {
+    if (act > 0.3 && tw > 0.6 && n.s[3] > 0.3) {
       // brillo alrededor de las neuronas activas
       g.fillStyle = rgba(REGIONS[n.region].color, (act - 0.3) * 0.25);
       g.beginPath();
@@ -716,7 +723,7 @@ function frame(now) {
   }
 
   // impulsos entre regiones
-  const centers = REGIONS.map((r) => project(r.pos, [0, 0, 0]));
+  const centers = REGIONS.map((r) => project(r.pos, [0, 0, 0, 0]));
   for (let k = pulses.length - 1; k >= 0; k--) {
     const p = pulses[k];
     p.t += dt / p.dur;
@@ -749,6 +756,7 @@ function frame(now) {
     el.style.transform = `translate(${canvas.offsetLeft + x / dpr + 12}px, ${canvas.offsetTop + y / dpr - 12}px)`;
     el.classList.toggle("on", r.act > 0.35 || r.pending);
     el.classList.toggle("fail", r.fail);
+    el.classList.toggle("back", centers[i][3] < 0.4); // región en la cara oculta del modelo
     if (span.textContent !== (r.detail || REGIONS[i].role)) span.textContent = r.detail || REGIONS[i].role;
   });
 

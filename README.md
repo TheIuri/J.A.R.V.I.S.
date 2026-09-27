@@ -156,7 +156,7 @@ Ejemplos: *"Recuerda que mi perro se llama Toby"*, *"Prefiero que me llames Ori"
 
 ## Interfaz (HUD) en el PC
 
-Una interfaz web con un **cerebro 3D de neuronas** que muestra el flujo de pensamiento en directo. Incluye
+Una interfaz web con un **cerebro 3D de neuronas** que gira sobre sí mismo y muestra el flujo de pensamiento en directo. Incluye
 subtítulos, historial, un panel de sesión (intercambios, latencia, pico, tiempo por etapa, modelo y tools usadas),
 el estado de cada región del córtex y la lista de recuerdos con botón para olvidar.
 
