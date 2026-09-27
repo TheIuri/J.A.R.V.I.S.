@@ -173,6 +173,39 @@ En el equipo a encender, activa Wake-on-LAN en la BIOS y en Windows (Administrad
 "Wake on Magic Packet"). El paquete lo envía el NAS y, si tienes el HUD del PC abierto, también el PC. Si desde el
 móvil no enciende pero desde el PC sí, es la red interna de Docker del NAS, que no deja pasar el broadcast.
 
+### Home Assistant
+
+Si algún día lo instalas: *"¿Qué luces hay encendidas?"*, *"Apaga la luz del salón"*, *"Pon la calefacción a
+21 grados"*, *"Baja la persiana del dormitorio"*.
+
+```yaml
+HA_URL: "http://IP-DE-HOME-ASSISTANT:8123"
+HA_TOKEN: "..."            # HA → tu perfil → Seguridad → Tokens de acceso de larga duración
+# HA_ENTITIES: "light.,switch.salon,climate."   # opcional: solo estas entidades (por prefijo)
+```
+
+Solo luces, enchufes, ventiladores, persianas, clima, multimedia, escenas y scripts. **Cerraduras y alarmas
+quedan fuera** a propósito.
+
+### Spotify
+
+Elige qué suena: *"Pon Viva la vida de Coldplay"*, *"Pon música de Rosalía"*, *"Pon mi playlist de
+entrenar"*, *"¿Qué canción es esta?"*, *"Sube el volumen de Spotify al 60"*. Controlar la reproducción exige
+**Spotify Premium** y tener Spotify abierto en algún dispositivo (PC, móvil, altavoz...).
+
+1. En [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), crea una app (marca *Web API*)
+   con Redirect URI `http://127.0.0.1:8888/callback`.
+2. En el PC: `cd client` y `py spotify_login.py`. Pide el Client ID y el Secret, abre el navegador para aceptar
+   y te da el refresh token.
+3. En las variables de la app de TrueNAS:
+
+```yaml
+SPOTIFY_CLIENT_ID: "..."
+SPOTIFY_CLIENT_SECRET: "..."
+SPOTIFY_REFRESH_TOKEN: "..."
+# SPOTIFY_DEVICE: "SOBREMESA"   # dispositivo preferido si no hay nada sonando
+```
+
 ### Acciones con confirmación
 
 Lo que tiene consecuencias (por ahora, reiniciar una app de TrueNAS) nunca se hace a la primera: JARVIS
@@ -380,6 +413,7 @@ client/
   jarvis_client.py   push-to-talk para PC (consola)
   jarvis_hud.py      HUD web local (proxy al NAS + acciones del PC; usa server/jarvis/web)
   wake.py            "Hey Jarvis": palabra de activación local (openWakeWord) y fin de frase
+  spotify_login.py   obtiene el refresh token de Spotify (una vez)
   pc_actions.py      ejecuta las acciones permitidas en Windows
   apps.json          apps que JARVIS puede abrir
 deploy/truenas/           docker-compose para "Install via YAML"

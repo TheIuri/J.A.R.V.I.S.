@@ -106,6 +106,13 @@ class Settings:
     brave_api_key: str = ""  # opcional: busqueda web con Brave en vez de DuckDuckGo
     wol_devices: str = ""  # "sobremesa=AA:BB:CC:DD:EE:FF;otro=..."
     calendars: str = ""  # "personal=https://...ics;trabajo=https://...ics" (enlaces secretos iCal)
+    ha_url: str = ""  # Home Assistant, p. ej. http://192.168.1.50:8123
+    ha_token: str = ""
+    ha_entities: str = ""  # opcional: prefijos de entity_id permitidos ("light.,switch.salon")
+    spotify_client_id: str = ""
+    spotify_client_secret: str = ""
+    spotify_refresh_token: str = ""
+    spotify_device: str = ""  # dispositivo preferido si no hay ninguno sonando
     wol_broadcast: str = "255.255.255.255"
 
     @property
@@ -183,5 +190,12 @@ def load_settings() -> Settings:
         brave_api_key=_env("BRAVE_API_KEY"),
         wol_devices=_env("WOL_DEVICES"),
         calendars=_env("CALENDARS"),
+        ha_url=_env("HA_URL"),
+        ha_token=_env("HA_TOKEN"),
+        ha_entities=_env("HA_ENTITIES"),
+        spotify_client_id=_env("SPOTIFY_CLIENT_ID"),
+        spotify_client_secret=_env("SPOTIFY_CLIENT_SECRET"),
+        spotify_refresh_token=_env("SPOTIFY_REFRESH_TOKEN"),
+        spotify_device=_env("SPOTIFY_DEVICE"),
         wol_broadcast=_env("WOL_BROADCAST", "255.255.255.255"),
     )

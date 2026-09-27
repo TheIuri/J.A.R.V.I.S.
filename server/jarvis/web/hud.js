@@ -470,11 +470,25 @@ const TOOL_LABEL = {
   pc_media: "PC · música",
   pc_timer: "PC · temporizador",
   truenas_status: "TrueNAS",
+  truenas_app_restart: "TrueNAS · reiniciar app",
+  web_search: "buscar en internet",
+  wikipedia: "Wikipedia",
+  news: "noticias",
+  convert: "conversión",
+  calendar_agenda: "agenda",
+  wake_on_lan: "encender equipo",
+  home_status: "casa · estado",
+  home_control: "casa · control",
+  spotify_play: "Spotify · poner",
+  spotify_control: "Spotify · control",
+  spotify_now_playing: "Spotify · qué suena",
 };
+// Acciones (cambian algo fuera) -> córtex motor; el resto son consultas -> asociación.
+const MOTOR_TOOLS = new Set(["truenas_app_restart", "wake_on_lan", "home_control", "spotify_play", "spotify_control"]);
 
 function toolRegion(name) {
   if (name.startsWith("memory_")) return REGION.hippocampus;
-  if (name.startsWith("pc_") || /^obsidian_(create|append|daily)/.test(name)) return REGION.motor;
+  if (name.startsWith("pc_") || /^obsidian_(create|append|daily)/.test(name) || MOTOR_TOOLS.has(name)) return REGION.motor;
   return REGION.association;
 }
 

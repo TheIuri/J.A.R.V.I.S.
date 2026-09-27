@@ -41,6 +41,15 @@ services:
       # --- Agenda: enlaces secretos iCal de Google Calendar / Outlook (ver README) ---
       # CALENDARS: "personal=https://...basic.ics;trabajo=https://...calendar.ics"
 
+      # --- Home Assistant (opcional) ---
+      # HA_URL: "http://192.168.1.X:8123"
+      # HA_TOKEN: ""
+
+      # --- Spotify (opcional; ver README: client/spotify_login.py) ---
+      # SPOTIFY_CLIENT_ID: ""
+      # SPOTIFY_CLIENT_SECRET: ""
+      # SPOTIFY_REFRESH_TOKEN: ""
+
       # --- Wake-on-LAN: equipos que JARVIS puede encender ---
       # WOL_DEVICES: "sobremesa=AA:BB:CC:DD:EE:FF"
 
