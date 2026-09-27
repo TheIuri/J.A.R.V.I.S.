@@ -28,8 +28,6 @@ LLM_PRESETS: dict[str, tuple[str, str | None, str]] = {
         "meta-llama/llama-3.3-70b-instruct:free",
     ),
     "ollama": ("http://ollama:11434/v1", None, "qwen2.5:3b"),
-    # De pago por uso (la API va aparte de la suscripcion Claude Pro/Max). Pensado para el agente.
-    "anthropic": ("https://api.anthropic.com/v1", "ANTHROPIC_API_KEY", "claude-sonnet-5"),
 }
 
 

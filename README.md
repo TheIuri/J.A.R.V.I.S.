@@ -355,16 +355,6 @@ GEMINI_API_KEY: "..."
 AGENT_LLM_PROVIDERS: "gemini,groq"   # el asistente sigue con LLM_PROVIDERS
 ```
 
-Para investigaciones de más nivel puedes usar Claude solo en el agente. Es de pago por uso (unos céntimos por
-investigación) y va aparte de una suscripción Claude Pro/Max, que no incluye API. La clave se saca en
-[console.anthropic.com](https://console.anthropic.com):
-
-```yaml
-ANTHROPIC_API_KEY: "..."
-AGENT_LLM_PROVIDERS: "anthropic,gemini,groq"   # si falla o no hay saldo, pasa al siguiente
-# ANTHROPIC_MODEL: "claude-haiku-4-5-20251001" # más barato
-```
-
 **Seguridad**: el agente **solo tiene herramientas de lectura** (buscar, leer páginas, Wikipedia, noticias). Si
 una web intenta darle órdenes, no tiene con qué cumplirlas; el informe lo guarda el código, no la IA. El lector
 de páginas no abre direcciones de tu red (router, NAS…) ni `localhost`, y comprueba también cada redirección.
