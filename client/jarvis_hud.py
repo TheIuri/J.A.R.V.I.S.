@@ -21,14 +21,18 @@ import base64
 import json
 import os
 import re
+import shutil
 import sys
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
 
+from claude_mode import MODELS as CLAUDE_MODELS
+from claude_mode import ClaudeChat
 from delegate import Delegate
 from pc_actions import PCActions, load_apps
 
@@ -37,9 +41,9 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "server" / "jarvis" / "web
 CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
 
 # Rutas del servidor que el HUD puede usar (nada mas se reenvia).
-PROXY_POST = {"/api/chat", "/api/voice", "/api/reset"}
+PROXY_POST = {"/api/chat", "/api/voice", "/api/reset", "/api/transcribe"}
 STREAM_POST = {"/api/chat/stream", "/api/voice/stream"}  # flujo de pensamiento en directo (NDJSON)
-PROXY_GET = {"/api/memories", "/api/notifications", "/health"}
+PROXY_GET = {"/api/memories", "/api/notifications", "/api/models", "/health"}
 MEMORY_DELETE = re.compile(r"^/api/memories/\d+$")
 MAX_BODY = 12 * 1024 * 1024
 EVENTS_WAIT_S = 20  # espera larga: el navegador recibe los avisos al instante
@@ -53,6 +57,7 @@ class Hud:
         delegate = Delegate(self.report, self.announce)
         self.actions = PCActions(load_apps(apps_path), self.announce, delegate) if actions_enabled else None
         self.wake = None  # WakeListener si "Hey Jarvis" esta activo
+        self.claude = ClaudeChat(shutil.which("claude"), self.memories)  # modo Claude (membresia)
 
     @property
     def pc_apps(self) -> list[str] | None:
@@ -66,6 +71,41 @@ class Hud:
         except httpx.HTTPError as exc:
             print(f"(no se pudo generar la voz del aviso: {exc})")
         self.push({"type": "announce", "text": text, "audio_wav_b64": audio})
+
+    def memories(self) -> list[str]:
+        try:
+            return [m["content"] for m in self.api.get("/api/memories").json().get("memories", [])]
+        except (httpx.HTTPError, ValueError, KeyError):
+            return []
+
+    def claude_turn(self, body: dict, write) -> None:
+        """Modo Claude: piensa Claude Code en este PC; el NAS pone la voz. Eventos como /api/chat/stream."""
+        text = str(body.get("text", "")).strip()
+        session = str(body.get("session", "default"))[:40]
+        model = str(body.get("model", ""))
+        write({"type": "heard", "text": text, "ms": 0})
+        write({"type": "thinking", "round": 1})
+        start = time.perf_counter()
+        try:
+            reply, used = self.claude.ask(text, model, session, write)
+        except (RuntimeError, ValueError, OSError) as exc:
+            return write({"type": "error", "detail": str(exc)})
+        ms_claude = round((time.perf_counter() - start) * 1000)
+        write({"type": "reply", "text": reply, "provider": CLAUDE_MODELS[model][1], "ms": ms_claude})
+        write({"type": "speaking"})
+        start = time.perf_counter()
+        audio = None
+        if body.get("speak", True):
+            try:
+                audio = self.api.post("/api/speak", json={"text": reply}).json().get("audio_wav_b64")
+            except (httpx.HTTPError, ValueError):
+                audio = None
+        ms_tts = round((time.perf_counter() - start) * 1000)
+        write({
+            "type": "done", "transcript": text, "reply": reply, "provider": CLAUDE_MODELS[model][1],
+            "timings_ms": {"claude": ms_claude, "tts": ms_tts, "total": ms_claude + ms_tts},
+            "tools_used": used, "pc_actions": [], "cards": [], "audio_wav_b64": audio,
+        })
 
     def report(self, title: str, text: str) -> None:
         """Informe de Claude Code: el servidor lo guarda en Obsidian y avisa a todos los HUD (y al movil)."""
@@ -189,6 +229,27 @@ def make_handler(hud: Hud, port: int):
             except (BrokenPipeError, ConnectionResetError):
                 pass  # el navegador cerro la pagina a mitad de turno
 
+        def _claude(self, body: bytes) -> None:
+            try:
+                data = json.loads(body or b"{}")
+            except ValueError:
+                return self._json(400, {"detail": "JSON no valido"})
+            if not str(data.get("text", "")).strip():
+                return self._json(400, {"detail": "Texto vacio"})
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+
+            def write(event: dict) -> None:
+                self.wfile.write((json.dumps(event, ensure_ascii=False) + "\n").encode())
+                self.wfile.flush()
+
+            try:
+                hud.claude_turn(data, write)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
         # --- rutas -------------------------------------------------------------
 
         def do_GET(self):
@@ -201,7 +262,10 @@ def make_handler(hud: Hud, port: int):
             if static.suffix in CONTENT_TYPES and static.parent == STATIC_DIR and static.is_file():
                 return self._send(200, static.read_bytes(), CONTENT_TYPES[static.suffix])
             if path == "/hud/config":
-                return self._json(200, {"mode": "local", "pc_apps": hud.pc_apps, "wake": hud.wake is not None})
+                claude = [{"id": k, "label": v[1]} for k, v in CLAUDE_MODELS.items()] if hud.claude.exe else []
+                return self._json(
+                    200, {"mode": "local", "pc_apps": hud.pc_apps, "wake": hud.wake is not None, "claude_models": claude}
+                )
             if path == "/hud/events":
                 return self._json(200, {"events": hud.take_events(EVENTS_WAIT_S)})
             if path in PROXY_GET:
@@ -215,6 +279,10 @@ def make_handler(hud: Hud, port: int):
             if length > MAX_BODY:
                 return self._json(413, {"detail": "demasiado grande"})
             body = self.rfile.read(length)
+            if self.path == "/claude/chat/stream":
+                return self._claude(body)
+            if self.path == "/api/reset":
+                hud.claude.reset(str(json.loads(body or b"{}").get("session", "default")))
             if self.path in PROXY_POST:
                 return self._forward("POST", self.path, body)
             if self.path in STREAM_POST:

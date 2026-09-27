@@ -152,6 +152,7 @@ class ChatRequest(BaseModel):
     session: str = "default"
     speak: bool = True
     pc_apps: list[str] | None = None  # apps que el cliente de PC permite abrir; None = sin acciones de PC
+    model: str | None = None  # proveedor elegido en el HUD (groq, gemini...); None = el orden configurado
 
 
 class SpeakRequest(BaseModel):
@@ -191,7 +192,7 @@ def _parse_apps(raw: str | None) -> list[str] | None:
     return [a.strip() for a in raw.split(",") if a.strip()]
 
 
-def _stream(fn, *args) -> StreamingResponse:
+def _stream(fn, *args, model: str | None = None) -> StreamingResponse:
     """Ejecuta el turno en un hilo y manda cada evento del pipeline como una linea JSON (NDJSON).
 
     La ultima linea es {"type": "done", ...respuesta completa} o {"type": "error", "detail": ...}.
@@ -200,7 +201,7 @@ def _stream(fn, *args) -> StreamingResponse:
 
     def work() -> None:
         try:
-            events.put({"type": "done", **_to_json(fn(*args, on_event=events.put))})
+            events.put({"type": "done", **_to_json(fn(*args, on_event=events.put, model=model))})
         except LLMError as exc:
             log.error("%s", exc)
             events.put({"type": "error", "detail": str(exc)})
@@ -295,15 +296,24 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         session: str = Form("default"),
         speak: bool = Form(True),
         pc_apps: str | None = Form(None),
+        model: str | None = Form(None),
     ) -> StreamingResponse:
         data = _read_audio(audio)  # antes de responder: el fichero se cierra al acabar la peticion
-        return _stream(state["assistant"].handle_audio, data, session, speak, _parse_apps(pc_apps))
+        return _stream(state["assistant"].handle_audio, data, session, speak, _parse_apps(pc_apps), model=model or None)
 
     @app.post("/api/chat/stream", dependencies=[Depends(require_token)])
     def chat_stream(req: ChatRequest) -> StreamingResponse:
         if not req.text.strip():
             raise HTTPException(status_code=400, detail="Texto vacio")
-        return _stream(state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps)
+        return _stream(state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps, model=req.model)
+
+    @app.get("/api/models", dependencies=[Depends(require_token)])
+    def models() -> dict:
+        return {"models": state["assistant"].llm.models()}
+
+    @app.post("/api/transcribe", dependencies=[Depends(require_token)])
+    def transcribe(audio: UploadFile = File(...)) -> dict:
+        return {"text": state["assistant"].transcribe(_read_audio(audio))}
 
     @app.post("/api/speak", dependencies=[Depends(require_token)])
     def speak(req: SpeakRequest) -> dict:

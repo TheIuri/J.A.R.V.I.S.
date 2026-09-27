@@ -30,6 +30,8 @@ const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 let state = "idle";
 let mode = "local";
 let pcApps = null;
+let claudeModels = []; // modo Claude (membresía) disponible en el HUD del PC
+const MODEL_KEY = "jarvis_model";
 let wakeEnabled = false; // "Hey Jarvis" en el PC (modo local con openwakeword)
 let wakeActive = false; // se oyó "Hey Jarvis" y se espera la frase
 let busySent = false;
@@ -91,7 +93,10 @@ $("login-form").addEventListener("submit", async (e) => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session: SESSION }),
   });
-  if (resp.ok) $("login").hidden = true;
+  if (resp.ok) {
+    $("login").hidden = true;
+    loadModels(); // con token ya se pueden pedir los modelos
+  }
 });
 
 // --- estado -----------------------------------------------------------------
@@ -167,11 +172,84 @@ async function stopRecording() {
     return;
   }
   const wav = encodeWav(downsample(concat(chunks), audioCtx.sampleRate, TARGET_RATE), TARGET_RATE);
+  await askVoice(wav);
+}
+
+// --- modelo -----------------------------------------------------------------------
+
+function selectedModel() {
+  return $("model").value || "";
+}
+
+function isClaude() {
+  return selectedModel().startsWith("claude-");
+}
+
+async function loadModels() {
+  const select = $("model");
+  const options = [{ id: "", label: "Automático (JARVIS)" }];
+  try {
+    const resp = await api("/api/models");
+    if (resp.ok) (await resp.json()).models.forEach((m) => options.push(m));
+  } catch {
+    /* servidor antiguo: solo automático */
+  }
+  claudeModels.forEach((m) => options.push({ id: m.id, label: `${m.label} · membresía` }));
+  select.textContent = "";
+  for (const m of options) {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    opt.textContent = m.label;
+    select.append(opt);
+  }
+  let saved = "";
+  try {
+    saved = localStorage.getItem(MODEL_KEY) || "";
+  } catch {
+    /* sin almacenamiento */
+  }
+  select.value = options.some((m) => m.id === saved) ? saved : "";
+}
+
+$("model").addEventListener("change", () => {
+  try {
+    localStorage.setItem(MODEL_KEY, selectedModel());
+  } catch {
+    /* sin almacenamiento */
+  }
+});
+
+// Voz: normal (el NAS transcribe y piensa) o modo Claude (el NAS transcribe y Claude piensa en el PC).
+async function askVoice(wav) {
   const form = new FormData();
   form.append("audio", wav, "audio.wav");
   form.append("session", SESSION);
-  if (pcApps) form.append("pc_apps", pcApps.join(","));
-  await ask("/api/voice", { method: "POST", body: form });
+  if (!isClaude()) {
+    if (pcApps) form.append("pc_apps", pcApps.join(","));
+    if (selectedModel()) form.append("model", selectedModel());
+    return ask("/api/voice", { method: "POST", body: form });
+  }
+  setState("thinking", "transcribiendo");
+  let text = "";
+  try {
+    const resp = await api("/api/transcribe", { method: "POST", body: form });
+    text = (await resp.json()).text || "";
+  } catch (err) {
+    return setState("error", String(err.message || err).slice(0, 120));
+  }
+  if (!text) {
+    $("subtitle").textContent = "No te he oído bien, prueba otra vez.";
+    return setState("idle");
+  }
+  return askClaude(text);
+}
+
+function askClaude(text) {
+  return ask("/claude/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, session: SESSION, model: selectedModel() }),
+  });
 }
 
 function concat(chunks) {
@@ -327,7 +405,8 @@ function showTurn(body) {
 }
 
 async function sendText(text) {
-  const payload = { text, session: SESSION, pc_apps: pcApps };
+  if (isClaude()) return askClaude(text);
+  const payload = { text, session: SESSION, pc_apps: pcApps, model: selectedModel() || null };
   await ask("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -451,11 +530,7 @@ function onPcEvent(ev) {
       if (!wakeActive) break;
       wakeActive = false;
       const bytes = Uint8Array.from(atob(ev.audio_wav_b64), (c) => c.charCodeAt(0));
-      const form = new FormData();
-      form.append("audio", new Blob([bytes], { type: "audio/wav" }), "audio.wav");
-      form.append("session", SESSION);
-      if (pcApps) form.append("pc_apps", pcApps.join(","));
-      ask("/api/voice", { method: "POST", body: form });
+      askVoice(new Blob([bytes], { type: "audio/wav" }));
       break;
     }
     case "wake_cancel":
@@ -998,11 +1073,14 @@ async function init() {
   tick();
   requestAnimationFrame(frame);
   try {
-    ({ mode, pc_apps: pcApps, wake: wakeEnabled = false } = await (await fetch("/hud/config")).json());
+    ({ mode, pc_apps: pcApps, wake: wakeEnabled = false, claude_models: claudeModels = [] } = await (
+      await fetch("/hud/config")
+    ).json());
   } catch {
     pcApps = null;
   }
   noticesLoop();
+  loadModels();
   if (mode === "server") {
     $("hint").textContent = matchMedia("(pointer: coarse)").matches
       ? "MANTÉN PULSADO EL CEREBRO PARA HABLAR"

@@ -120,6 +120,7 @@ class Assistant:
         speak: bool = True,
         pc_apps: list[str] | None = None,
         on_event: EventSink | None = None,
+        model: str | None = None,
     ) -> TurnResult:
         if self.stt is None:
             raise RuntimeError("No hay proveedor STT configurado")
@@ -133,7 +134,7 @@ class Assistant:
             emit({"type": "heard", "text": transcript, "ms": timings["stt"]})
             if not transcript:
                 return TurnResult("", "", None, None, timings)
-            return self._respond(transcript, session, speak, timings, ToolContext(pc_apps=pc_apps), emit)
+            return self._respond(transcript, session, speak, timings, ToolContext(pc_apps=pc_apps), emit, model)
 
     def handle_text(
         self,
@@ -142,12 +143,20 @@ class Assistant:
         speak: bool = True,
         pc_apps: list[str] | None = None,
         on_event: EventSink | None = None,
+        model: str | None = None,
     ) -> TurnResult:
         emit = on_event or _no_events
         with self._lock:
             text = text.strip()
             emit({"type": "heard", "text": text, "ms": 0})
-            return self._respond(text, session, speak, {}, ToolContext(pc_apps=pc_apps), emit)
+            return self._respond(text, session, speak, {}, ToolContext(pc_apps=pc_apps), emit, model)
+
+    def transcribe(self, audio: bytes) -> str:
+        """Solo STT (modo Claude: el PC transcribe aqui y piensa con Claude Code)."""
+        if self.stt is None:
+            raise RuntimeError("No hay proveedor STT configurado")
+        with self._lock:
+            return self.stt.transcribe(audio)
 
     def speak(self, text: str) -> bytes | None:
         """Solo TTS (p. ej. el aviso de un temporizador del PC)."""
@@ -183,7 +192,8 @@ class Assistant:
         return TurnResult(text, reply, None, audio, timings, [name], ctx.pc_actions)
 
     def _respond(
-        self, text: str, session: str, speak: bool, timings: dict[str, int], ctx: ToolContext, emit: EventSink
+        self, text: str, session: str, speak: bool, timings: dict[str, int], ctx: ToolContext, emit: EventSink,
+        model: str | None = None,
     ) -> TurnResult:
         waiting = self._pending.pop(session, None)
         if waiting and self.tools and time.monotonic() < waiting[1]:
@@ -217,7 +227,7 @@ class Assistant:
         with _timed(timings, "llm"):
             for round_ in range(MAX_TOOL_ROUNDS):
                 emit({"type": "thinking", "round": round_ + 1})
-                reply = self.llm.chat(messages, specs or None)
+                reply = self.llm.chat(messages, specs or None, prefer=model)
                 if not reply.tool_calls:
                     break
                 messages.append(
@@ -252,7 +262,7 @@ class Assistant:
             else:
                 # Sigue pidiendo tools: ultima vuelta sin ellas para forzar una respuesta.
                 emit({"type": "thinking", "round": MAX_TOOL_ROUNDS + 1})
-                reply = self.llm.chat(messages)
+                reply = self.llm.chat(messages, prefer=model)
         emit({"type": "reply", "text": reply.text, "provider": reply.provider, "ms": timings["llm"]})
         if ctx.pending:
             self._pending[session] = (ctx.pending, time.monotonic() + PENDING_TTL_S)

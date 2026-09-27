@@ -367,6 +367,19 @@ Instalación, una sola vez en el PC:
 2. Abre una terminal, ejecuta `claude`, inicia sesión con tu cuenta y ciérralo.
 3. Al lanzar `py jarvis_hud.py` debe salir `Claude Code (membresia): disponible`.
 
+### Modo Claude y selector de modelo
+
+En el panel derecho del HUD, **CEREBRO** elige quién piensa:
+- **Automático (JARVIS)**: la cadena de `LLM_PROVIDERS` (por defecto Groq).
+- **Un proveedor concreto** (`groq`, `gemini`...): va primero y el resto queda de respaldo. En el PC y en el móvil.
+- **Claude Sonnet / Opus / Haiku · membresía** (solo en el HUD del PC, con Claude Code instalado): toda la
+  conversación la piensa Claude con tu membresía. Mantiene el contexto entre preguntas y conoce tus recuerdos de
+  JARVIS. La voz no cambia: el NAS transcribe y habla. En este modo **solo busca y lee en internet**; para
+  acciones (PC, casa, música, recordatorios, notas) vuelve a Automático. Responde más despacio que Groq y gasta
+  cupo de la membresía, así que es mejor para conversaciones que merecen la pena.
+
+La elección se guarda en ese navegador. *Nueva conversación* también empieza una sesión nueva con Claude.
+
 **Seguridad**: Claude Code arranca **solo con WebSearch y WebFetch**. No puede ejecutar comandos, editar ni
 **leer archivos del PC** (una web maliciosa podría pedirle leer tus archivos y enviarlos fuera), ni usar
 servidores MCP. Trabaja en una carpeta temporal vacía y la tarea le llega por la entrada estándar, nunca en la
@@ -497,6 +510,7 @@ client/
   wake.py            "Hey Jarvis": palabra de activación local (openWakeWord) y fin de frase
   spotify_login.py   obtiene el refresh token de Spotify (una vez)
   delegate.py        encarga tareas complejas a Claude Code con tu membresía (solo buscar y leer webs)
+  claude_mode.py     modo Claude: la conversación la piensa Claude Code (membresía) en el PC
   pc_actions.py      ejecuta las acciones permitidas en Windows
   apps.json          apps que JARVIS puede abrir
 deploy/truenas/           docker-compose para "Install via YAML"
