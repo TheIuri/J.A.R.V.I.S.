@@ -38,7 +38,7 @@ CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; c
 # Rutas del servidor que el HUD puede usar (nada mas se reenvia).
 PROXY_POST = {"/api/chat", "/api/voice", "/api/reset"}
 STREAM_POST = {"/api/chat/stream", "/api/voice/stream"}  # flujo de pensamiento en directo (NDJSON)
-PROXY_GET = {"/api/memories", "/health"}
+PROXY_GET = {"/api/memories", "/api/notifications", "/health"}
 MEMORY_DELETE = re.compile(r"^/api/memories/\d+$")
 MAX_BODY = 12 * 1024 * 1024
 EVENTS_WAIT_S = 20  # espera larga: el navegador recibe los avisos al instante
@@ -195,7 +195,7 @@ def make_handler(hud: Hud, port: int):
             if path == "/hud/events":
                 return self._json(200, {"events": hud.take_events(EVENTS_WAIT_S)})
             if path in PROXY_GET:
-                return self._forward("GET", path)
+                return self._forward("GET", self.path)  # con la query (?after=...&wait=...)
             self._json(404, {"detail": "no encontrado"})
 
         def do_POST(self):

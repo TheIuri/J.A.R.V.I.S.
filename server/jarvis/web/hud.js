@@ -98,6 +98,7 @@ $("login-form").addEventListener("submit", async (e) => {
 
 function setState(next, detail) {
   state = next;
+  if (next === "idle" && queuedNotices.length) setTimeout(flushNotices, 400);
   const busy = next === "listening" || next === "thinking" || next === "speaking";
   if (wakeEnabled && busy !== busySent) {
     busySent = busy; // mientras piensa o habla, el PC no escucha "Hey Jarvis" (su propia voz)
@@ -374,6 +375,51 @@ async function resetConversation() {
   $("you").textContent = "";
 }
 
+// --- avisos proactivos (recordatorios, agenda, TrueNAS...) ----------------------------
+
+const queuedNotices = [];
+
+async function noticesLoop(after = -1) {
+  let next = after;
+  let delay = 0;
+  if (mode === "server" && !getToken()) return setTimeout(() => noticesLoop(after), 3000); // aún sin token
+  try {
+    const resp = await api(`/api/notifications?after=${after}&wait=${after < 0 ? 0 : 25}`);
+    if (!resp.ok) throw new Error(resp.status);
+    const body = await resp.json();
+    if (!body.enabled) return; // avisos desactivados en el servidor
+    if (after >= 0) body.notices.forEach((n) => queuedNotices.push(n));
+    next = body.last;
+    flushNotices();
+  } catch {
+    delay = 5000; // sin conexión o sin token todavía: se reintenta
+  }
+  setTimeout(() => noticesLoop(next), delay);
+}
+
+// Los avisos esperan a que JARVIS no esté escuchando, pensando ni hablando.
+function flushNotices() {
+  if (state !== "idle" && state !== "error") return;
+  while (queuedNotices.length) {
+    const n = queuedNotices.shift();
+    $("subtitle").textContent = n.text;
+    fire(REGION.thalamus, n.text);
+    const turn = document.createElement("div");
+    turn.className = `turn notice ${n.level}`;
+    const a = document.createElement("div");
+    a.className = "a";
+    a.textContent = n.text;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `AVISO · ${n.source} · ${n.created.slice(11, 16)}`;
+    turn.append(a, meta);
+    $("log").append(turn);
+    $("log").scrollTop = $("log").scrollHeight;
+    // Solo habla la pestaña visible (si tienes el HUD abierto en el PC y en el móvil, no suenan los dos).
+    if (n.speak && n.audio_wav_b64 && document.visibilityState === "visible") playWav(n.audio_wav_b64);
+  }
+}
+
 async function pollEvents() {
   // El proxy del PC contesta en cuanto hay un aviso (o a los 20 s sin nada): reacción inmediata.
   let delay = 0;
@@ -449,6 +495,7 @@ const REGIONS = [
   { id: "language", name: "LENGUAJE", role: "respuesta", pos: [0.52, -0.24, 0.3], color: [255, 181, 71] },
   { id: "cerebellum", name: "CEREBELO", role: "voz", pos: [-0.6, -0.52, 0], color: [77, 124, 255] },
   { id: "visual", name: "VISUAL", role: "cámara · nivel 4", pos: [-0.92, 0.08, 0], color: [45, 212, 191], planned: true },
+  { id: "thalamus", name: "TÁLAMO", role: "avisos", pos: [-0.05, 0.12, 0], color: [210, 230, 255] },
 ];
 const REGION = Object.fromEntries(REGIONS.map((r, i) => [r.id, i]));
 
@@ -476,6 +523,9 @@ const TOOL_LABEL = {
   news: "noticias",
   convert: "conversión",
   calendar_agenda: "agenda",
+  reminder_set: "nuevo recordatorio",
+  reminder_list: "recordatorios",
+  reminder_cancel: "cancelar recordatorio",
   wake_on_lan: "encender equipo",
   home_status: "casa · estado",
   home_control: "casa · control",
@@ -487,6 +537,7 @@ const TOOL_LABEL = {
 const MOTOR_TOOLS = new Set(["truenas_app_restart", "wake_on_lan", "home_control", "spotify_play", "spotify_control"]);
 
 function toolRegion(name) {
+  if (name.startsWith("reminder_")) return REGION.thalamus;
   if (name.startsWith("memory_")) return REGION.hippocampus;
   if (name.startsWith("pc_") || /^obsidian_(create|append|daily)/.test(name) || MOTOR_TOOLS.has(name)) return REGION.motor;
   return REGION.association;
@@ -881,6 +932,7 @@ async function init() {
   } catch {
     pcApps = null;
   }
+  noticesLoop();
   if (mode === "server") {
     $("hint").textContent = matchMedia("(pointer: coarse)").matches
       ? "MANTÉN PULSADO EL CEREBRO PARA HABLAR"

@@ -295,6 +295,28 @@ py jarvis_hud.py
   - `--no-wake` para desactivarlo.
 - **En el móvil** no está disponible: el navegador no puede escuchar en segundo plano. Allí sigues pulsando para hablar.
 
+### Avisos proactivos (Nivel 4)
+
+JARVIS habla sin que le preguntes. Los avisos salen en el HUD (PC y móvil), se dicen en voz alta y encienden el
+**TÁLAMO** del cerebro. Si llegan mientras está pensando o hablando, esperan a que termine. Solo habla la pestaña
+visible, así que no suenan a la vez el PC y el móvil.
+
+| Vigilante | Qué avisa | Cada |
+|---|---|---|
+| Recordatorios | *"Recuérdame a las 18:00 llamar a mamá"*, *"...dentro de 20 minutos"*, *"...mañana a las 9"* | 20 s |
+| Agenda (`CALENDARS`) | tus citas, 15 minutos antes (`CALENDAR_REMIND_MINUTES`) | 1 min |
+| TrueNAS (`TRUENAS_*`) | pool con problemas, disco a ≥ 50 °C (`DISK_TEMP_WARN`), app caída / recuperada, alertas nuevas, copias fallidas | 5 min |
+
+- Cada aviso se da **una sola vez**, también tras reiniciar el contenedor.
+- `NOTIFY_QUIET: "23:00-08:00"` hace que esas horas los avisos se vean pero no se digan, salvo los **críticos**.
+- `NOTIFY_ENABLED: "false"` lo desactiva todo, recordatorios incluidos.
+
+**En el móvil aunque el HUD esté cerrado** (opcional), con [ntfy](https://ntfy.sh), que es gratis:
+1. Instala la app **ntfy** en el móvil y suscríbete a un tema con un nombre **largo y difícil de adivinar**,
+   por ejemplo `jarvis-ori-7f3k9x2q`. En ntfy.sh, quien sepa el nombre del tema puede leerlo; si prefieres,
+   instala ntfy como app en TrueNAS y usa tu propio servidor.
+2. Añade `NTFY_URL: "https://ntfy.sh/jarvis-ori-7f3k9x2q"` a las variables de la app.
+
 ## HUD en el móvil (HTTPS con Tailscale)
 
 El NAS también sirve la interfaz en `/hud/`. Para que el micrófono del móvil funcione hace falta HTTPS, y lo pone

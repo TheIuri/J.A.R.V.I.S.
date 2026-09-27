@@ -40,6 +40,9 @@ main { display: grid; grid-template-columns: 280px 1fr 240px; height: calc(100% 
 #log .u { color: var(--dim); }
 #log .a { margin-top: 4px; }
 #log .meta { font-family: var(--mono); font-size: 10px; color: var(--dim); margin-top: 4px; }
+#log .notice { border-left: 2px solid #d2e6ff; padding-left: 8px; }
+#log .notice.warning { border-color: var(--accent); }
+#log .notice.critical { border-color: var(--error); }
 
 #panel { border-left: 1px solid var(--line); padding: 16px; overflow-y: auto; }
 #panel dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 10px; margin: 0 0 18px; }

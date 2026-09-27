@@ -113,6 +113,13 @@ class Settings:
     spotify_client_secret: str = ""
     spotify_refresh_token: str = ""
     spotify_device: str = ""  # dispositivo preferido si no hay ninguno sonando
+    notify_enabled: bool = True  # avisos proactivos (vigilantes + recordatorios)
+    notify_quiet: str = ""  # "23:00-08:00": avisos sin voz (salvo criticos)
+    ntfy_url: str = ""  # push al movil: https://ntfy.sh/<tema-secreto> o tu servidor ntfy
+    ntfy_token: str = ""
+    calendar_remind_minutes: int = 15
+    truenas_watch_minutes: int = 5
+    disk_temp_warn: int = 50
     wol_broadcast: str = "255.255.255.255"
 
     @property
@@ -197,5 +204,12 @@ def load_settings() -> Settings:
         spotify_client_secret=_env("SPOTIFY_CLIENT_SECRET"),
         spotify_refresh_token=_env("SPOTIFY_REFRESH_TOKEN"),
         spotify_device=_env("SPOTIFY_DEVICE"),
+        notify_enabled=_env_bool("NOTIFY_ENABLED", True),
+        notify_quiet=_env("NOTIFY_QUIET"),
+        ntfy_url=_env("NTFY_URL"),
+        ntfy_token=_env("NTFY_TOKEN"),
+        calendar_remind_minutes=_env_int("CALENDAR_REMIND_MINUTES", 15),
+        truenas_watch_minutes=_env_int("TRUENAS_WATCH_MINUTES", 5),
+        disk_temp_warn=_env_int("DISK_TEMP_WARN", 50),
         wol_broadcast=_env("WOL_BROADCAST", "255.255.255.255"),
     )

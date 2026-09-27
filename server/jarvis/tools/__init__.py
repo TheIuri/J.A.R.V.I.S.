@@ -15,6 +15,7 @@ from .memory import memory_tools
 from .obsidian import obsidian_tools
 from .pc import pc_tools
 from .registry import Tool, ToolContext, ToolError, ToolRegistry
+from .reminders import ReminderStore, reminder_tools
 from .spotify import Spotify, spotify_tools
 from .truenas import truenas_tools
 from .wol import parse_devices, wol_tool
@@ -25,7 +26,11 @@ __all__ = ["Tool", "ToolContext", "ToolError", "ToolRegistry", "build_registry"]
 
 
 def build_registry(
-    settings: Settings, memory: MemoryStore | None = None, vault: Vault | None = None
+    settings: Settings,
+    memory: MemoryStore | None = None,
+    vault: Vault | None = None,
+    reminders: ReminderStore | None = None,
+    calendars: Calendars | None = None,
 ) -> ToolRegistry | None:
     if not settings.tools_enabled:
         log.info("Tools desactivadas (TOOLS_ENABLED=false)")
@@ -37,8 +42,12 @@ def build_registry(
         registry.register(tool)
     for tool in pc_tools():
         registry.register(tool)
-    if settings.calendars:
-        registry.register(calendar_tool(Calendars(parse_calendars(settings.calendars), settings.timezone)))
+    if calendars is None and settings.calendars:
+        calendars = Calendars(parse_calendars(settings.calendars), settings.timezone)
+    if calendars:
+        registry.register(calendar_tool(calendars))
+    for tool in reminder_tools(reminders) if reminders else []:
+        registry.register(tool)
     if settings.ha_url and settings.ha_token:
         for tool in ha_tools(HomeAssistant(settings.ha_url, settings.ha_token, settings.ha_entities)):
             registry.register(tool)

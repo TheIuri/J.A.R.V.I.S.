@@ -20,18 +20,24 @@ from pydantic import BaseModel
 from .config import Settings, load_settings
 from .llm import FallbackLLM, LLMError, OpenAICompatLLM
 from .memory import MemoryRejected, MemoryStore, RuleRetriever
+from .notify import NoticeBoard, NtfyPush, parse_quiet
 from .obsidian import Vault
 from .pipeline import Assistant, TurnResult
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
 from .tools import build_registry
+from .tools.calendar import Calendars, parse_calendars
+from .tools.reminders import ReminderStore
+from .tools.truenas import _default_connect
 from .tts import NullTTS, PiperTTS
+from .watch import Watcher, calendar_check, reminders_check, truenas_check
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # evita loguear URLs firmadas y ruido
 log = logging.getLogger("jarvis")
 
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
+NOTIFY_WAIT_MAX_S = 25
 WEB_DIR = Path(__file__).with_name("web")  # HUD: lo usan el proxy del PC y el navegador del movil
 
 
@@ -67,11 +73,13 @@ def build_assistant(settings: Settings) -> Assistant:
         if store and settings.obsidian_memory_note:
             store.on_change(lambda: vault.export_memory(store))
             vault.export_memory(store)
-    tools = build_registry(settings, store, vault)
+    calendars = Calendars(parse_calendars(settings.calendars), settings.timezone) if settings.calendars else None
+    reminders = ReminderStore(data / "reminders.db", settings.timezone) if settings.notify_enabled else None
+    tools = build_registry(settings, store, vault, reminders, calendars)
     retriever = RuleRetriever(store, settings.memory_max_items) if store else None
 
     log.info("STT=%s | LLM=%s | TTS=%s | memoria=%s", stt.name, llm.name, tts.name, "si" if store else "no")
-    return Assistant(
+    assistant = Assistant(
         stt,
         llm,
         tts,
@@ -80,6 +88,37 @@ def build_assistant(settings: Settings) -> Assistant:
         tools,
         retriever,
     )
+    if reminders:
+        assistant.board, assistant.watcher = build_watcher(settings, assistant, reminders, calendars)
+    return assistant
+
+
+def build_watcher(
+    settings: Settings, assistant: Assistant, reminders: ReminderStore, calendars: Calendars | None
+) -> tuple[NoticeBoard, Watcher]:
+    """Avisos proactivos: tablon (voz + push opcional) y vigilantes de lo que este configurado."""
+    push = NtfyPush(settings.ntfy_url, settings.ntfy_token) if settings.ntfy_url else None
+    board = NoticeBoard(
+        assistant.speak,
+        settings.timezone,
+        parse_quiet(settings.notify_quiet),
+        push,
+        Path(settings.data_dir) / "notices_seen.json",
+    )
+    checks = [reminders_check(reminders)]
+    if calendars:
+        checks.append(calendar_check(calendars, settings.calendar_remind_minutes))
+    if settings.truenas_url and settings.truenas_api_key:
+        checks.append(
+            truenas_check(
+                lambda: _default_connect(
+                    settings.truenas_url, settings.truenas_user, settings.truenas_api_key, settings.truenas_verify_ssl
+                ),
+                settings.disk_temp_warn,
+                settings.truenas_watch_minutes * 60,
+            )
+        )
+    return board, Watcher(board, checks)
 
 
 class ChatRequest(BaseModel):
@@ -168,7 +207,12 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             settings = load_settings()
             state["token"] = settings.api_token
             state["assistant"] = build_assistant(settings)
+        watcher = getattr(state["assistant"], "watcher", None)
+        if watcher:
+            watcher.start()
         yield
+        if watcher:
+            watcher.stop()
 
     app = FastAPI(title="JARVIS core", version="0.1.0", lifespan=lifespan)
     bearer = HTTPBearer(auto_error=False)
@@ -239,6 +283,18 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         if a.memory is None:
             raise HTTPException(status_code=404, detail="Memoria desactivada")
         return a.memory.store
+
+    @app.get("/api/notifications", dependencies=[Depends(require_token)])
+    def notifications(after: int = -1, wait: float = 0) -> dict:
+        """Avisos proactivos. after=-1: solo el ultimo id (para empezar sin repetir los viejos).
+        Con wait>0 espera hasta que haya uno nuevo (maximo 25 s)."""
+        board: NoticeBoard | None = getattr(state["assistant"], "board", None)
+        if board is None:
+            return {"notices": [], "last": 0, "enabled": False}
+        if after < 0:
+            return {"notices": [], "last": board.last_id, "enabled": True}
+        notices = board.since(after, min(max(wait, 0), NOTIFY_WAIT_MAX_S))
+        return {"notices": [board.to_json(n) for n in notices], "last": board.last_id, "enabled": True}
 
     @app.get("/api/memories", dependencies=[Depends(require_token)])
     def list_memories() -> dict:

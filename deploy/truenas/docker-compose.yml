@@ -41,6 +41,10 @@ services:
       # --- Agenda: enlaces secretos iCal de Google Calendar / Outlook (ver README) ---
       # CALENDARS: "personal=https://...basic.ics;trabajo=https://...calendar.ics"
 
+      # --- Avisos proactivos: recordatorios, agenda y TrueNAS (ver README) ---
+      # NOTIFY_QUIET: "23:00-08:00" # esas horas sin voz (salvo criticos)
+      # NTFY_URL: "https://ntfy.sh/<tema-largo-y-secreto>" # push al movil con la app ntfy
+
       # --- Home Assistant (opcional) ---
       # HA_URL: "http://192.168.1.X:8123"
       # HA_TOKEN: ""
