@@ -8,6 +8,7 @@ from ..config import Settings
 from ..memory import MemoryStore
 from ..obsidian import Vault
 from .basic import datetime_tool, weather_tool
+from .info import info_tools
 from .memory import memory_tools
 from .obsidian import obsidian_tools
 from .pc import pc_tools
@@ -28,6 +29,8 @@ def build_registry(
     registry = ToolRegistry(disabled=set(settings.tools_disabled))
     registry.register(datetime_tool(settings.timezone))
     registry.register(weather_tool(settings.home_city, home_coords=settings.home_coords))
+    for tool in info_tools(settings.brave_api_key):
+        registry.register(tool)
     for tool in pc_tools():
         registry.register(tool)
     for tool in memory_tools(memory) if memory else []:

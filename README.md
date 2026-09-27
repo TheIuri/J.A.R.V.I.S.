@@ -131,6 +131,18 @@ Ejemplos: *"¿Qué tiempo hará mañana?"*, *"Pon el volumen al 30"*, *"Abre Spo
    - `TRUENAS_API_KEY`
    - `TRUENAS_VERIFY_SSL` queda en `false` por defecto, porque TrueNAS usa un certificado autofirmado.
 
+### Información (sin cuentas ni claves)
+
+| Tool | Qué hace | Servicio |
+|---|---|---|
+| `web_search` | busca en internet (resultados, precios, horarios...) | DuckDuckGo, o Brave si pones `BRAVE_API_KEY` |
+| `wikipedia` | resumen de un tema | Wikipedia en español |
+| `news` | titulares de hoy, o sobre un tema | Google Noticias (RSS) |
+| `convert` | unidades (longitud, peso, volumen, temperatura, velocidad, datos...) y divisas | local; divisas con el cambio del BCE (frankfurter.dev) |
+
+Ejemplos: *"¿Cómo quedó ayer el Barça?"*, *"¿Quién fue Ramón y Cajal?"*, *"¿Qué noticias hay hoy?"*,
+*"¿Cuántas millas son 42 kilómetros?"*, *"¿Cuánto son 50 dólares en euros?"*.
+
 ## Nivel 3: memoria
 
 JARVIS recuerda entre sesiones y reinicios. SQLite (`/data/memory.db` en el dataset) es la fuente de verdad.

@@ -35,6 +35,9 @@ services:
       # PIPER_SPEAKER: "0" # solo voces con varios locutores (sharvard: 0 hombre, 1 mujer)
       # PIPER_SPEED: "1.0" # 1.2 = un 20% mas rapido
 
+      # --- Busqueda web: DuckDuckGo sin clave; con Brave (2000 busquedas/mes gratis) es mas estable ---
+      # BRAVE_API_KEY: "" # api-dashboard.search.brave.com
+
       # --- Memoria (Nivel 3): SQLite en el dataset (/data/memory.db) ---
       MEMORY_ENABLED: "true" # "false" = sin memoria (no lee ni guarda recuerdos)
       # MEMORY_MAX_ITEMS: "8" # recuerdos que se le pasan al LLM en cada turno
