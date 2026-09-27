@@ -7,3 +7,6 @@ piper-tts>=1.2
 tzdata
 # Cliente oficial de la API de TrueNAS (SCRAM para API keys en TrueNAS 26). Sin release estable de 26 aun.
 truenas_api_client @ https://github.com/truenas/api_client/archive/refs/tags/TS-26.0.0-BETA.3.tar.gz
+# Agenda (enlaces iCal de Google/Outlook)
+icalendar>=6.0
+recurring-ical-events>=3.0

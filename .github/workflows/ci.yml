@@ -20,6 +20,20 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest -q
 
+  client:
+    # Cliente del PC (HUD y "Hey Jarvis"): sin micro ni Windows, solo la logica.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install numpy httpx pytest
+      - run: python -m pytest -q tests
+
   image-check:
     # En los PR solo construye la imagen (sin publicarla) para detectar fallos de dependencias antes de fusionar.
     needs: test

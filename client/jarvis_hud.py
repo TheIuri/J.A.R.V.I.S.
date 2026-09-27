@@ -5,15 +5,19 @@ Sirve la interfaz en http://localhost:8766 y reenvia las peticiones al servidor 
 - Las acciones del PC (apps, volumen, temporizadores) se ejecutan aqui, con la misma
   lista permitida que el cliente de consola (apps.json).
 - Solo escucha en 127.0.0.1 y rechaza peticiones de otras webs (Host/Origin).
+- "Hey Jarvis" (Nivel 4): si esta instalado openwakeword (requirements-wake.txt), escucha
+  la palabra de activacion en local y pasa la frase al navegador.
 
 Uso:
     py jarvis_hud.py            (usa JARVIS_SERVER y JARVIS_TOKEN)
     py jarvis_hud.py --no-actions --port 8766
+    py jarvis_hud.py --no-wake                   (sin "Hey Jarvis")
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -37,14 +41,16 @@ STREAM_POST = {"/api/chat/stream", "/api/voice/stream"}  # flujo de pensamiento 
 PROXY_GET = {"/api/memories", "/health"}
 MEMORY_DELETE = re.compile(r"^/api/memories/\d+$")
 MAX_BODY = 12 * 1024 * 1024
+EVENTS_WAIT_S = 20  # espera larga: el navegador recibe los avisos al instante
 
 
 class Hud:
     def __init__(self, server: str, token: str, apps_path: Path, actions_enabled: bool):
         self.api = httpx.Client(base_url=server.rstrip("/"), headers={"Authorization": f"Bearer {token}"}, timeout=90)
         self._events: list[dict] = []
-        self._lock = threading.Lock()
+        self._cond = threading.Condition()
         self.actions = PCActions(load_apps(apps_path), self.announce) if actions_enabled else None
+        self.wake = None  # WakeListener si "Hey Jarvis" esta activo
 
     @property
     def pc_apps(self) -> list[str] | None:
@@ -57,13 +63,36 @@ class Hud:
             audio = self.api.post("/api/speak", json={"text": text}).json().get("audio_wav_b64")
         except httpx.HTTPError as exc:
             print(f"(no se pudo generar la voz del aviso: {exc})")
-        with self._lock:
-            self._events.append({"type": "announce", "text": text, "audio_wav_b64": audio})
+        self.push({"type": "announce", "text": text, "audio_wav_b64": audio})
 
-    def take_events(self) -> list[dict]:
-        with self._lock:
+    def push(self, event: dict) -> None:
+        with self._cond:
+            self._events.append(event)
+            self._cond.notify_all()
+
+    def take_events(self, wait_s: float = 0) -> list[dict]:
+        with self._cond:
+            if not self._events and wait_s:
+                self._cond.wait(wait_s)
             events, self._events = self._events, []
         return events
+
+    def start_wake(self, threshold: float, device: str | None) -> None:
+        from wake import WakeListener
+
+        self.wake = WakeListener(
+            on_wake=lambda: self.push({"type": "wake"}),
+            on_utterance=lambda wav: self.push({"type": "utterance", "audio_wav_b64": base64.b64encode(wav).decode()}),
+            on_cancel=lambda: self.push({"type": "wake_cancel"}),
+            threshold=threshold,
+            device=int(device) if device and device.isdigit() else device,
+        )
+        self.wake.start()
+
+    def set_busy(self, busy: bool) -> None:
+        """El navegador avisa mientras piensa/habla: asi JARVIS no se activa con su propia voz."""
+        if self.wake:
+            (self.wake.paused.set if busy else self.wake.paused.clear)()
 
     def run_actions(self, body: dict) -> dict:
         results = []
@@ -162,9 +191,9 @@ def make_handler(hud: Hud, port: int):
             if static.suffix in CONTENT_TYPES and static.parent == STATIC_DIR and static.is_file():
                 return self._send(200, static.read_bytes(), CONTENT_TYPES[static.suffix])
             if path == "/hud/config":
-                return self._json(200, {"mode": "local", "pc_apps": hud.pc_apps})
+                return self._json(200, {"mode": "local", "pc_apps": hud.pc_apps, "wake": hud.wake is not None})
             if path == "/hud/events":
-                return self._json(200, {"events": hud.take_events()})
+                return self._json(200, {"events": hud.take_events(EVENTS_WAIT_S)})
             if path in PROXY_GET:
                 return self._forward("GET", path)
             self._json(404, {"detail": "no encontrado"})
@@ -180,6 +209,9 @@ def make_handler(hud: Hud, port: int):
                 return self._forward("POST", self.path, body)
             if self.path in STREAM_POST:
                 return self._forward_stream(self.path, body)
+            if self.path == "/hud/busy":
+                hud.set_busy(bool(json.loads(body or b"{}").get("busy")))
+                return self._json(200, {"ok": True})
             self._json(404, {"detail": "no encontrado"})
 
         def do_DELETE(self):
@@ -200,6 +232,9 @@ def main() -> None:
     parser.add_argument("--no-actions", action="store_true", help="no ejecutar acciones en este PC")
     parser.add_argument("--no-browser", action="store_true", help="no abrir el navegador automaticamente")
     parser.add_argument("--apps", default=str(Path(__file__).with_name("apps.json")))
+    parser.add_argument("--no-wake", action="store_true", help='sin palabra de activacion "Hey Jarvis"')
+    parser.add_argument("--wake-threshold", type=float, default=0.5, help="sensibilidad 0-1 (mas bajo = mas sensible)")
+    parser.add_argument("--wake-device", default=None, help="microfono (numero o nombre; ver jarvis_client.py --list-devices)")
     args = parser.parse_args()
     if not args.token:
         sys.exit("Falta el token: usa --token o la variable JARVIS_TOKEN")
@@ -210,6 +245,14 @@ def main() -> None:
     except httpx.HTTPError as exc:
         sys.exit(f"No puedo conectar con {args.server}: {exc}")
     print(f"Servidor OK: LLM={health['llm']} | tools={len(health.get('tools') or [])} | memoria={health.get('memory')}")
+    if not args.no_wake:
+        try:
+            hud.start_wake(args.wake_threshold, args.wake_device)
+            print('"Hey Jarvis" activo (dilo en ingles: "jei YAR-vis")')
+        except ImportError:
+            print('"Hey Jarvis" desactivado: instala requirements-wake.txt para usarlo')
+        except Exception as exc:  # microfono ocupado, descarga fallida...
+            print(f'"Hey Jarvis" desactivado: {exc}')
 
     httpd = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(hud, args.port))
     url = f"http://localhost:{args.port}"
@@ -223,6 +266,8 @@ def main() -> None:
     finally:
         if hud.actions:
             hud.actions.cancel_all()
+        if hud.wake:
+            hud.wake.stop()
         httpd.server_close()
 
 

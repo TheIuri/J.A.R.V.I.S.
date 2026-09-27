@@ -40,6 +40,11 @@ def _env_int(name: str, default: int) -> int:
     return int(value) if value else default
 
 
+def _env_float(name: str, default: float) -> float:
+    value = _env(name)
+    return float(value) if value else default
+
+
 def _env_bool(name: str, default: bool) -> bool:
     value = _env(name).lower()
     return value in ("1", "true", "yes", "si", "on") if value else default
@@ -73,6 +78,8 @@ class Settings:
 
     tts_provider: str = "piper"  # piper | none
     piper_voice: str = "es_ES-davefx-medium"
+    piper_speaker: int | None = None  # voces con varios locutores (p. ej. sharvard: 0 hombre, 1 mujer)
+    piper_speed: float = 1.0  # >1 mas rapido, <1 mas lento
 
     history_turns: int = 6
 
@@ -96,6 +103,17 @@ class Settings:
     truenas_user: str = ""
     truenas_api_key: str = ""
     truenas_verify_ssl: bool = False  # TrueNAS usa un certificado autofirmado por defecto
+    brave_api_key: str = ""  # opcional: busqueda web con Brave en vez de DuckDuckGo
+    wol_devices: str = ""  # "sobremesa=AA:BB:CC:DD:EE:FF;otro=..."
+    calendars: str = ""  # "personal=https://...ics;trabajo=https://...ics" (enlaces secretos iCal)
+    ha_url: str = ""  # Home Assistant, p. ej. http://192.168.1.50:8123
+    ha_token: str = ""
+    ha_entities: str = ""  # opcional: prefijos de entity_id permitidos ("light.,switch.salon")
+    spotify_client_id: str = ""
+    spotify_client_secret: str = ""
+    spotify_refresh_token: str = ""
+    spotify_device: str = ""  # dispositivo preferido si no hay ninguno sonando
+    wol_broadcast: str = "255.255.255.255"
 
     @property
     def groq_api_key(self) -> str:
@@ -151,6 +169,8 @@ def load_settings() -> Settings:
         llm_max_tokens=_env_int("LLM_MAX_TOKENS", 1024),
         tts_provider=_env("TTS_PROVIDER", "piper").lower(),
         piper_voice=_env("PIPER_VOICE", "es_ES-davefx-medium"),
+        piper_speaker=_env_int("PIPER_SPEAKER", -1) if _env("PIPER_SPEAKER") else None,
+        piper_speed=_env_float("PIPER_SPEED", 1.0),
         history_turns=_env_int("HISTORY_TURNS", 6),
         memory_enabled=_env_bool("MEMORY_ENABLED", True),
         memory_max_items=_env_int("MEMORY_MAX_ITEMS", 8),
@@ -167,4 +187,15 @@ def load_settings() -> Settings:
         truenas_user=_env("TRUENAS_USER"),
         truenas_api_key=_env("TRUENAS_API_KEY"),
         truenas_verify_ssl=_env_bool("TRUENAS_VERIFY_SSL", False),
+        brave_api_key=_env("BRAVE_API_KEY"),
+        wol_devices=_env("WOL_DEVICES"),
+        calendars=_env("CALENDARS"),
+        ha_url=_env("HA_URL"),
+        ha_token=_env("HA_TOKEN"),
+        ha_entities=_env("HA_ENTITIES"),
+        spotify_client_id=_env("SPOTIFY_CLIENT_ID"),
+        spotify_client_secret=_env("SPOTIFY_CLIENT_SECRET"),
+        spotify_refresh_token=_env("SPOTIFY_REFRESH_TOKEN"),
+        spotify_device=_env("SPOTIFY_DEVICE"),
+        wol_broadcast=_env("WOL_BROADCAST", "255.255.255.255"),
     )

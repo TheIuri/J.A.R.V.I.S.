@@ -15,7 +15,8 @@ from jarvis.tools import ToolContext, ToolRegistry, build_registry
 from jarvis.tools.basic import OpenMeteo, format_datetime, weather_tool
 from jarvis.tools.pc import pc_tools
 from jarvis.tools.registry import Tool
-from jarvis.tools.truenas import summarize, truenas_tool
+from jarvis.pipeline import is_affirmative
+from jarvis.tools.truenas import summarize, truenas_tools
 
 
 def echo_tool(**kw):
@@ -188,6 +189,13 @@ FAKE_TRUENAS = {
     ],
     "alert.list": [{"level": "WARNING", "formatted": "Pool Backup offline", "dismissed": False},
                    {"level": "INFO", "formatted": "vieja", "dismissed": True}],
+    "disk.temperatures": {"sda": 38, "sdb": {"temp": 52}, "nvme0n1": None},
+    "pool.snapshottask.query": [
+        {"dataset": "Data/fotos", "enabled": True, "state": {"state": "FINISHED", "datetime": {"$date": 1790000000000}}},
+        {"dataset": "Data/viejo", "enabled": False, "state": {"state": "ERROR"}},
+    ],
+    "replication.query": [{"name": "a-backup", "enabled": True, "state": {"state": "ERROR", "error": "destino caido"}}],
+    "cloudsync.query": [{"description": "B2", "enabled": True, "job": {"state": "SUCCESS", "time_finished": None}}],
 }
 
 
@@ -198,27 +206,81 @@ def test_truenas_summary():
     assert "Apps en marcha (1): jarvis." in out
     assert "plex (stopped)" in out and "actualización disponible: plex" in out
     assert "Alerta WARNING: Pool Backup offline" in out and "vieja" not in out
+    assert "Discos entre 38 y 52 °C." in out and "a 52 °C" in out
+    assert "Copias con fallos: Replicación a-backup (error)." in out
+
+
+def test_truenas_temperatures_and_backups_detail():
+    call = lambda method: FAKE_TRUENAS[method]  # noqa: E731
+    assert summarize("temperaturas", call).startswith("Temperatura de los discos: sda 38 °C, sdb 52 °C.")
+    copias = summarize("copias", call)
+    assert "Snapshot Data/fotos: finished (" in copias and "viejo" not in copias
+    assert "Replicación a-backup: error — destino caido." in copias
+    assert "Cloud Sync B2: success." in copias
 
 
 def test_truenas_tool_closes_client_and_reports_connection_errors():
     closed = []
 
     class FakeClient:
-        def call(self, method):
+        def call(self, method, *args, **kw):
             return FAKE_TRUENAS[method]
 
         def close(self):
             closed.append(True)
 
-    tool = truenas_tool("wss://nas/api/current", "jarvis", "k", False, connect=lambda *a: FakeClient())
-    assert "Pool Data" in tool.fn(ToolContext(), section="discos")
+    status, _restart = truenas_tools("wss://nas/api/current", "jarvis", "k", False, connect=lambda *a: FakeClient())
+    assert "Pool Data" in status.fn(ToolContext(), section="discos")
     assert closed == [True]
 
     def refuse(*a):
         raise ConnectionRefusedError("refused")
 
-    reg = registry(truenas_tool("wss://nas/api/current", "jarvis", "k", False, connect=refuse))
+    reg = registry(*truenas_tools("wss://nas/api/current", "jarvis", "k", False, connect=refuse))
     assert "no puedo conectar con TrueNAS" in reg.execute("truenas_status", "{}", ToolContext())
+
+
+def test_affirmative_answers():
+    for yes in ["Sí", "sí, hazlo", "Vale.", "adelante jarvis", "confirmo", "sí por favor"]:
+        assert is_affirmative(yes), yes
+    for other in ["no", "sí, pero reinicia plex", "espera", "vale no", "¿qué app?", "no, mejor no"]:
+        assert not is_affirmative(other), other
+
+
+def test_restart_needs_a_spoken_yes_in_the_next_turn():
+    calls = []
+
+    class FakeClient:
+        def call(self, method, *args, **kw):
+            calls.append((method, args, kw))
+            return [{"name": "Plex", "state": "STOPPED"}] if method == "app.query" else None
+
+        def close(self):
+            pass
+
+    tools = truenas_tools("wss://nas/api/current", "jarvis", "k", False, connect=lambda *a: FakeClient())
+    script = ScriptedLLM([[("truenas_app_restart", {"app": "plex"})], "¿Confirmas que reinicie Plex?",
+                          [("truenas_app_restart", {"app": "plex"})], "¿Lo reinicio?"])
+    assistant = Assistant(None, script.llm(), NoTTS(), "sistema", tools=registry(*tools))
+
+    # 1) El LLM propone: no se ejecuta nada, queda pendiente.
+    events = []
+    assert assistant.handle_text("reinicia plex", on_event=events.append).reply == "¿Confirmas que reinicie Plex?"
+    assert calls == [] and "PENDIENTE DE CONFIRMACION" in script.requests[1]["messages"][-1]["content"]
+    # 2) "sí" -> se ejecuta tal cual, sin volver a preguntar al LLM.
+    done = assistant.handle_text("sí, hazlo")
+    assert done.reply == "Hecho. La app Plex se ha reiniciado." and done.tools_used == ["truenas_app_restart"]
+    assert ("app.redeploy", ("Plex",), {"job": True}) in calls and len(script.requests) == 2
+    # 3) Otra propuesta y una respuesta que no es "sí": se cancela y sigue la conversación normal.
+    calls.clear()
+    assistant.handle_text("reinicia plex otra vez")
+    assistant._pending["default"]  # sigue pendiente
+    script.steps.append("Vale, no lo reinicio.")
+    assert assistant.handle_text("no, déjalo").reply == "Vale, no lo reinicio."
+    assert calls == [] and "default" not in assistant._pending
+    # 4) Un "sí" sin nada pendiente no ejecuta nada.
+    script.steps.append("¿Sí a qué?")
+    assert assistant.handle_text("sí").reply == "¿Sí a qué?" and calls == []
 
 
 def test_build_registry_requires_wss_for_truenas():
@@ -344,3 +406,30 @@ def test_stream_endpoint_reports_llm_errors_inside_the_stream():
     resp = client.post("/api/chat/stream", json={"text": "hola"}, headers={"Authorization": "Bearer s"})
     last = json.loads(resp.text.splitlines()[-1])
     assert last["type"] == "error" and "503" in last["detail"]
+
+
+# --- Wake-on-LAN -------------------------------------------------------------------
+
+def test_wol_devices_and_packet():
+    from jarvis.tools.wol import magic_packet, parse_devices
+
+    assert parse_devices("Sobremesa=aa-bb-cc-dd-ee-ff; nas2=11:22:33:44:55:66") == {
+        "sobremesa": "AA:BB:CC:DD:EE:FF", "nas2": "11:22:33:44:55:66"}
+    with pytest.raises(ValueError, match="no válida"):
+        parse_devices("pc=zz:zz")
+    packet = magic_packet("AA:BB:CC:DD:EE:FF")
+    assert len(packet) == 102 and packet[:6] == b"\xff" * 6 and packet[6:12] == bytes.fromhex("AABBCCDDEEFF")
+
+
+def test_wol_tool_sends_from_server_and_pc():
+    from jarvis.tools.wol import wol_tool
+
+    sent = []
+    tool = wol_tool({"sobremesa": "AA:BB:CC:DD:EE:FF"}, "192.168.1.255", send=lambda mac, b: sent.append((mac, b)))
+    reg = registry(tool)
+    assert reg.specs(ToolContext())[0]["function"]["parameters"]["properties"]["device"]["enum"] == ["sobremesa"]
+    ctx = ToolContext(pc_apps=[])
+    out = reg.execute("wake_on_lan", '{"device": "sobremesa"}', ctx)
+    assert "desde el servidor y el PC" in out and sent == [("AA:BB:CC:DD:EE:FF", "192.168.1.255")]
+    assert ctx.pc_actions == [{"action": "wol", "mac": "AA:BB:CC:DD:EE:FF", "device": "sobremesa"}]
+    assert "ERROR" in reg.execute("wake_on_lan", '{"device": "tostadora"}', ToolContext())

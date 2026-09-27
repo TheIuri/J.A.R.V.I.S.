@@ -131,6 +131,88 @@ Ejemplos: *"¿Qué tiempo hará mañana?"*, *"Pon el volumen al 30"*, *"Abre Spo
    - `TRUENAS_API_KEY`
    - `TRUENAS_VERIFY_SSL` queda en `false` por defecto, porque TrueNAS usa un certificado autofirmado.
 
+### Información (sin cuentas ni claves)
+
+| Tool | Qué hace | Servicio |
+|---|---|---|
+| `web_search` | busca en internet (resultados, precios, horarios...) | DuckDuckGo, o Brave si pones `BRAVE_API_KEY` |
+| `wikipedia` | resumen de un tema | Wikipedia en español |
+| `news` | titulares de hoy, o sobre un tema | Google Noticias (RSS) |
+| `convert` | unidades (longitud, peso, volumen, temperatura, velocidad, datos...) y divisas | local; divisas con el cambio del BCE (frankfurter.dev) |
+
+Ejemplos: *"¿Cómo quedó ayer el Barça?"*, *"¿Quién fue Ramón y Cajal?"*, *"¿Qué noticias hay hoy?"*,
+*"¿Cuántas millas son 42 kilómetros?"*, *"¿Cuánto son 50 dólares en euros?"*.
+
+### Agenda (Google Calendar y Outlook)
+
+JARVIS lee tus calendarios con su **dirección secreta iCal**, sin OAuth ni proyectos en la nube (solo lectura):
+
+- **Google Calendar**: en la web, ⚙️ → Configuración → (tu calendario) → *Integrar el calendario* →
+  **Dirección secreta en formato iCal**.
+- **Outlook / Microsoft 365**: Outlook web → ⚙️ → Calendario → *Calendarios compartidos* → **Publicar un
+  calendario** → permiso "Puede ver todos los detalles" → copia el enlace **ICS**.
+
+```yaml
+CALENDARS: "personal=https://calendar.google.com/calendar/ical/.../basic.ics;trabajo=https://outlook.office365.com/owa/calendar/.../calendar.ics"
+```
+
+Esos enlaces dan acceso a tu agenda: trátalos como una contraseña (solo en las variables de la app, nunca en el
+repositorio). Ejemplos: *"¿Qué tengo mañana?"*, *"¿Qué tengo esta semana en el trabajo?"*.
+
+### Wake-on-LAN
+
+Enciende otro equipo de casa: *"Enciende el sobremesa"*.
+
+```yaml
+WOL_DEVICES: "sobremesa=AA:BB:CC:DD:EE:FF"   # la MAC de su tarjeta de red (varios: separados por ';')
+# WOL_BROADCAST: "192.168.1.255"             # por defecto 255.255.255.255
+```
+
+En el equipo a encender, activa Wake-on-LAN en la BIOS y en Windows (Administrador de dispositivos → tarjeta de red →
+*Administración de energía*: "Permitir que este dispositivo reactive el equipo"; y en *Opciones avanzadas*,
+"Wake on Magic Packet"). El paquete lo envía el NAS y, si tienes el HUD del PC abierto, también el PC. Si desde el
+móvil no enciende pero desde el PC sí, es la red interna de Docker del NAS, que no deja pasar el broadcast.
+
+### Home Assistant
+
+Si algún día lo instalas: *"¿Qué luces hay encendidas?"*, *"Apaga la luz del salón"*, *"Pon la calefacción a
+21 grados"*, *"Baja la persiana del dormitorio"*.
+
+```yaml
+HA_URL: "http://IP-DE-HOME-ASSISTANT:8123"
+HA_TOKEN: "..."            # HA → tu perfil → Seguridad → Tokens de acceso de larga duración
+# HA_ENTITIES: "light.,switch.salon,climate."   # opcional: solo estas entidades (por prefijo)
+```
+
+Solo luces, enchufes, ventiladores, persianas, clima, multimedia, escenas y scripts. **Cerraduras y alarmas
+quedan fuera** a propósito.
+
+### Spotify
+
+Elige qué suena: *"Pon Viva la vida de Coldplay"*, *"Pon música de Rosalía"*, *"Pon mi playlist de
+entrenar"*, *"¿Qué canción es esta?"*, *"Sube el volumen de Spotify al 60"*. Controlar la reproducción exige
+**Spotify Premium** y tener Spotify abierto en algún dispositivo (PC, móvil, altavoz...).
+
+1. En [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), crea una app (marca *Web API*)
+   con Redirect URI `http://127.0.0.1:8888/callback`.
+2. En el PC: `cd client` y `py spotify_login.py`. Pide el Client ID y el Secret, abre el navegador para aceptar
+   y te da el refresh token.
+3. En las variables de la app de TrueNAS:
+
+```yaml
+SPOTIFY_CLIENT_ID: "..."
+SPOTIFY_CLIENT_SECRET: "..."
+SPOTIFY_REFRESH_TOKEN: "..."
+# SPOTIFY_DEVICE: "SOBREMESA"   # dispositivo preferido si no hay nada sonando
+```
+
+### Acciones con confirmación
+
+Lo que tiene consecuencias (por ahora, reiniciar una app de TrueNAS) nunca se hace a la primera: JARVIS
+pregunta *"¿Confirmas que reinicie Plex?"* y **solo se ejecuta si tu siguiente frase es un "sí"** (sí, vale,
+adelante, hazlo, confirmo...). Esa comprobación la hace el código, no la IA, así que ni el modelo ni un texto
+leído de internet pueden saltársela. Cualquier otra respuesta, o esperar más de 2 minutos, la cancela.
+
 ## Nivel 3: memoria
 
 JARVIS recuerda entre sesiones y reinicios. SQLite (`/data/memory.db` en el dataset) es la fuente de verdad.
@@ -189,6 +271,29 @@ py jarvis_hud.py        # abre http://localhost:8766 (usa JARVIS_SERVER y JARVIS
   - Solo escucha en `127.0.0.1` y rechaza peticiones de otras webs (comprueba `Host` y `Origin`).
 - **Micrófono**: el navegador pide permiso la primera vez. Funciona porque `localhost` cuenta como sitio seguro.
 - **Opciones**: `--no-actions` (sin acciones en el PC), `--port 8766` y `--no-browser`.
+
+### "Hey Jarvis" (Nivel 4)
+
+El HUD del PC puede escuchar la palabra de activación, sin pulsar nada. La detección es 100 % local con
+[openWakeWord](https://github.com/dscripka/openWakeWord): el audio no sale del PC hasta que oye "Hey Jarvis".
+
+```bash
+cd client
+py -m pip install -r requirements-wake.txt   # una vez (descarga el modelo la primera vez que arranca)
+py jarvis_hud.py
+```
+
+- **Cómo decirlo**: en inglés, *"jei YAR-vis"*. Pronunciado a la española ("ei jarvis", con la "j" de jamón)
+  no lo reconoce.
+- **Uso**: di "Hey Jarvis", espera el pitido o dilo todo seguido (*"Hey Jarvis, ¿qué tiempo hará mañana?"*).
+  Graba hasta que te callas un segundo.
+- **Mientras piensa o habla** no escucha la palabra, para no activarse con su propia voz.
+- **Sonido**: el navegador no deja sonar nada hasta el primer clic en la página; el HUD te lo recuerda.
+- **Opciones**:
+  - `--wake-threshold 0.4` para hacerlo más sensible (por defecto `0.5`; más alto, menos falsos positivos).
+  - `--wake-device N` para elegir otro micrófono (lista con `py jarvis_client.py --list-devices`).
+  - `--no-wake` para desactivarlo.
+- **En el móvil** no está disponible: el navegador no puede escuchar en segundo plano. Allí sigues pulsando para hablar.
 
 ## HUD en el móvil (HTTPS con Tailscale)
 
@@ -256,6 +361,21 @@ Ejemplos: *"Apunta que mañana llamo al fontanero"*, *"Añade huevos a la lista 
 5. **YAML de la app**: añade el volumen `- /mnt/Data/obsidian:/vault` y `OBSIDIAN_VAULT: "/vault"`.
 6. **Comprobación**: en `/health` deben aparecer las tools `obsidian_*`, y en la bóveda la carpeta `JARVIS/`.
 
+## Voz
+
+Piper genera la voz en el NAS, sin coste. La voz se descarga sola la primera vez que se usa. Para cambiarla,
+edita las variables de la app en TrueNAS y haz redeploy:
+
+| Voz (`PIPER_VOICE`) | Acento | Notas |
+|---|---|---|
+| `es_ES-davefx-medium` | España | hombre (por defecto) |
+| `es_ES-sharvard-medium` | España | dos locutores: `PIPER_SPEAKER` `0` hombre, `1` mujer |
+| `es_MX-claude-high` | México | calidad alta |
+| `es_AR-daniela-high` | Argentina | calidad alta, mujer |
+| `es_MX-ald-medium` | México | hombre |
+
+`PIPER_SPEED` cambia la velocidad (`1.2` = un 20 % más rápido; entre 0.5 y 2).
+
 ## Probar sin TrueNAS (desarrollo)
 
 ```bash
@@ -292,6 +412,8 @@ server/jarvis/
 client/
   jarvis_client.py   push-to-talk para PC (consola)
   jarvis_hud.py      HUD web local (proxy al NAS + acciones del PC; usa server/jarvis/web)
+  wake.py            "Hey Jarvis": palabra de activación local (openWakeWord) y fin de frase
+  spotify_login.py   obtiene el refresh token de Spotify (una vez)
   pc_actions.py      ejecuta las acciones permitidas en Windows
   apps.json          apps que JARVIS puede abrir
 deploy/truenas/           docker-compose para "Install via YAML"

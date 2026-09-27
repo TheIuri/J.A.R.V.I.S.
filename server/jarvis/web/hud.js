@@ -30,6 +30,9 @@ const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 let state = "idle";
 let mode = "local";
 let pcApps = null;
+let wakeEnabled = false; // "Hey Jarvis" en el PC (modo local con openwakeword)
+let wakeActive = false; // se oyó "Hey Jarvis" y se espera la frase
+let busySent = false;
 const TOKEN_KEY = "jarvis_token";
 let audioCtx = null;
 let micAnalyser = null; // solo mide: nunca va a los altavoces
@@ -95,6 +98,11 @@ $("login-form").addEventListener("submit", async (e) => {
 
 function setState(next, detail) {
   state = next;
+  const busy = next === "listening" || next === "thinking" || next === "speaking";
+  if (wakeEnabled && busy !== busySent) {
+    busySent = busy; // mientras piensa o habla, el PC no escucha "Hey Jarvis" (su propia voz)
+    fetch("/hud/busy", { method: "POST", body: JSON.stringify({ busy }) }).catch(() => {});
+  }
   const el = $("state");
   el.textContent = detail ? `${STATE_LABEL[next]} · ${detail}` : STATE_LABEL[next];
   el.classList.toggle("error", next === "error");
@@ -367,17 +375,65 @@ async function resetConversation() {
 }
 
 async function pollEvents() {
+  // El proxy del PC contesta en cuanto hay un aviso (o a los 20 s sin nada): reacción inmediata.
+  let delay = 0;
   try {
     const { events } = await (await fetch("/hud/events")).json();
-    for (const ev of events) {
-      if (ev.type !== "announce") continue;
+    events.forEach(onPcEvent);
+  } catch {
+    delay = 2000; // el HUD local se ha cerrado; se reintenta
+  }
+  setTimeout(pollEvents, delay);
+}
+
+function onPcEvent(ev) {
+  switch (ev.type) {
+    case "announce":
       $("subtitle").textContent = ev.text;
       if (ev.audio_wav_b64) playWav(ev.audio_wav_b64);
+      break;
+    case "wake":
+      if (state !== "idle" && state !== "error") break;
+      wakeActive = true;
+      chime();
+      flowReset();
+      setState("listening", "te escucho");
+      fire(REGION.auditory, "«Hey Jarvis»");
+      break;
+    case "utterance": {
+      if (!wakeActive) break;
+      wakeActive = false;
+      const bytes = Uint8Array.from(atob(ev.audio_wav_b64), (c) => c.charCodeAt(0));
+      const form = new FormData();
+      form.append("audio", new Blob([bytes], { type: "audio/wav" }), "audio.wav");
+      form.append("session", SESSION);
+      if (pcApps) form.append("pc_apps", pcApps.join(","));
+      ask("/api/voice", { method: "POST", body: form });
+      break;
     }
-  } catch {
-    /* el HUD local se ha cerrado; se reintenta */
+    case "wake_cancel":
+      if (!wakeActive) break;
+      wakeActive = false;
+      setState("idle");
+      break;
   }
-  setTimeout(pollEvents, 2000);
+}
+
+// Pitido corto al oír "Hey Jarvis".
+function chime() {
+  const ctx = ensureAudio();
+  const now = ctx.currentTime;
+  [880, 1320].forEach((freq, i) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0, now + i * 0.09);
+    gain.gain.linearRampToValueAtTime(0.12, now + i * 0.09 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.09 + 0.16);
+    osc.connect(gain).connect(outAnalyser);
+    osc.start(now + i * 0.09);
+    osc.stop(now + i * 0.09 + 0.18);
+  });
 }
 
 // --- cerebro: flujo de pensamiento en directo -----------------------------------------
@@ -414,11 +470,25 @@ const TOOL_LABEL = {
   pc_media: "PC · música",
   pc_timer: "PC · temporizador",
   truenas_status: "TrueNAS",
+  truenas_app_restart: "TrueNAS · reiniciar app",
+  web_search: "buscar en internet",
+  wikipedia: "Wikipedia",
+  news: "noticias",
+  convert: "conversión",
+  calendar_agenda: "agenda",
+  wake_on_lan: "encender equipo",
+  home_status: "casa · estado",
+  home_control: "casa · control",
+  spotify_play: "Spotify · poner",
+  spotify_control: "Spotify · control",
+  spotify_now_playing: "Spotify · qué suena",
 };
+// Acciones (cambian algo fuera) -> córtex motor; el resto son consultas -> asociación.
+const MOTOR_TOOLS = new Set(["truenas_app_restart", "wake_on_lan", "home_control", "spotify_play", "spotify_control"]);
 
 function toolRegion(name) {
   if (name.startsWith("memory_")) return REGION.hippocampus;
-  if (name.startsWith("pc_") || /^obsidian_(create|append|daily)/.test(name)) return REGION.motor;
+  if (name.startsWith("pc_") || /^obsidian_(create|append|daily)/.test(name) || MOTOR_TOOLS.has(name)) return REGION.motor;
   return REGION.association;
 }
 
@@ -807,7 +877,7 @@ async function init() {
   tick();
   requestAnimationFrame(frame);
   try {
-    ({ mode, pc_apps: pcApps } = await (await fetch("/hud/config")).json());
+    ({ mode, pc_apps: pcApps, wake: wakeEnabled = false } = await (await fetch("/hud/config")).json());
   } catch {
     pcApps = null;
   }
@@ -817,7 +887,22 @@ async function init() {
       : "MANTÉN PULSADO EL CEREBRO O LA BARRA ESPACIADORA";
     if (!getToken()) askToken();
   } else {
-    pollEvents(); // avisos de temporizador del PC (solo en modo local)
+    pollEvents(); // avisos del PC: temporizadores y "Hey Jarvis" (solo en modo local)
+    if (wakeEnabled) {
+      const hint = "DI «HEY JARVIS», MANTÉN PULSADO EL CEREBRO O LA BARRA ESPACIADORA";
+      // El navegador no deja sonar nada hasta el primer clic o tecla en la página.
+      if (ensureAudio().state === "suspended") {
+        $("hint").textContent = "HAZ CLIC EN LA PÁGINA UNA VEZ PARA ACTIVAR EL SONIDO";
+        const unlock = () => {
+          ensureAudio();
+          $("hint").textContent = hint;
+        };
+        addEventListener("pointerdown", unlock, { once: true });
+        addEventListener("keydown", unlock, { once: true });
+      } else {
+        $("hint").textContent = hint;
+      }
+    }
   }
 }
 init();
