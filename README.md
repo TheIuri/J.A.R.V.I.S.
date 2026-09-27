@@ -190,6 +190,29 @@ py jarvis_hud.py        # abre http://localhost:8766 (usa JARVIS_SERVER y JARVIS
 - **Micrófono**: el navegador pide permiso la primera vez. Funciona porque `localhost` cuenta como sitio seguro.
 - **Opciones**: `--no-actions` (sin acciones en el PC), `--port 8766` y `--no-browser`.
 
+### "Hey Jarvis" (Nivel 4)
+
+El HUD del PC puede escuchar la palabra de activación, sin pulsar nada. La detección es 100 % local con
+[openWakeWord](https://github.com/dscripka/openWakeWord): el audio no sale del PC hasta que oye "Hey Jarvis".
+
+```bash
+cd client
+py -m pip install -r requirements-wake.txt   # una vez (descarga el modelo la primera vez que arranca)
+py jarvis_hud.py
+```
+
+- **Cómo decirlo**: en inglés, *"jei YAR-vis"*. Pronunciado a la española ("ei jarvis", con la "j" de jamón)
+  no lo reconoce.
+- **Uso**: di "Hey Jarvis", espera el pitido o dilo todo seguido (*"Hey Jarvis, ¿qué tiempo hará mañana?"*).
+  Graba hasta que te callas un segundo.
+- **Mientras piensa o habla** no escucha la palabra, para no activarse con su propia voz.
+- **Sonido**: el navegador no deja sonar nada hasta el primer clic en la página; el HUD te lo recuerda.
+- **Opciones**:
+  - `--wake-threshold 0.4` para hacerlo más sensible (por defecto `0.5`; más alto, menos falsos positivos).
+  - `--wake-device N` para elegir otro micrófono (lista con `py jarvis_client.py --list-devices`).
+  - `--no-wake` para desactivarlo.
+- **En el móvil** no está disponible: el navegador no puede escuchar en segundo plano. Allí sigues pulsando para hablar.
+
 ## HUD en el móvil (HTTPS con Tailscale)
 
 El NAS también sirve la interfaz en `/hud/`. Para que el micrófono del móvil funcione hace falta HTTPS, y lo pone
@@ -307,6 +330,7 @@ server/jarvis/
 client/
   jarvis_client.py   push-to-talk para PC (consola)
   jarvis_hud.py      HUD web local (proxy al NAS + acciones del PC; usa server/jarvis/web)
+  wake.py            "Hey Jarvis": palabra de activación local (openWakeWord) y fin de frase
   pc_actions.py      ejecuta las acciones permitidas en Windows
   apps.json          apps que JARVIS puede abrir
 deploy/truenas/           docker-compose para "Install via YAML"
