@@ -64,11 +64,17 @@ def ensure_piper_voice(voice: str, voices_dir: Path) -> Path:
 class PiperTTS:
     """Piper local: rapido incluso solo con CPU."""
 
-    def __init__(self, voice: str, voices_dir: Path):
+    def __init__(self, voice: str, voices_dir: Path, speaker: int | None = None, speed: float = 1.0):
         from piper import PiperVoice  # import perezoso
 
-        self.name = f"piper:{voice}"
+        if not 0.5 <= speed <= 2.0:
+            raise ValueError("PIPER_SPEED debe estar entre 0.5 y 2.0")
+        self.name = f"piper:{voice}" + (f"#{speaker}" if speaker is not None else "")
         self.voice = PiperVoice.load(str(ensure_piper_voice(voice, voices_dir)))
+        speakers = self.voice.config.num_speakers
+        if speaker is not None and not 0 <= speaker < speakers:
+            raise ValueError(f"PIPER_SPEAKER={speaker} no existe en {voice} (tiene {speakers} locutor/es)")
+        self.options = {"speaker_id": speaker, "length_scale": 1.0 / speed}
 
     def synthesize(self, text: str) -> bytes | None:
         text = clean_for_speech(text)
@@ -77,7 +83,9 @@ class PiperTTS:
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wav:
             if hasattr(self.voice, "synthesize_wav"):  # piper-tts >= 1.3
-                self.voice.synthesize_wav(text, wav)
+                from piper import SynthesisConfig
+
+                self.voice.synthesize_wav(text, wav, syn_config=SynthesisConfig(**self.options))
             else:
                 self.voice.synthesize(text, wav)
         return buf.getvalue()

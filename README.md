@@ -256,6 +256,21 @@ Ejemplos: *"Apunta que mañana llamo al fontanero"*, *"Añade huevos a la lista 
 5. **YAML de la app**: añade el volumen `- /mnt/Data/obsidian:/vault` y `OBSIDIAN_VAULT: "/vault"`.
 6. **Comprobación**: en `/health` deben aparecer las tools `obsidian_*`, y en la bóveda la carpeta `JARVIS/`.
 
+## Voz
+
+Piper genera la voz en el NAS, sin coste. La voz se descarga sola la primera vez que se usa. Para cambiarla,
+edita las variables de la app en TrueNAS y haz redeploy:
+
+| Voz (`PIPER_VOICE`) | Acento | Notas |
+|---|---|---|
+| `es_ES-davefx-medium` | España | hombre (por defecto) |
+| `es_ES-sharvard-medium` | España | dos locutores: `PIPER_SPEAKER` `0` hombre, `1` mujer |
+| `es_MX-claude-high` | México | calidad alta |
+| `es_AR-daniela-high` | Argentina | calidad alta, mujer |
+| `es_MX-ald-medium` | México | hombre |
+
+`PIPER_SPEED` cambia la velocidad (`1.2` = un 20 % más rápido; entre 0.5 y 2).
+
 ## Probar sin TrueNAS (desarrollo)
 
 ```bash

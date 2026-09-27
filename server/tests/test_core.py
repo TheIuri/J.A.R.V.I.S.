@@ -173,7 +173,8 @@ def test_hud_is_served_without_token_but_api_still_needs_it():
     assert client.get("/", follow_redirects=False).headers["location"] == "/hud/"
     page = client.get("/hud/")
     assert page.status_code == 200 and "J.A.R.V.I.S." in page.text
-    assert client.get("/hud/hud.js").status_code == 200
+    js = client.get("/hud/hud.js")
+    assert js.status_code == 200 and js.headers["cache-control"] == "no-cache"
     assert client.get("/hud/config").json() == {"mode": "server", "pc_apps": None}
     assert client.get("/hud/../jarvis/config.py").status_code == 404
     assert client.post("/api/chat", json={"text": "hola"}).status_code == 401

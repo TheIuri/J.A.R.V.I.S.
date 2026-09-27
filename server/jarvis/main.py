@@ -53,7 +53,11 @@ def build_assistant(settings: Settings) -> Assistant:
     llm = FallbackLLM(
         [OpenAICompatLLM(p, settings.llm_timeout_s, settings.llm_max_tokens) for p in settings.llm_providers]
     )
-    tts = PiperTTS(settings.piper_voice, data / "piper") if settings.tts_provider == "piper" else NullTTS()
+    tts = (
+        PiperTTS(settings.piper_voice, data / "piper", settings.piper_speaker, settings.piper_speed)
+        if settings.tts_provider == "piper"
+        else NullTTS()
+    )
 
     store = MemoryStore(data / "memory.db") if settings.memory_enabled else None
     vault = None
@@ -266,6 +270,14 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
     def reset(req: SessionRequest) -> dict:
         state["assistant"].reset(req.session)
         return {"status": "ok"}
+
+    @app.middleware("http")
+    async def hud_no_cache(request, call_next):
+        # Que el navegador compruebe siempre si hay version nueva del HUD (responde 304 si no cambio).
+        response = await call_next(request)
+        if request.url.path.startswith("/hud"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     app.mount("/hud", StaticFiles(directory=WEB_DIR, html=True), name="hud")
     return app

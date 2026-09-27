@@ -40,6 +40,11 @@ def _env_int(name: str, default: int) -> int:
     return int(value) if value else default
 
 
+def _env_float(name: str, default: float) -> float:
+    value = _env(name)
+    return float(value) if value else default
+
+
 def _env_bool(name: str, default: bool) -> bool:
     value = _env(name).lower()
     return value in ("1", "true", "yes", "si", "on") if value else default
@@ -73,6 +78,8 @@ class Settings:
 
     tts_provider: str = "piper"  # piper | none
     piper_voice: str = "es_ES-davefx-medium"
+    piper_speaker: int | None = None  # voces con varios locutores (p. ej. sharvard: 0 hombre, 1 mujer)
+    piper_speed: float = 1.0  # >1 mas rapido, <1 mas lento
 
     history_turns: int = 6
 
@@ -151,6 +158,8 @@ def load_settings() -> Settings:
         llm_max_tokens=_env_int("LLM_MAX_TOKENS", 1024),
         tts_provider=_env("TTS_PROVIDER", "piper").lower(),
         piper_voice=_env("PIPER_VOICE", "es_ES-davefx-medium"),
+        piper_speaker=_env_int("PIPER_SPEAKER", -1) if _env("PIPER_SPEAKER") else None,
+        piper_speed=_env_float("PIPER_SPEED", 1.0),
         history_turns=_env_int("HISTORY_TURNS", 6),
         memory_enabled=_env_bool("MEMORY_ENABLED", True),
         memory_max_items=_env_int("MEMORY_MAX_ITEMS", 8),

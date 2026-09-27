@@ -31,7 +31,9 @@ services:
 
       # --- Voz (TTS): Piper local en CPU ---
       TTS_PROVIDER: "piper"
-      PIPER_VOICE: "es_ES-davefx-medium"
+      PIPER_VOICE: "es_ES-davefx-medium" # otras: es_ES-sharvard-medium, es_MX-claude-high, es_AR-daniela-high
+      # PIPER_SPEAKER: "0" # solo voces con varios locutores (sharvard: 0 hombre, 1 mujer)
+      # PIPER_SPEED: "1.0" # 1.2 = un 20% mas rapido
 
       # --- Memoria (Nivel 3): SQLite en el dataset (/data/memory.db) ---
       MEMORY_ENABLED: "true" # "false" = sin memoria (no lee ni guarda recuerdos)
