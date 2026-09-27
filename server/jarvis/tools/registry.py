@@ -86,6 +86,10 @@ class ToolRegistry:
             raise ValueError(f"tool duplicada: {tool.name}")
         self._tools[tool.name] = tool
 
+    def get(self, name: str) -> Tool | None:
+        """La tool registrada (si no esta desactivada), p. ej. para darsela a un agente."""
+        return self._tools.get(name) if name not in self._disabled else None
+
     def names(self) -> list[str]:
         return [n for n in self._tools if n not in self._disabled]
 

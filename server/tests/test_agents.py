@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from jarvis.agents import ResearchAgent, agent_tools, split_report
+from jarvis.agents import SPECS, AgentTeam, agent_tools, split_report
 from jarvis.notify import NoticeBoard
 from jarvis.obsidian import Vault
 from jarvis.tools import ToolContext
@@ -60,6 +60,10 @@ def fake_search():
                 lambda ctx, query: "1. Guía solar — 400 W por panel (https://ejemplo.es/solar)")
 
 
+def fake_tool(name, result):
+    return Tool(name, name, {"type": "object", "properties": {"q": {"type": "string"}}}, lambda ctx, q="": result)
+
+
 def test_research_agent_end_to_end(tmp_path):
     script = ScriptedLLM([
         [("web_search", {"query": "paneles solares"})],
@@ -67,26 +71,57 @@ def test_research_agent_end_to_end(tmp_path):
     ])
     vault = Vault(tmp_path)
     board = NoticeBoard()
-    agent = ResearchAgent(script.llm(), registry(fake_search()), vault, board)
-    job = agent.start("paneles solares en casa", background=False)
+    team = AgentTeam(script.llm(), {"web_search": fake_search()}, vault, board)
+    job = team.start("investigador", "paneles solares en casa", background=False)
     assert job.state == "terminado" and job.steps == ["web_search"]
     assert job.note.startswith("JARVIS/Investigaciones/") and job.note.endswith("paneles solares en casa.md")
     note = (tmp_path / job.note).read_text()
     assert "# Paneles solares" in note and "puntos clave" in note  # no lo bloquea el filtro de secretos
     notice = board.since(0)[0]
-    assert notice.source == "agente" and "Un panel da unos 400 W" in notice.text and "Obsidian" in notice.text
-    status = agent_tools(agent)[1].fn(ToolContext())
-    assert status.startswith("[1] paneles solares en casa: terminado: Un panel da unos 400 W.")
+    assert notice.source == "agente" and notice.text.startswith("El investigador ha terminado: paneles solares en casa.")
+    status = agent_tools(team)[1].fn(ToolContext())
+    assert status.startswith("[1] El investigador · paneles solares en casa: terminado: Un panel da unos 400 W.")
+    # El agente solo tiene sus tools: el LLM las recibe todas y nada más.
+    assert [t["function"]["name"] for t in script.requests[0]["tools"]] == ["web_search"]
+
+
+def test_team_offers_only_agents_whose_tools_exist_and_keeps_them_apart(tmp_path):
+    tools = {n: fake_tool(n, f"dato de {n}") for n in
+             ("web_search", "web_read", "get_datetime", "calendar_agenda", "obsidian_search", "memory_search")}
+    team = AgentTeam(ScriptedLLM([]).llm(), tools)
+    assert team.available == ["investigador", "organizador", "escritor"]  # sin TrueNAS no hay técnico
+    assert team.registries["investigador"].names() == ["web_search", "web_read"]
+    assert "web_read" not in team.registries["escritor"].names()  # datos privados, sin web
+    assert team.registries["organizador"].names() == ["get_datetime", "calendar_agenda", "obsidian_search", "memory_search"]
+    run = agent_tools(team)[0]
+    assert run.parameters["properties"]["agent"]["enum"] == ["investigador", "organizador", "escritor"]
+    with pytest.raises(ToolError, match="no hay ningún agente 'tecnico'"):
+        team.start("tecnico", "revisa el NAS")
+    # Ningún encargo combina datos privados con web_read.
+    from jarvis.agents import PRIVATE_TOOLS
+    assert all(not (set(s.tools) & PRIVATE_TOOLS and "web_read" in s.tools) for s in SPECS.values())
+
+
+def test_organizer_writes_its_plan_in_its_folder(tmp_path):
+    script = ScriptedLLM([
+        [("calendar_agenda", {"q": "semana"})],
+        "RESUMEN: Tienes el martes libre por la tarde.\n# Plan de la semana\n- Lunes: dentista.",
+    ])
+    tools = {"get_datetime": fake_tool("get_datetime", "lunes"), "calendar_agenda": fake_tool("calendar_agenda", "Lunes: dentista")}
+    team = AgentTeam(script.llm(), tools, Vault(tmp_path), NoticeBoard())
+    job = team.start("organizador", "organízame la semana", background=False)
+    assert job.note.startswith("JARVIS/Planes/") and "El organizador" in (tmp_path / job.note).read_text()
+    assert "Encargo: organízame la semana" in script.requests[0]["messages"][1]["content"]
 
 
 def test_research_agent_limits_and_errors():
-    agent = ResearchAgent(ScriptedLLM([]).llm(), registry(fake_search()))
+    team = AgentTeam(ScriptedLLM([]).llm(), {"web_search": fake_search()})
     for _ in range(2):
-        agent.jobs[len(agent.jobs) + 1] = type("J", (), {"state": "investigando"})()
-    with pytest.raises(ToolError, match="ya estoy con 2"):
-        agent.start("otra cosa")
-    broken = ResearchAgent(ScriptedLLM([]).llm(), registry(fake_search()), board=NoticeBoard())
-    job = broken.start("algo", background=False)  # el LLM no responde
+        team.jobs[len(team.jobs) + 1] = type("J", (), {"state": "trabajando"})()
+    with pytest.raises(ToolError, match="ya hay 2 agentes"):
+        team.start("investigador", "otra cosa")
+    broken = AgentTeam(ScriptedLLM([]).llm(), {"web_search": fake_search()}, board=NoticeBoard())
+    job = broken.start("investigador", "algo", background=False)  # el LLM no responde
     assert job.state == "error" and broken.board.since(0)[0].level == "warning"
 
 

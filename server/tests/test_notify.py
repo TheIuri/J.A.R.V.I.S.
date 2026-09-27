@@ -169,3 +169,45 @@ def test_briefing_once_a_day_in_its_window():
     late = (now - timedelta(hours=3)).strftime("%H:%M")
     if (now - timedelta(hours=3)).date() == now.date():
         assert briefing_check(lambda t: "x", late, "Europe/Madrid").fn() == []  # arrancó tarde: se salta
+
+
+def test_briefing_does_not_ask_the_llm_again_once_given():
+    from jarvis.watch import briefing_check
+
+    asked = []
+    board = NoticeBoard()
+    inside = (datetime.now(TZ) - timedelta(minutes=5)).strftime("%H:%M")
+    check = briefing_check(lambda t: asked.append(t) or "Buenos días.", inside, "Europe/Madrid", seen=board.seen)
+    watcher = Watcher(board, [check])
+    watcher.run_once(now=0)
+    watcher.run_once(now=10_000)  # otra pasada dentro de la ventana
+    assert len(asked) == 1 and len(board.since(0)) == 1
+
+
+def test_nightly_summary_writes_once_and_skips_secrets(tmp_path):
+    from jarvis.obsidian import Vault
+    from jarvis.turnlog import TurnLog
+    from jarvis.watch import summary_check
+
+    class LLM:
+        calls = 0
+
+        def chat(self, messages):
+            LLM.calls += 1
+            assert "Usuario: recuérdame llamar a mamá" in messages[1]["content"]
+            assert "resumen matinal" not in messages[1]["content"]
+            return type("R", (), {"text": "- Recordatorio para llamar a mamá\n- La contraseña del wifi es 1234"})()
+
+    log = TurnLog(tmp_path / "t.db")
+    log.add("hud", "recuérdame llamar a mamá", "Hecho.")
+    log.add("briefing", "resumen matinal", "Buenos días")  # no cuenta
+    vault = Vault(tmp_path / "vault" if (tmp_path / "vault").mkdir() is None else tmp_path)
+    board = NoticeBoard()
+    inside = (datetime.now(TZ) - timedelta(minutes=1)).strftime("%H:%M")
+    watcher = Watcher(board, [summary_check(LLM(), log, vault, inside, "Europe/Madrid", board.seen)])
+    watcher.run_once(now=0)
+    watcher.run_once(now=10_000)
+    assert LLM.calls == 1
+    daily = next((tmp_path / "vault" / "Diario").glob("*.md")).read_text()
+    assert "## Resumen de JARVIS" in daily and "llamar a mamá" in daily and "contraseña" not in daily
+    assert "diario" in board.since(0)[0].text

@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from .agents import REPORT_FOLDER, ResearchAgent, agent_tools, split_report
+from .agents import REPORT_FOLDER, SPECS, AgentTeam, agent_tools, split_report
 from .config import Settings, load_settings
 from .llm import FallbackLLM, LLMError, OpenAICompatLLM
 from .memory import MemoryRejected, MemoryStore, RuleRetriever
@@ -27,14 +27,15 @@ from .obsidian import Vault
 from .pipeline import Assistant, TurnResult
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
-from .tools import ToolRegistry, build_registry
+from .tools import build_registry
 from .tools.info import research_tools
 from .tools.calendar import Calendars, parse_calendars
 from .tools.reminders import ReminderStore
 from .tools.truenas import _default_connect
 from .tools.vision import Vision, check_image
-from .tts import NullTTS, PiperTTS
-from .watch import Watcher, briefing_check, calendar_check, reminders_check, truenas_check
+from .tts import EdgeTTS, NullTTS, PiperTTS
+from .turnlog import TurnLog
+from .watch import Watcher, briefing_check, calendar_check, reminders_check, summary_check, truenas_check
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # evita loguear URLs firmadas y ruido
@@ -63,11 +64,12 @@ def build_assistant(settings: Settings) -> Assistant:
     llm = FallbackLLM(
         [OpenAICompatLLM(p, settings.llm_timeout_s, settings.llm_max_tokens) for p in settings.llm_providers]
     )
-    tts = (
-        PiperTTS(settings.piper_voice, data / "piper", settings.piper_speaker, settings.piper_speed)
-        if settings.tts_provider == "piper"
-        else NullTTS()
-    )
+    if settings.tts_provider in ("piper", "edge"):
+        tts = PiperTTS(settings.piper_voice, data / "piper", settings.piper_speaker, settings.piper_speed)
+        if settings.tts_provider == "edge":
+            tts = EdgeTTS(settings.edge_voice, settings.edge_rate, settings.edge_pitch, fallback=tts)
+    else:
+        tts = NullTTS()
 
     store = MemoryStore(data / "memory.db") if settings.memory_enabled else None
     vault = None
@@ -101,18 +103,21 @@ def build_assistant(settings: Settings) -> Assistant:
     if reminders:
         assistant.board, assistant.watcher = build_watcher(settings, assistant, reminders, calendars)
     if tools and settings.agents_enabled:
-        agent_registry = ToolRegistry()
-        for tool in research_tools(settings.brave_api_key, settings.timezone):
-            agent_registry.register(tool)
+        # Cada agente coge de aqui solo sus tools (todas de solo lectura; ver agents.py).
+        available = {t.name: t for t in research_tools(settings.brave_api_key, settings.timezone)}
+        for spec in SPECS.values():
+            for name in spec.tools:
+                if name not in available and (tool := tools.get(name)):
+                    available[name] = tool
         # Informes largos: mas tokens de salida que una respuesta hablada.
         agent_llm = FallbackLLM(
             [OpenAICompatLLM(p, settings.llm_timeout_s * 2, max(4096, settings.llm_max_tokens))
              for p in settings.agent_llm_providers or settings.llm_providers]
         )
-        agent = ResearchAgent(agent_llm, agent_registry, vault, assistant.board, settings.timezone)
-        for tool in agent_tools(agent):
+        team = AgentTeam(agent_llm, available, vault, assistant.board, settings.timezone)
+        for tool in agent_tools(team):
             tools.register(tool)
-        log.info("Agente investigador activo (informes en %s)", "Obsidian" if vault else "memoria")
+        log.info("Agentes: %s (informes en %s)", ", ".join(team.available), "Obsidian" if vault else "memoria")
     return assistant
 
 
@@ -149,7 +154,15 @@ def build_watcher(
             assistant.reset("briefing")
             return reply
 
-        checks.append(briefing_check(ask, settings.briefing_at, settings.timezone, settings.briefing_weekends))
+        checks.append(
+            briefing_check(ask, settings.briefing_at, settings.timezone, settings.briefing_weekends, board.seen)
+        )
+    if settings.summary_at and assistant.vault:
+        assistant.turn_log = TurnLog(Path(settings.data_dir) / "turns.db", settings.timezone)
+        checks.append(
+            summary_check(assistant.llm, assistant.turn_log, assistant.vault, settings.summary_at, settings.timezone,
+                          board.seen)
+        )
     return board, Watcher(board, checks)
 
 

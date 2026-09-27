@@ -648,7 +648,7 @@ const TOOL_LABEL = {
   news: "noticias",
   convert: "conversión",
   calendar_agenda: "agenda",
-  agent_research: "agente investigador",
+  agent_run: "encargar a un agente",
   agent_status: "estado del agente",
   delegate_claude: "encargar a Claude",
   camera_look: "mirar por la cámara",

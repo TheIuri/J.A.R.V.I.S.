@@ -143,6 +143,17 @@ class Vault:
             _append(path, f"- {now:%H:%M} {text}")
         return self.rel(path)
 
+    def append_daily_block(self, title: str, text: str) -> str:
+        """Anade una seccion a la nota del dia. Quita las lineas que parezcan secretos."""
+        lines = [line for line in text.strip().splitlines() if not looks_secret(line)]
+        block = self._check_text(f"## {title}\n" + "\n".join(lines), check_secrets=False)
+        now = datetime.now(self.tz)
+        with self._lock:
+            path = self._resolve(f"{self.daily}/{now:%Y-%m-%d}", must_exist=False)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _append(path, "\n" + block)
+        return self.rel(path)
+
     # --- memoria como nota de solo lectura ----------------------------------------
 
     def export_memory(self, store: MemoryStore) -> None:

@@ -147,6 +147,11 @@ class NoticeBoard:
             self.push(notice, quiet)
         return notice
 
+    def seen(self, key: str) -> bool:
+        """Si ese aviso ya se dio (para no repetir trabajo caro, como pedir un resumen al LLM)."""
+        with self._cond:
+            return key in self._seen
+
     @property
     def last_id(self) -> int:
         return self._next_id - 1

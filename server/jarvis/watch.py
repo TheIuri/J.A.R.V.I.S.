@@ -102,7 +102,9 @@ BRIEFING_REQUEST = (
 )
 
 
-def briefing_check(ask: Callable[[str], str], at: str, timezone: str, weekends: bool = True) -> Check:
+def briefing_check(
+    ask: Callable[[str], str], at: str, timezone: str, weekends: bool = True, seen: Callable[[str], bool] = lambda k: False
+) -> Check:
     """Resumen matinal a la hora indicada (una vez al dia; si el servidor arranca mas de 2 h tarde, se salta)."""
     from datetime import time as dtime
     from zoneinfo import ZoneInfo
@@ -116,9 +118,45 @@ def briefing_check(ask: Callable[[str], str], at: str, timezone: str, weekends: 
         if not start <= now < start + timedelta(hours=2) or (not weekends and now.weekday() >= 5):
             return []
         key = f"briefing:{now.date().isoformat()}"
+        if seen(key):  # ya dado hoy: no volver a pedirlo al LLM
+            return []
         return [(key, "info", "buenos días", ask(BRIEFING_REQUEST))]
 
     return Check("buenos dias", 30, fn)
+
+
+SUMMARY_PROMPT = (
+    "Resume en espanol, para el diario personal del usuario, lo que hablo hoy con su asistente JARVIS. Agrupa por "
+    "temas, en puntos breves: que pregunto, que se hizo (recordatorios, notas, acciones) y pendientes que salieron. "
+    "Nada de contrasenas ni datos sensibles. Maximo 12 puntos. Solo la lista, sin titulo."
+)
+
+
+def summary_check(llm, turn_log, vault, at: str, timezone: str, seen: Callable[[str], bool] = lambda k: False) -> Check:
+    """Resumen nocturno: a la hora indicada escribe en la nota del dia lo que hablaste con JARVIS."""
+    from datetime import time as dtime
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo(timezone)
+    hour = dtime.fromisoformat(at)
+
+    def fn() -> list[Alert]:
+        now = datetime.now(tz)
+        start = datetime.combine(now.date(), hour, tz)
+        if not start <= now < start + timedelta(hours=2):
+            return []
+        key = f"summary:{now.date().isoformat()}"
+        if seen(key):  # ya escrito hoy
+            return []
+        turns = turn_log.day(now.date())
+        if not turns:
+            return [(key, "info", "resumen", "Hoy no hemos hablado; no hay resumen del día.")]
+        chat = "\n".join(f"[{t}] Usuario: {u}\nJARVIS: {r}" for t, u, r in turns[-80:])
+        text = llm.chat([{"role": "system", "content": SUMMARY_PROMPT}, {"role": "user", "content": chat}]).text
+        note = vault.append_daily_block("Resumen de JARVIS", text)
+        return [(key, "info", "resumen", f"He apuntado el resumen del día en tu diario ({note}).")]
+
+    return Check("resumen nocturno", 60, fn)
 
 
 def truenas_check(
@@ -178,4 +216,4 @@ def truenas_check(
     return Check("truenas", interval_s, fn)
 
 
-__all__ = ["Check", "Watcher", "briefing_check", "calendar_check", "reminders_check", "truenas_check", "OK_STATES"]
+__all__ = ["Check", "Watcher", "briefing_check", "summary_check", "calendar_check", "reminders_check", "truenas_check", "OK_STATES"]

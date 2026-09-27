@@ -85,10 +85,13 @@ class Settings:
     llm_timeout_s: int = 30
     llm_max_tokens: int = 1024  # incluye los tokens de razonamiento
 
-    tts_provider: str = "piper"  # piper | none
+    tts_provider: str = "piper"  # piper | edge (con Piper de respaldo) | none
     piper_voice: str = "es_ES-davefx-medium"
     piper_speaker: int | None = None  # voces con varios locutores (p. ej. sharvard: 0 hombre, 1 mujer)
     piper_speed: float = 1.0  # >1 mas rapido, <1 mas lento
+    edge_voice: str = "es-ES-AlvaroNeural"  # TTS_PROVIDER=edge (Piper queda de respaldo)
+    edge_rate: str = "+0%"
+    edge_pitch: str = "+0Hz"
 
     history_turns: int = 6
 
@@ -132,6 +135,7 @@ class Settings:
     disk_temp_warn: int = 50
     briefing_at: str = ""  # "08:00": resumen de buenos dias automatico
     briefing_weekends: bool = True
+    summary_at: str = ""  # "23:30": resumen nocturno de lo hablado, en la nota del dia (necesita Obsidian)
     wol_broadcast: str = "255.255.255.255"
 
     @property
@@ -213,6 +217,9 @@ def load_settings() -> Settings:
         piper_voice=_env("PIPER_VOICE", "es_ES-davefx-medium"),
         piper_speaker=_env_int("PIPER_SPEAKER", -1) if _env("PIPER_SPEAKER") else None,
         piper_speed=_env_float("PIPER_SPEED", 1.0),
+        edge_voice=_env("EDGE_VOICE", "es-ES-AlvaroNeural"),
+        edge_rate=_env("EDGE_RATE", "+0%"),
+        edge_pitch=_env("EDGE_PITCH", "+0Hz"),
         history_turns=_env_int("HISTORY_TURNS", 6),
         memory_enabled=_env_bool("MEMORY_ENABLED", True),
         memory_max_items=_env_int("MEMORY_MAX_ITEMS", 8),
@@ -249,5 +256,6 @@ def load_settings() -> Settings:
         disk_temp_warn=_env_int("DISK_TEMP_WARN", 50),
         briefing_at=_env("BRIEFING_AT"),
         briefing_weekends=_env_bool("BRIEFING_WEEKENDS", True),
+        summary_at=_env("SUMMARY_AT"),
         wol_broadcast=_env("WOL_BROADCAST", "255.255.255.255"),
     )

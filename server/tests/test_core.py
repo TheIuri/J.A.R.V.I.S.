@@ -213,3 +213,55 @@ def test_hud_can_choose_the_provider_and_others_stay_as_fallback():
     text = client.post("/api/transcribe", files={"audio": ("a.wav", b"wav", "audio/wav")}, headers=auth).json()
     assert text == {"text": "hola jarvis"}
     assert client.post("/api/transcribe", files={"audio": ("a.wav", b"wav", "audio/wav")}).status_code == 401
+
+
+def _wav(seconds=0.2, rate=24000):
+    import io
+    import wave as w
+
+    buf = io.BytesIO()
+    with w.open(buf, "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(rate)
+        f.writeframes(b"\x00\x10" * int(rate * seconds))
+    return buf.getvalue()
+
+
+def test_edge_tts_converts_to_wav_and_falls_back_to_piper(monkeypatch):
+    import io
+    import wave as w
+
+    import edge_tts
+
+    from jarvis.tts import EdgeTTS
+
+    seen = {}
+
+    class FakeCommunicate:
+        def __init__(self, text, voice, rate, pitch):
+            seen.update(text=text, voice=voice, rate=rate, pitch=pitch)
+
+        async def stream(self):
+            data = _wav()
+            yield {"type": "WordBoundary"}
+            yield {"type": "audio", "data": data[:1000]}
+            yield {"type": "audio", "data": data[1000:]}
+
+    monkeypatch.setattr(edge_tts, "Communicate", FakeCommunicate)
+    tts = EdgeTTS("es-ES-ElviraNeural", "+10%", "-2Hz", fallback=FakeTTS())
+    out = tts.synthesize("**Hola**, señor")
+    assert seen == {"text": "Hola, señor", "voice": "es-ES-ElviraNeural", "rate": "+10%", "pitch": "-2Hz"}
+    with w.open(io.BytesIO(out)) as f:
+        assert f.getnchannels() == 1 and f.getframerate() == 24000 and f.getnframes() > 4000
+
+    class Broken(FakeCommunicate):
+        async def stream(self):
+            raise ConnectionError("sin internet")
+            yield  # pragma: no cover
+
+    monkeypatch.setattr(edge_tts, "Communicate", Broken)
+    assert tts.synthesize("hola") == b"RIFFfake"  # habla el respaldo (Piper)
+    assert tts.name == "edge:es-ES-ElviraNeural (respaldo fake-tts)"
+    with pytest.raises(ValueError, match="EDGE_RATE"):
+        EdgeTTS(rate="rapido")
