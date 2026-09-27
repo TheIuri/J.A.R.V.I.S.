@@ -194,3 +194,13 @@ def test_agent_can_use_its_own_llm_chain(monkeypatch):
     settings = config.load_settings()
     assert [p.name for p in settings.agent_llm_providers] == ["gemini", "groq"]
     assert [p.name for p in settings.llm_providers] == ["groq"]
+
+
+def test_anthropic_preset(monkeypatch):
+    monkeypatch.setenv("API_TOKEN", "x")
+    monkeypatch.setenv("LLM_PROVIDERS", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setenv("AGENT_LLM_PROVIDERS", "anthropic,groq")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "a")
+    agent = config.load_settings().agent_llm_providers[0]
+    assert agent.base_url == "https://api.anthropic.com/v1" and agent.model == "claude-sonnet-5"
