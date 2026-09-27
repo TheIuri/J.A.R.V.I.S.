@@ -23,7 +23,7 @@ def delegate_tool() -> Tool:
         description=(
             "Encarga una tarea compleja (investigar a fondo, comparar, analizar, redactar algo largo) a Claude, "
             "usando la membresía del usuario desde su PC. Tarda unos minutos y avisa al terminar. Para lo sencillo "
-            "responde tú; para investigar sin gastar membresía usa agent_research."
+            "responde tú; para investigar sin gastar membresía usa agent_run con el investigador."
         ),
         parameters={
             "type": "object",

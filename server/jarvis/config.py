@@ -132,6 +132,7 @@ class Settings:
     disk_temp_warn: int = 50
     briefing_at: str = ""  # "08:00": resumen de buenos dias automatico
     briefing_weekends: bool = True
+    summary_at: str = ""  # "23:30": resumen nocturno de lo hablado, en la nota del dia (necesita Obsidian)
     wol_broadcast: str = "255.255.255.255"
 
     @property
@@ -249,5 +250,6 @@ def load_settings() -> Settings:
         disk_temp_warn=_env_int("DISK_TEMP_WARN", 50),
         briefing_at=_env("BRIEFING_AT"),
         briefing_weekends=_env_bool("BRIEFING_WEEKENDS", True),
+        summary_at=_env("SUMMARY_AT"),
         wol_broadcast=_env("WOL_BROADCAST", "255.255.255.255"),
     )

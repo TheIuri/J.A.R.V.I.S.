@@ -50,6 +50,7 @@ services:
       # NOTIFY_QUIET: "23:00-08:00" # esas horas sin voz (salvo criticos)
       # NTFY_URL: "https://ntfy.sh/<tema-largo-y-secreto>" # push al movil con la app ntfy
       # BRIEFING_AT: "08:00" # resumen de buenos dias automatico
+      # SUMMARY_AT: "23:30" # resumen nocturno de lo hablado, en la nota del dia (necesita Obsidian)
 
       # --- Home Assistant (opcional) ---
       # HA_URL: "http://192.168.1.X:8123"

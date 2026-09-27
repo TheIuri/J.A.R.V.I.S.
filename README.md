@@ -350,15 +350,23 @@ Se da una vez al día. Si el servidor arranca más de 2 horas tarde, ese día se
 
 ## Nivel 5: agentes
 
-**Agente investigador**: *"Investiga qué placas solares me convienen para un piso"*. JARVIS responde al momento
-que se pone con ello, y un agente trabaja en segundo plano:
-1. Busca en internet, lee de 2 a 5 páginas y contrasta con Wikipedia o noticias. Hace como máximo 10 rondas.
-2. Escribe un informe con resumen, ideas principales y fuentes, y lo guarda en Obsidian, en
-   `JARVIS/Investigaciones/AAAA-MM-DD tema.md`.
-3. Avisa al terminar: lo dice en el HUD, y llega al móvil si tienes ntfy.
+Un **equipo de agentes** que trabajan en segundo plano. JARVIS responde al momento que se ponen con ello y, al
+terminar, el informe va a Obsidian y te avisa: en el HUD y, si tienes ntfy, en el móvil.
 
-*"¿Cómo va la investigación?"* te da el estado. Puede haber 2 investigaciones a la vez, y `AGENTS_ENABLED: "false"`
-lo desactiva.
+| Agente | Qué hace | Ejemplo | Informe en |
+|---|---|---|---|
+| **Investigador** | busca en internet, lee de 2 a 5 páginas y contrasta | *"Investiga qué aire acondicionado me conviene"* | `JARVIS/Investigaciones` |
+| **Técnico del NAS** | revisa TrueNAS a fondo y propone soluciones (no cambia nada) | *"Que el técnico revise el servidor"* | `JARVIS/Servidor` |
+| **Organizador** | cruza agenda, recordatorios, tiempo, notas y recuerdos y propone un plan | *"Organízame la semana"* | `JARVIS/Planes` |
+| **Escritor** | redacta textos largos con tus notas y recuerdos | *"Escríbeme una reclamación para la compañía de la luz"* | `JARVIS/Textos` |
+
+- *"¿Cómo van los agentes?"* te da el estado. Puede haber 2 trabajando a la vez.
+- Solo aparecen los agentes que tienen sus herramientas: el técnico, por ejemplo, necesita TrueNAS configurado.
+- `AGENTS_ENABLED: "false"` los desactiva.
+
+**Resumidor nocturno**: con `SUMMARY_AT: "23:30"` (y Obsidian), cada noche añade a tu nota del día un resumen de lo
+que hablaste con JARVIS: temas, lo que se hizo y lo que quedó pendiente. Para eso guarda las conversaciones del
+día en el NAS (`turns.db`), las borra a los 7 días y omite las líneas que parezcan contraseñas o claves.
 
 **Modelo del agente**: lee páginas largas y el plan gratuito de Groq tiene un límite bajo de tokens por minuto.
 Si ves que las investigaciones fallan, dale al agente otra cadena de modelos, por ejemplo Gemini primero (clave
@@ -399,7 +407,10 @@ La elección se guarda en ese navegador. *Nueva conversación* también empieza 
 servidores MCP. Trabaja en una carpeta temporal vacía y la tarea le llega por la entrada estándar, nunca en la
 línea de comandos.
 
-**Seguridad**: el agente **solo tiene herramientas de lectura** (buscar, leer páginas, Wikipedia, noticias). Si
+**Seguridad**: los agentes **solo tienen herramientas de lectura**, y **ninguno junta tus datos privados (notas,
+memoria, agenda, servidor) con la lectura de páginas web**. Si no, una web maliciosa podría pedirle que "leyera"
+una dirección con tus datos dentro y así sacarlos fuera. El investigador tiene internet pero no tus datos; el
+escritor y el organizador, tus datos pero no internet. Si
 una web intenta darle órdenes, no tiene con qué cumplirlas; el informe lo guarda el código, no la IA. El lector
 de páginas no abre direcciones de tu red (router, NAS…) ni `localhost`, y comprueba también cada redirección.
 Por eso `web_read` es solo del agente, no del asistente principal, que sí puede actuar (PC, casa, Spotify…).

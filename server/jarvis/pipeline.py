@@ -109,6 +109,7 @@ class Assistant:
         self._pending: dict[str, tuple[PendingAction, float]] = {}  # accion esperando un "si", por sesion
         self.board = None  # tablon de avisos proactivos (notify.NoticeBoard), si esta activo
         self.vault = None  # boveda de Obsidian, si esta configurada
+        self.turn_log = None  # turnlog.TurnLog: conversaciones del dia para el resumen nocturno
         self.watcher = None
         # Un turno cada vez: evita pelearse por la GPU y mantiene el orden del historial.
         self._lock = threading.Lock()
@@ -183,6 +184,8 @@ class Assistant:
         reply = f"Hecho. {result}" if ok else f"No he podido hacerlo: {result.removeprefix('ERROR: ')}"
         emit({"type": "reply", "text": reply, "provider": None, "ms": 0})
         log.info("[%s] accion confirmada %s: %r", session, name, reply)
+        if self.turn_log:
+            self.turn_log.add(session, text, reply)
         history = self._history[session]
         history.append({"role": "user", "content": text})
         history.append({"role": "assistant", "content": reply})
@@ -273,6 +276,8 @@ class Assistant:
         log.info("[%s] LLM %dms (%s) tools=%s: %r", session, timings["llm"], reply.provider, used, reply.text)
         history.append({"role": "user", "content": text})
         history.append({"role": "assistant", "content": reply.text})
+        if self.turn_log:
+            self.turn_log.add(session, text, reply.text)
 
         audio = None
         if speak:
