@@ -12,13 +12,15 @@ import re
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 import httpx
 
 from .registry import Tool, ToolContext, ToolError
 
-UA = "Mozilla/5.0 (JARVIS asistente personal)"
+# Wikipedia exige un User-Agent que identifique la aplicacion.
+UA = "JARVIS/1.0 (https://github.com/TheIuri/J.A.R.V.I.S.; asistente personal)"
 MAX_SNIPPET = 220
 
 
@@ -140,22 +142,26 @@ class Wikipedia:
         self._client = client or httpx.Client(timeout=8, headers={"User-Agent": UA}, follow_redirects=True)
 
     def summary(self, query: str) -> dict:
+        # Una sola peticion al API clasico: busca y devuelve la introduccion del mejor resultado.
+        params = {
+            "action": "query", "generator": "search", "gsrsearch": query, "gsrlimit": 1,
+            "prop": "extracts|pageprops|info", "exintro": 1, "explaintext": 1, "exchars": 1200,
+            "inprop": "url", "ppprop": "disambiguation", "redirects": 1, "format": "json", "formatversion": 2,
+        }
         try:
-            found = self._client.get(f"{self.base}/w/rest.php/v1/search/page", params={"q": query, "limit": 1})
-            found.raise_for_status()
-            pages = found.json().get("pages") or []
-            if not pages:
-                raise ToolError(f"no hay ningún artículo sobre '{query}'")
-            page = self._client.get(f"{self.base}/api/rest_v1/page/summary/{quote(pages[0]['key'], safe='')}")
-            page.raise_for_status()
+            resp = self._client.get(f"{self.base}/w/api.php", params=params)
+            resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise ToolError(f"Wikipedia no responde ({type(exc).__name__})") from exc
-        data = page.json()
+        pages = resp.json().get("query", {}).get("pages") or []
+        if not pages:
+            raise ToolError(f"no hay ningún artículo sobre '{query}'")
+        page = pages[0]
         return {
-            "title": data.get("title", pages[0].get("title", "")),
-            "extract": _clean(data.get("extract", ""), 1200),
-            "url": data.get("content_urls", {}).get("desktop", {}).get("page", ""),
-            "ambiguous": data.get("type") == "disambiguation",
+            "title": page.get("title", ""),
+            "extract": _clean(page.get("extract", ""), 1200),
+            "url": page.get("fullurl", ""),
+            "ambiguous": "disambiguation" in (page.get("pageprops") or {}),
         }
 
 
@@ -183,7 +189,8 @@ def wikipedia_tool(wiki: Wikipedia) -> Tool:
 class News:
     FEED = "https://news.google.com/rss"
 
-    def __init__(self, client: httpx.Client | None = None):
+    def __init__(self, timezone: str = "Europe/Madrid", client: httpx.Client | None = None):
+        self.tz = ZoneInfo(timezone)
         self._client = client or httpx.Client(timeout=8, headers={"User-Agent": UA}, follow_redirects=True)
 
     def headlines(self, topic: str = "", limit: int = 6) -> list[dict]:
@@ -207,7 +214,7 @@ class News:
             if source and title.endswith(f" - {source}"):
                 title = title[: -len(source) - 3]
             try:
-                when = parsedate_to_datetime(item.findtext("pubDate", "")).strftime("%d/%m %H:%M")
+                when = parsedate_to_datetime(item.findtext("pubDate", "")).astimezone(self.tz).strftime("%d/%m %H:%M")
             except (TypeError, ValueError):
                 when = ""
             items.append({"title": _clean(title, 160), "source": source, "when": when})
@@ -377,10 +384,10 @@ def convert_tool(currency: Currency) -> Tool:
     )
 
 
-def info_tools(brave_key: str = "") -> list[Tool]:
+def info_tools(brave_key: str = "", timezone: str = "Europe/Madrid") -> list[Tool]:
     return [
         web_search_tool(WebSearch(brave_key)),
         wikipedia_tool(Wikipedia()),
-        news_tool(News()),
+        news_tool(News(timezone)),
         convert_tool(Currency()),
     ]

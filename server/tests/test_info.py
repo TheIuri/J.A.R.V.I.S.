@@ -59,24 +59,24 @@ def test_search_errors_become_tool_errors():
         WebSearch(client=client(down)).search("x")
 
 
+def wiki_page(**page):
+    return httpx.Response(200, json={"batchcomplete": True, "query": {"pages": [page]}})
+
+
 def test_wikipedia_summary_and_disambiguation():
     def handler(request):
-        if "search/page" in request.url.path:
-            return httpx.Response(200, json={"pages": [{"key": "Torre_Eiffel", "title": "Torre Eiffel"}]})
-        assert request.url.path.endswith("/page/summary/Torre_Eiffel")
-        return httpx.Response(200, json={"title": "Torre Eiffel", "extract": "La <b>torre</b> Eiffel mide 330 m.", "type": "standard"})
+        assert request.url.path == "/w/api.php" and request.url.params["gsrsearch"] == "torre eiffel"
+        return wiki_page(title="Torre Eiffel", extract="La torre Eiffel mide 330 m.", fullurl="https://es.wikipedia.org/wiki/T")
 
     assert wikipedia_tool(Wikipedia(client=client(handler))).fn(CTX, topic="torre eiffel") == "Torre Eiffel: La torre Eiffel mide 330 m."
 
     def ambiguous(request):
-        if "search/page" in request.url.path:
-            return httpx.Response(200, json={"pages": [{"key": "Mercurio", "title": "Mercurio"}]})
-        return httpx.Response(200, json={"title": "Mercurio", "extract": "Puede referirse a...", "type": "disambiguation"})
+        return wiki_page(title="Mercurio", extract="Puede referirse a...", pageprops={"disambiguation": ""})
 
     assert "desambiguación" in wikipedia_tool(Wikipedia(client=client(ambiguous))).fn(CTX, topic="mercurio")
 
     def empty(request):
-        return httpx.Response(200, json={"pages": []})
+        return httpx.Response(200, json={"batchcomplete": True})
 
     with pytest.raises(ToolError, match="ningún artículo"):
         Wikipedia(client=client(empty)).summary("zzzz")
@@ -95,10 +95,10 @@ def test_news_headlines_with_and_without_topic():
         urls.append(str(request.url))
         return httpx.Response(200, text=RSS)
 
-    tool = news_tool(News(client(handler)))
+    tool = news_tool(News(client=client(handler)))
     assert tool.fn(CTX).splitlines() == [
-        "- El Barça gana el clásico (El País, 27/09 18:00)",
-        "- Sube el precio de la luz (RTVE, 27/09 09:30)",
+        "- El Barça gana el clásico (El País, 27/09 20:00)",  # hora de Madrid
+        "- Sube el precio de la luz (RTVE, 27/09 11:30)",
     ]
     tool.fn(CTX, topic="Barça", max_results=1)
     assert urls[0].startswith("https://news.google.com/rss?") and "/rss/search?" in urls[1] and "q=Bar" in urls[1]

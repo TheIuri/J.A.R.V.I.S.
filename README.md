@@ -143,6 +143,13 @@ Ejemplos: *"¿Qué tiempo hará mañana?"*, *"Pon el volumen al 30"*, *"Abre Spo
 Ejemplos: *"¿Cómo quedó ayer el Barça?"*, *"¿Quién fue Ramón y Cajal?"*, *"¿Qué noticias hay hoy?"*,
 *"¿Cuántas millas son 42 kilómetros?"*, *"¿Cuánto son 50 dólares en euros?"*.
 
+### Acciones con confirmación
+
+Lo que tiene consecuencias (por ahora, reiniciar una app de TrueNAS) nunca se hace a la primera: JARVIS
+pregunta *"¿Confirmas que reinicie Plex?"* y **solo se ejecuta si tu siguiente frase es un "sí"** (sí, vale,
+adelante, hazlo, confirmo...). Esa comprobación la hace el código, no la IA, así que ni el modelo ni un texto
+leído de internet pueden saltársela. Cualquier otra respuesta, o esperar más de 2 minutos, la cancela.
+
 ## Nivel 3: memoria
 
 JARVIS recuerda entre sesiones y reinicios. SQLite (`/data/memory.db` en el dataset) es la fuente de verdad.

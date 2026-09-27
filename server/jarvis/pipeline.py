@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
+import unicodedata
 from collections import defaultdict, deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -20,6 +22,7 @@ from .llm import FallbackLLM
 from .memory import Retriever, as_prompt
 from .stt import STT
 from .tools import ToolContext, ToolRegistry
+from .tools.registry import PendingAction
 from .tts import TTS
 
 log = logging.getLogger(__name__)
@@ -30,6 +33,20 @@ MAX_TOOL_ROUNDS = 4
 EVENT_TEXT_CHARS = 160
 
 EventSink = Callable[[dict[str, Any]], None]
+
+# Acciones que piden confirmacion: el "si" tiene que llegar en el turno siguiente y antes de este plazo.
+PENDING_TTL_S = 120
+_YES = re.compile(
+    r"^(si|vale|ok|okay|confirmo|confirmado|adelante|hazlo|dale|claro|por supuesto|venga|correcto|afirmativo)"
+    r"( (si|vale|claro|hazlo|adelante|confirmo|por favor|gracias|jarvis))*$"
+)
+
+
+def is_affirmative(text: str) -> bool:
+    """Un "si" corto e inequivoco. Cualquier otra respuesta cancela la accion pendiente."""
+    plain = "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
+    plain = " ".join(re.sub(r"[^a-z ]", " ", plain).split())
+    return bool(_YES.match(plain))
 
 
 def _no_events(event: dict[str, Any]) -> None:
@@ -88,6 +105,7 @@ class Assistant:
         self.system_prompt = system_prompt
         # Contexto de la conversacion en curso, solo en RAM (la memoria persistente es el Nivel 3).
         self._history: dict[str, deque[dict[str, str]]] = defaultdict(lambda: deque(maxlen=history_turns * 2))
+        self._pending: dict[str, tuple[PendingAction, float]] = {}  # accion esperando un "si", por sesion
         # Un turno cada vez: evita pelearse por la GPU y mantiene el orden del historial.
         self._lock = threading.Lock()
 
@@ -134,10 +152,40 @@ class Assistant:
 
     def reset(self, session: str = "default") -> None:
         self._history.pop(session, None)
+        self._pending.pop(session, None)
+
+    def _confirm(
+        self, text: str, session: str, speak: bool, timings: dict[str, int], ctx: ToolContext, emit: EventSink,
+        pending: PendingAction,
+    ) -> TurnResult:
+        """El usuario ha dicho "si": se ejecuta la accion tal cual se propuso, sin volver a pasar por el LLM."""
+        name = pending.tool.name
+        emit({"type": "tool", "id": "confirm", "name": name, "args": _args(json.dumps(pending.args))})
+        with _timed(timings, "tool"):
+            ok, result = self.tools.run_confirmed(pending, ctx)
+        emit({"type": "tool_result", "id": "confirm", "name": name, "ok": ok, "ms": timings["tool"], "text": _short(result)})
+        reply = f"Hecho. {result}" if ok else f"No he podido hacerlo: {result.removeprefix('ERROR: ')}"
+        emit({"type": "reply", "text": reply, "provider": None, "ms": 0})
+        log.info("[%s] accion confirmada %s: %r", session, name, reply)
+        history = self._history[session]
+        history.append({"role": "user", "content": text})
+        history.append({"role": "assistant", "content": reply})
+        audio = None
+        if speak:
+            emit({"type": "speaking"})
+            with _timed(timings, "tts"):
+                audio = self.tts.synthesize(reply)
+        timings["total"] = sum(timings.values())
+        return TurnResult(text, reply, None, audio, timings, [name], ctx.pc_actions)
 
     def _respond(
         self, text: str, session: str, speak: bool, timings: dict[str, int], ctx: ToolContext, emit: EventSink
     ) -> TurnResult:
+        waiting = self._pending.pop(session, None)
+        if waiting and self.tools and time.monotonic() < waiting[1]:
+            if is_affirmative(text):
+                return self._confirm(text, session, speak, timings, ctx, emit, waiting[0])
+            log.info("[%s] accion cancelada (no hubo 'si'): %s", session, waiting[0].summary)
         history = self._history[session]
         system = self.system_prompt
         if self.memory:
@@ -199,6 +247,9 @@ class Assistant:
                 emit({"type": "thinking", "round": MAX_TOOL_ROUNDS + 1})
                 reply = self.llm.chat(messages)
         emit({"type": "reply", "text": reply.text, "provider": reply.provider, "ms": timings["llm"]})
+        if ctx.pending:
+            self._pending[session] = (ctx.pending, time.monotonic() + PENDING_TTL_S)
+            log.info("[%s] esperando confirmacion: %s", session, ctx.pending.summary)
         log.info("[%s] LLM %dms (%s) tools=%s: %r", session, timings["llm"], reply.provider, used, reply.text)
         history.append({"role": "user", "content": text})
         history.append({"role": "assistant", "content": reply.text})

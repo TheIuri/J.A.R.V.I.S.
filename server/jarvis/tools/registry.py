@@ -20,11 +20,21 @@ _TYPES = {"string": str, "integer": int, "number": (int, float), "boolean": bool
 
 
 @dataclass
+class PendingAction:
+    """Accion propuesta por el LLM que espera un "si" del usuario (ver Assistant)."""
+
+    tool: "Tool"
+    args: dict[str, Any]
+    summary: str
+
+
+@dataclass
 class ToolContext:
     """Estado de un turno: lo que se pide al PC y las apps que el PC permite abrir."""
 
     pc_apps: list[str] | None = None  # None = no hay cliente de PC capaz de ejecutar acciones
     pc_actions: list[dict[str, Any]] = field(default_factory=list)
+    pending: PendingAction | None = None  # accion que necesita confirmacion humana
 
 
 @dataclass(frozen=True)
@@ -34,7 +44,9 @@ class Tool:
     parameters: dict[str, Any]  # JSON Schema (object)
     fn: Callable[..., str]
     pc: bool = False  # se ejecuta en el PC del usuario, no en el servidor
-    destructive: bool = False  # borrar, enviar, pagar... requiere confirmacion humana
+    destructive: bool = False  # borrar, enviar, pagar... nunca se ofrece al LLM
+    confirm: bool = False  # se ofrece, pero solo se ejecuta si el usuario dice "si" en el turno siguiente
+    describe: Callable[[dict[str, Any]], str] | None = None  # texto de la pregunta de confirmacion
     timeout_s: float = 10.0
 
 
@@ -112,11 +124,15 @@ class ToolRegistry:
             _validate(tool.parameters, args)
             if tool.name == "pc_open_app" and args.get("app") not in (ctx.pc_apps or []):
                 raise ToolError(f"app no permitida; opciones: {ctx.pc_apps}")
-            future = self._pool.submit(tool.fn, ctx, **args)
-            try:
-                result = future.result(timeout=tool.timeout_s)
-            except FutureTimeout as exc:
-                raise ToolError(f"tiempo agotado ({tool.timeout_s:.0f}s)") from exc
+            if tool.confirm:
+                summary = tool.describe(args) if tool.describe else f"{tool.name} {args}"
+                ctx.pending = PendingAction(tool, args, summary)
+                result = (
+                    f"PENDIENTE DE CONFIRMACION: {summary}. No lo has hecho todavia. Pregunta al usuario, en una frase, "
+                    "si lo confirma; solo se hara si responde que si."
+                )
+            else:
+                result = self._call(tool, ctx, args)
             ok = True
         except ToolError as exc:
             result = f"ERROR: {exc}"
@@ -128,3 +144,29 @@ class ToolRegistry:
             "tool=%s ok=%s ms=%d args=%s result=%s", name, ok, ms, raw_args, result[:200].replace("\n", " ")
         )
         return result
+
+    def _call(self, tool: Tool, ctx: ToolContext, args: dict[str, Any]) -> str:
+        future = self._pool.submit(tool.fn, ctx, **args)
+        try:
+            return future.result(timeout=tool.timeout_s)
+        except FutureTimeout as exc:
+            raise ToolError(f"tiempo agotado ({tool.timeout_s:.0f}s)") from exc
+
+    def run_confirmed(self, pending: PendingAction, ctx: ToolContext) -> tuple[bool, str]:
+        """Ejecuta una accion que el usuario acaba de confirmar. Devuelve (ok, resultado)."""
+        start = time.perf_counter()
+        ok, result = False, ""
+        try:
+            if pending.tool.name in self._disabled:
+                raise ToolError(f"la tool '{pending.tool.name}' esta desactivada")
+            result = self._call(pending.tool, ctx, pending.args)
+            ok = True
+        except ToolError as exc:
+            result = f"ERROR: {exc}"
+        except Exception as exc:
+            audit.exception("tool %s fallo", pending.tool.name)
+            result = f"ERROR: fallo interno en la tool ({type(exc).__name__})"
+        ms = round((time.perf_counter() - start) * 1000)
+        audit.info("tool=%s CONFIRMADA ok=%s ms=%d args=%s result=%s", pending.tool.name, ok, ms,
+                   json.dumps(pending.args, ensure_ascii=False), result[:200].replace("\n", " "))
+        return ok, result

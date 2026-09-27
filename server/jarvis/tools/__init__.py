@@ -13,7 +13,7 @@ from .memory import memory_tools
 from .obsidian import obsidian_tools
 from .pc import pc_tools
 from .registry import Tool, ToolContext, ToolError, ToolRegistry
-from .truenas import truenas_tool
+from .truenas import truenas_tools
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ def build_registry(
     registry = ToolRegistry(disabled=set(settings.tools_disabled))
     registry.register(datetime_tool(settings.timezone))
     registry.register(weather_tool(settings.home_city, home_coords=settings.home_coords))
-    for tool in info_tools(settings.brave_api_key):
+    for tool in info_tools(settings.brave_api_key, settings.timezone):
         registry.register(tool)
     for tool in pc_tools():
         registry.register(tool)
@@ -41,10 +41,9 @@ def build_registry(
         if not settings.truenas_url.startswith("wss://"):
             # TrueNAS revoca las API keys usadas sin TLS.
             raise RuntimeError("TRUENAS_URL debe empezar por wss:// para no exponer la API key")
-        registry.register(
-            truenas_tool(
-                settings.truenas_url, settings.truenas_user, settings.truenas_api_key, settings.truenas_verify_ssl
-            )
-        )
+        for tool in truenas_tools(
+            settings.truenas_url, settings.truenas_user, settings.truenas_api_key, settings.truenas_verify_ssl
+        ):
+            registry.register(tool)
     log.info("Tools activas: %s", ", ".join(registry.names()))
     return registry
