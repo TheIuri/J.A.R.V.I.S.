@@ -27,11 +27,13 @@ import threading
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from .activity import ActivityLog
 from .agent_history import AgentHistory
+from .claude_code import label as claude_label
 from .leads import LeadStore, extract_leads, safe_url
 from .llm import FallbackLLM, LLMError
 from .notify import NoticeBoard
@@ -162,9 +164,15 @@ SPECS = {
         "redacta textos largos (correos, cartas, reclamaciones, documentos) con tus notas y recuerdos",
     ),
 }
+# Agentes que pueden trabajar con Claude (membresia): solo buscan y leen en internet, que es lo unico que
+# Claude Code puede hacer aqui. Los que usan datos privados (NAS, agenda, notas) no.
+CLAUDE_AGENTS = ("investigador", "compras", "captador")
+CLAUDE_TOOLS_NOTE = ("\n\nTrabajas con Claude Code: en lugar de web_search usa WebSearch y en lugar de web_read usa WebFetch "
+                     "(wikipedia y news no estan: buscalas con WebSearch). Responde solo con el informe final.")
 # Tools con datos privados: nunca junto a web_read en el mismo agente.
 PRIVATE_TOOLS = {"truenas_status", "calendar_agenda", "reminder_list", "obsidian_search", "obsidian_read", "memory_search"}
 assert all(not (set(s.tools) & PRIVATE_TOOLS and "web_read" in s.tools) for s in SPECS.values())
+assert all(not (set(SPECS[k].tools) & PRIVATE_TOOLS) for k in CLAUDE_AGENTS)
 
 
 @dataclass
@@ -247,9 +255,19 @@ class AgentTeam:
         lead_profile: str = "",
         lead_profiles: dict[str, str] | None = None,
         history: AgentHistory | None = None,
+        prefs: Path | None = None,
     ):
         self.llm = llm  # por defecto
         self.history = history  # lo ya investigado, para no repetirlo
+        self.claude = None  # ClaudeCode (membresia): lo pone main.py si esta configurado
+        self.prefs = Path(prefs) if prefs else None  # modelo elegido en el HUD para cada agente
+        self.prefer: dict[str, str] = {}
+        if self.prefs:
+            try:
+                self.prefer = {k: v for k, v in json.loads(self.prefs.read_text(encoding="utf-8")).items()
+                               if isinstance(k, str) and isinstance(v, str)}
+            except (OSError, ValueError, AttributeError):
+                self.prefer = {}
         self.llms = llms or {}  # cadena propia de algun agente
         self.activity = activity
         self.leads = leads  # donde guarda el captador sus leads
@@ -292,6 +310,31 @@ class AgentTeam:
     def llm_for(self, agent: str) -> FallbackLLM:
         return self.llms.get(agent, self.llm)
 
+    def model_choices(self, agent: str) -> list[str]:
+        """Modelos que puede usar un agente: los de su cadena y el catalogo de esos proveedores."""
+        own = [m["id"] for m in self.llm_for(agent).models(catalog=True)]
+        if agent in CLAUDE_AGENTS and self.claude is not None and self.claude.available:
+            own += self.claude.model_ids
+        return own
+
+    def _chain_prefer(self, agent: str) -> str | None:
+        prefer = self.prefer.get(agent)
+        return None if not prefer or prefer.startswith("claude-") else prefer
+
+    def set_model(self, agent: str, model: str) -> None:
+        """Modelo que va primero para un agente ("" = su cadena tal cual); el resto queda de respaldo."""
+        if agent not in self.registries:
+            raise ToolError(f"no hay ningún agente '{agent}'")
+        if model and model not in self.model_choices(agent):
+            raise ToolError(f"el agente {agent} no puede usar {model}")
+        if model:
+            self.prefer[agent] = model
+        else:
+            self.prefer.pop(agent, None)
+        if self.prefs:
+            self.prefs.parent.mkdir(parents=True, exist_ok=True)
+            self.prefs.write_text(json.dumps(self.prefer, indent=1), encoding="utf-8")
+
     def _trace(self, kind: str, job: Job, **data) -> None:
         if self.activity:
             self.activity.emit(kind, job=job.id, agent=job.agent, label=SPECS[job.agent].label, **data)
@@ -328,7 +371,10 @@ class AgentTeam:
     def _run(self, job: Job) -> None:
         spec = SPECS[job.agent]
         log.info("agente %d (%s): %r", job.id, job.agent, job.topic)
-        self._trace("agent_start", job, task=job.topic, models=self.llm_for(job.agent).name)
+        prefer = self.prefer.get(job.agent)
+        self._trace("agent_start", job, task=job.topic,
+                    models=f"{claude_label(prefer) if prefer.startswith('claude-') else prefer} (elegido)" if prefer
+                    else self.llm_for(job.agent).name)
         try:
             text = self._work(job, spec)
             found, text = extract_leads(text)
@@ -356,17 +402,43 @@ class AgentTeam:
         log.info("agente %d: %s (%d pasos)", job.id, job.state, len(job.steps))
 
     def _work(self, job: Job, spec: AgentSpec) -> str:
+        prefer = self.prefer.get(job.agent, "")
+        if prefer.startswith("claude-") and job.agent in CLAUDE_AGENTS and self.claude is not None:
+            try:
+                return self._work_claude(job, spec, prefer)
+            except (RuntimeError, ValueError, OSError) as exc:
+                # Sin cupo en la membresia o Claude caido: el encargo sigue con la cadena del agente.
+                log.warning("agente %d: Claude no ha podido (%s); sigo con %s", job.id, exc, self.llm_for(job.agent).name)
+                self._trace("agent_tool", job, tool="respaldo", model=self.llm_for(job.agent).name)
+        return self._work_chain(job, spec)
+
+    def _task_text(self, job: Job) -> str:
+        return (f"Encargo: {job.topic}\nFecha de hoy: {job.started:%Y-%m-%d %H:%M}"
+                + (self._offer(job.topic) if job.agent == "captador" else ""))
+
+    def _work_claude(self, job: Job, spec: AgentSpec, model: str) -> str:
+        """El agente con Claude Code (membresia): mismo encargo y formato de informe, con WebSearch/WebFetch."""
+        job.model = claude_label(model)
+
+        def emit(event: dict) -> None:
+            if event.get("type") == "tool":
+                job.steps.append(event.get("name", "?"))
+                self._trace("agent_tool", job, tool=event.get("name", "?"), model=job.model)
+
+        return self.claude.task(f"{spec.prompt}{CLAUDE_TOOLS_NOTE}\n\n{self._task_text(job)}", model, emit)
+
+    def _work_chain(self, job: Job, spec: AgentSpec) -> str:
         ctx = ToolContext()
         tools = self.registries[job.agent]
         llm = self.llm_for(job.agent)
         specs = tools.specs(ctx)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": spec.prompt},
-            {"role": "user", "content": f"Encargo: {job.topic}\nFecha de hoy: {job.started:%Y-%m-%d %H:%M}"
-             + (self._offer(job.topic) if job.agent == "captador" else "")},
+            {"role": "user", "content": self._task_text(job)},
         ]
         for _ in range(MAX_ROUNDS):
-            reply = llm.chat(messages, specs or None, patient=True)  # en segundo plano: espera a los limites por minuto
+            # En segundo plano: espera a los limites por minuto. prefer: el modelo elegido en el HUD, si lo hay.
+            reply = llm.chat(messages, specs or None, prefer=self._chain_prefer(job.agent), patient=True)
             job.model = reply.provider or job.model
             if not reply.tool_calls:
                 return reply.text
@@ -386,7 +458,7 @@ class AgentTeam:
                 result = tools.execute(call.name, call.arguments, ctx)
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
         messages.append({"role": "user", "content": "Ya no puedes usar más herramientas: escribe el informe ahora."})
-        reply = llm.chat(messages, patient=True)
+        reply = llm.chat(messages, prefer=self._chain_prefer(job.agent), patient=True)
         job.model = reply.provider or job.model
         return reply.text
 

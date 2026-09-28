@@ -460,6 +460,14 @@ reintentan; la conversación no espera y pasa al siguiente. El **widget de cuota
 **Sesión → Cuota** (lo que queda del minuto y del día según el proveedor, y lo gastado hoy). Groq y Cerebras dicen lo
 que queda; de Gemini solo se sabe lo gastado y cuándo da límite.
 
+**Modelo de cada agente**: en **Agentes**, cada agente tiene un selector de modelo con los de su cadena y el resto
+del catálogo de esos proveedores. El elegido va primero y su cadena queda de respaldo; se guarda en el NAS
+(`agent_models.json`). "Su cadena" vuelve a lo configurado en `AGENT_LLM_PROVIDERS`.
+El **investigador**, el **de compras** y el **captador** también pueden trabajar con **Claude** (tu membresía, si
+has puesto `CLAUDE_CODE_OAUTH_TOKEN`): buscan y leen con Claude Code y el informe, las tarjetas y los leads salen
+igual. Si Claude no puede (sin cupo o caído), el encargo sigue con la cadena del agente. El técnico, el organizador
+y el escritor no: usan tus datos privados (NAS, agenda, notas) y esos nunca van a Claude Code.
+
 **Resultados en tarjetas**: el investigador y el de compras terminan con sus opciones como tarjetas (la recomendada
 primero, con datos clave, precio, lo mejor, lo peor y la fuente). Se abren al terminar y luego desde **Agentes → Ver
 resultados**. El aviso hablado es corto: el resumen en una o dos frases; el informe completo queda en Obsidian.
@@ -494,6 +502,17 @@ Claude Code; solo falta tu token de la membresía (no es una API de pago):
 2. En TrueNAS, **Apps → jarvis-ai → Edit**, añade `CLAUDE_CODE_OAUTH_TOKEN: "el-token"` y guarda.
 3. En el log debe salir `Claude (membresia) en el NAS: disponible`, y en CEREBRO aparecen **Claude Sonnet / Opus /
    Haiku · membresía** también en el móvil.
+
+**Versiones**: en CEREBRO salen Claude Sonnet 5, Opus 5.5, Fable 5.1 y Haiku 4.5; la primera es la de por defecto.
+Cámbialas con `CLAUDE_MODELS` (nombres de modelo de Claude separados por comas). Si tu plan no incluye alguna, al
+elegirla Claude dará un error: quítala de la lista.
+
+**Solo Claude**: con `HUD_MODELS: "claude"` el selector solo ofrece los modelos de Claude. Ojo: en modo Claude JARVIS
+solo busca y lee en internet; controlar el PC, la casa, la música o los recordatorios necesita el modo Automático.
+
+**Cuota de Claude**: el punto junto a CEREBRO y **Sesión → Cuota** muestran lo usado de tu plan (sesión de 5 h y
+semana, con cuándo se renueva) según lo que Claude Code informa en cada respuesta, y lo gastado hoy por versión
+(preguntas, tokens, búsquedas). Los límites aparecen tras la primera pregunta a Claude desde que arranca el servidor.
 
 Las mismas protecciones que en el PC: solo busca y lee en internet (sin comandos ni archivos), en una carpeta vacía,
 y el proceso de Claude no recibe tu `API_TOKEN` ni las claves de los otros proveedores. Gasta cupo de tu membresía.

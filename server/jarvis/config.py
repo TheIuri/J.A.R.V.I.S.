@@ -159,6 +159,8 @@ class Settings:
     insights_enabled: bool = True  # fichas con los datos clave de cada respuesta en el HUD
     wol_broadcast: str = "255.255.255.255"
     claude_token: str = ""  # CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`): modo Claude con la membresia en el NAS
+    claude_models: list[str] = field(default_factory=list)  # CLAUDE_MODELS: versiones en el selector (vacio = las de serie)
+    hud_models: str = "all"  # HUD_MODELS: "claude" = en CEREBRO solo los modelos de Claude
 
     @property
     def groq_api_key(self) -> str:
@@ -306,4 +308,6 @@ def load_settings() -> Settings:
         insights_enabled=_env_bool("INSIGHTS_ENABLED", True),
         wol_broadcast=_env("WOL_BROADCAST", "255.255.255.255"),
         claude_token=_env("CLAUDE_CODE_OAUTH_TOKEN"),
+        claude_models=[m.strip() for m in _env("CLAUDE_MODELS").split(",") if m.strip()],
+        hud_models=_env("HUD_MODELS", "all").lower(),
     )
