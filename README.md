@@ -463,6 +463,10 @@ que queda; de Gemini solo se sabe lo gastado y cuándo da límite.
 **Modelo de cada agente**: en **Agentes**, cada agente tiene un selector de modelo con los de su cadena y el resto
 del catálogo de esos proveedores. El elegido va primero y su cadena queda de respaldo; se guarda en el NAS
 (`agent_models.json`). "Su cadena" vuelve a lo configurado en `AGENT_LLM_PROVIDERS`.
+El **investigador**, el **de compras** y el **captador** también pueden trabajar con **Claude** (tu membresía, si
+has puesto `CLAUDE_CODE_OAUTH_TOKEN`): buscan y leen con Claude Code y el informe, las tarjetas y los leads salen
+igual. Si Claude no puede (sin cupo o caído), el encargo sigue con la cadena del agente. El técnico, el organizador
+y el escritor no: usan tus datos privados (NAS, agenda, notas) y esos nunca van a Claude Code.
 
 **Resultados en tarjetas**: el investigador y el de compras terminan con sus opciones como tarjetas (la recomendada
 primero, con datos clave, precio, lo mejor, lo peor y la fuente). Se abren al terminar y luego desde **Agentes → Ver

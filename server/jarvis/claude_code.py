@@ -35,6 +35,8 @@ ALLOWED = ("WebSearch", "WebFetch")
 DISALLOWED = ("Bash", "Edit", "MultiEdit", "Write", "NotebookEdit", "Read", "Glob", "Grep", "LS", "Task", "TodoWrite")
 TIMEOUT_S = 5 * 60
 MAX_TURNS = 15
+TASK_TIMEOUT_S = 15 * 60  # encargos de los agentes (investigar, comparar, buscar clientes)
+TASK_MAX_TURNS = 30
 SESSION_RE = re.compile(r"^[A-Za-z0-9-]{8,80}$")
 TOOL_NAMES = {"WebSearch": "web_search", "WebFetch": "web_read"}
 PASS_ENV = ("PATH", "LANG", "LC_ALL", "TZ", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy",
@@ -88,7 +90,8 @@ class ClaudeCode:
         self.memories = memories
         self.timezone = timezone
         self.sessions: dict[str, str] = {}  # sesion del HUD -> sesion de Claude Code
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # una conversacion a la vez (las sesiones son compartidas)
+        self._stats_lock = threading.Lock()
 
     @property
     def available(self) -> bool:
@@ -108,6 +111,10 @@ class ClaudeCode:
             self.day, self.stats = today, {}
 
     def _count(self, model: str, result: dict | None, error: bool) -> None:
+        with self._stats_lock:
+            self._count_locked(model, result, error)
+
+    def _count_locked(self, model: str, result: dict | None, error: bool) -> None:
         self._roll_day()
         st = self.stats.setdefault(model, {"turns": 0, "errors": 0, "input_tokens": 0, "output_tokens": 0,
                                            "cache_tokens": 0, "web_searches": 0, "ms": 0})
@@ -138,12 +145,12 @@ class ClaudeCode:
     def reset(self, session: str) -> None:
         self.sessions.pop(session, None)
 
-    def command(self, alias: str, resume: str | None) -> list[str]:
+    def command(self, alias: str, resume: str | None, max_turns: int = MAX_TURNS) -> list[str]:
         cmd = [
             self.exe, "-p",
             "--output-format", "stream-json", "--verbose",
             "--model", alias,
-            "--max-turns", str(MAX_TURNS),
+            "--max-turns", str(max_turns),
             "--allowedTools", ",".join(ALLOWED),
             "--disallowedTools", ",".join(DISALLOWED),
             "--strict-mcp-config",
@@ -176,7 +183,17 @@ class ClaudeCode:
         memories = ("\nLo que sabes del usuario:\n" + "\n".join(f"- {m}" for m in mem[:30])) if mem else ""
         return INTRO.format(now=datetime.now().strftime("%A %d/%m/%Y %H:%M"), memories=memories)
 
-    def _run(self, alias, resume, prompt, session, emit) -> tuple[str, list[str]]:
+    def task(self, prompt: str, model: str, emit: Callable[[dict], None]) -> str:
+        """Encargo suelto de un agente (sin conversacion): mismas herramientas, mas turnos y mas tiempo.
+        No bloquea el chat con Claude: cada encargo es su propio proceso."""
+        if not self.available:
+            raise RuntimeError("Claude no está configurado en el servidor")
+        if model not in self.model_ids:
+            raise ValueError(f"modelo desconocido: {model}")
+        text, _ = self._run(model, None, prompt, None, emit, TASK_MAX_TURNS, TASK_TIMEOUT_S)
+        return text
+
+    def _run(self, alias, resume, prompt, session, emit, max_turns=MAX_TURNS, timeout=TIMEOUT_S) -> tuple[str, list[str]]:
         names: dict[str, str] = {}
         used: list[str] = []
         started: dict[str, float] = {}
@@ -184,11 +201,11 @@ class ClaudeCode:
         self.home.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="jarvis-claude-") as workdir:
             proc = subprocess.Popen(
-                self.command(alias, resume),
+                self.command(alias, resume, max_turns),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, encoding="utf-8", errors="replace", cwd=workdir, env=self.env(),
             )
-            timer = threading.Timer(TIMEOUT_S, proc.kill)
+            timer = threading.Timer(timeout, proc.kill)
             timer.start()
             try:
                 proc.stdin.write(prompt)
@@ -199,7 +216,7 @@ class ClaudeCode:
                     except json.JSONDecodeError:
                         continue
                     kind = msg.get("type")
-                    if msg.get("session_id") and SESSION_RE.match(str(msg["session_id"])):
+                    if session and msg.get("session_id") and SESSION_RE.match(str(msg["session_id"])):
                         self.sessions[session] = msg["session_id"]
                     if kind == "assistant":
                         for item in msg.get("message", {}).get("content", []):
@@ -233,7 +250,8 @@ class ClaudeCode:
         failed = not result or result.get("is_error") or not str(result.get("result", "")).strip()
         self._count(alias, result, bool(failed))
         if failed:
-            self.sessions.pop(session, None)  # empezar limpio la proxima vez
+            if session:
+                self.sessions.pop(session, None)  # empezar limpio la proxima vez
             detail = (result or {}).get("result") or stderr.strip().splitlines()[-1:] or ["sin respuesta"]
             detail = detail if isinstance(detail, str) else detail[0]
             log.warning("Claude Code fallo: %s", _short(detail, 300))

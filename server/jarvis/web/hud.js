@@ -1535,6 +1535,11 @@ function elapsed(iso) {
   return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min`;
 }
 
+// Nombre visible de un modelo: "Claude Sonnet 5" o "Groq · llama-3.3-70b".
+function modelName(id) {
+  return (claudeModels.find((m) => m.id === id) || {}).label || providerLabel(id);
+}
+
 // Modelo de cada agente: el elegido va primero y su cadena queda de respaldo.
 function agentModelPicker(a) {
   const label = document.createElement("label");
@@ -1547,10 +1552,10 @@ function agentModelPicker(a) {
   const groups = new Map();
   for (const id of a.choices) {
     const prov = id.split(":")[0];
-    const name = PROVIDER_NAME[prov] || prov;
+    const name = id.startsWith("claude-") ? "Claude · membresía" : PROVIDER_NAME[prov] || prov;
     if (!groups.has(name)) groups.set(name, document.createElement("optgroup"));
     groups.get(name).label = name;
-    groups.get(name).append(new Option(providerLabel(id), id));
+    groups.get(name).append(new Option(modelName(id), id));
   }
   groups.forEach((g) => sel.append(g));
   sel.value = a.prefer || "";
@@ -1562,7 +1567,7 @@ function agentModelPicker(a) {
         body: JSON.stringify({ agent: a.id, model: sel.value }),
       });
       if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || `HTTP ${resp.status}`);
-      trace(a.label, sel.value ? `ahora trabaja con ${providerLabel(sel.value)}` : "vuelve a su cadena de modelos", agentRgb(a.id));
+      trace(a.label, sel.value ? `ahora trabaja con ${modelName(sel.value)}` : "vuelve a su cadena de modelos", agentRgb(a.id));
     } catch (err) {
       trace(a.label, `no se pudo cambiar el modelo: ${err.message || err}`, [255, 69, 58]);
     }
@@ -1595,7 +1600,7 @@ async function loadAgents() {
     p.textContent = a.description;
     const chip = document.createElement("span");
     chip.className = "chip";
-    chip.textContent = a.prefer ? `${providerLabel(a.prefer)} · resto de respaldo` : a.models;
+    chip.textContent = a.prefer ? `${modelName(a.prefer)} · su cadena de respaldo` : a.models;
     body.append(strong, p, chip);
     if (a.choices?.length) body.append(agentModelPicker(a));
     if (a.profiles) {

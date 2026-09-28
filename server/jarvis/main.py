@@ -149,6 +149,8 @@ def build_assistant(settings: Settings) -> Assistant:
                                       timezone=settings.timezone, models=settings.claude_models or CLAUDE_DEFAULTS)
         log.info("Claude (membresia) en el NAS: %s", "disponible" if assistant.claude.available else
                  "falta el programa claude en la imagen")
+        if getattr(assistant, "team", None) is not None:
+            assistant.team.claude = assistant.claude  # investigador, compras y captador pueden ir con Claude
     assistant.only_claude = settings.hud_models == "claude"
     return assistant
 

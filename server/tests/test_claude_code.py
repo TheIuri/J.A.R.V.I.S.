@@ -100,3 +100,38 @@ def test_claude_versions_usage_and_only_claude(tmp_path):
     assert client.get("/hud/config").json()["only_claude"] is True
     usage = client.get("/api/usage", headers={"Authorization": "Bearer s"}).json()
     assert usage["claude"]["limits"]["status"] == "allowed_warning"
+
+
+def test_web_agents_can_work_with_claude_and_fall_back_to_their_chain(tmp_path):
+    import pytest
+
+    from jarvis.activity import ActivityLog
+    from jarvis.agents import AgentTeam
+    from jarvis.tools.registry import Tool, ToolError
+    from tests.test_agents import fake_search
+    from tests.test_tools import ScriptedLLM
+
+    home = tmp_path / "home"
+    claude = ClaudeCode("tok", home, exe=fake_claude(tmp_path))
+    activity = ActivityLog()
+    script = ScriptedLLM(["RESUMEN: con la cadena.\n# x"])
+    team = AgentTeam(script.llm(), {"web_search": fake_search(), "truenas_status": Tool(
+        "truenas_status", "estado", {"type": "object", "properties": {}}, lambda _ctx: "ok")}, activity=activity)
+    team.claude = claude
+    assert "claude-opus-5-5" in team.model_choices("compras")
+    assert not [m for m in team.model_choices("tecnico") if m.startswith("claude-")]  # datos privados: nunca Claude
+    with pytest.raises(ToolError):
+        team.set_model("tecnico", "claude-opus-5-5")
+
+    team.set_model("compras", "claude-opus-5-5")
+    job = team.start("compras", "portátil para estudiar", background=False)
+    assert job.state == "terminado" and job.model == "Claude Opus 5.5" and job.summary.startswith("Hace sol")
+    assert job.steps == ["web_search"] and script.requests == []  # no ha gastado la cadena
+    call = json.loads((home / "call.json").read_text())
+    assert "Encargo: portátil para estudiar" in call["prompt"] and "WebSearch" in call["prompt"]
+    assert "--resume" not in call["argv"] and claude.sessions == {}  # encargo suelto: sin conversacion
+    assert claude.usage()["models"][0]["turns"] == 1
+
+    claude.token = ""  # sin membresia (p. ej. se quito el token): sigue con la cadena del agente
+    job = team.start("compras", "monitor", background=False)
+    assert job.state == "terminado" and job.summary == "con la cadena." and len(script.requests) == 1
