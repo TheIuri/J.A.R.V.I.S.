@@ -112,6 +112,7 @@ class Assistant:
         self.turn_log = None  # turnlog.TurnLog: conversaciones del dia para el resumen nocturno
         self.activity = None  # activity.ActivityLog: trazabilidad de agentes para el HUD
         self.team = None  # agents.AgentTeam
+        self.insights = None  # insights.Insights: fichas con los datos clave de cada respuesta (HUD)
         self.watcher = None
         # Un turno cada vez: evita pelearse por la GPU y mantiene el orden del historial.
         self._lock = threading.Lock()
@@ -280,6 +281,8 @@ class Assistant:
         history.append({"role": "assistant", "content": reply.text})
         if self.turn_log:
             self.turn_log.add(session, text, reply.text)
+        if self.insights and emit is not _no_events:  # solo turnos del HUD (en directo)
+            self.insights.submit(text, reply.text, used, model)
 
         audio = None
         if speak:

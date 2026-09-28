@@ -89,12 +89,12 @@ def test_team_offers_only_agents_whose_tools_exist_and_keeps_them_apart(tmp_path
     tools = {n: fake_tool(n, f"dato de {n}") for n in
              ("web_search", "web_read", "get_datetime", "calendar_agenda", "obsidian_search", "memory_search")}
     team = AgentTeam(ScriptedLLM([]).llm(), tools)
-    assert team.available == ["investigador", "organizador", "compras", "escritor"]  # sin TrueNAS no hay técnico
+    assert team.available == ["investigador", "organizador", "compras", "captador", "escritor"]  # sin TrueNAS no hay técnico
     assert team.registries["investigador"].names() == ["web_search", "web_read"]
     assert "web_read" not in team.registries["escritor"].names()  # datos privados, sin web
     assert team.registries["organizador"].names() == ["get_datetime", "calendar_agenda", "obsidian_search", "memory_search"]
     run = agent_tools(team)[0]
-    assert run.parameters["properties"]["agent"]["enum"] == ["investigador", "organizador", "compras", "escritor"]
+    assert run.parameters["properties"]["agent"]["enum"] == ["investigador", "organizador", "compras", "captador", "escritor"]
     assert team.registries["compras"].names() == ["web_search", "web_read"]
     with pytest.raises(ToolError, match="no hay ningún agente 'tecnico'"):
         team.start("tecnico", "revisa el NAS")

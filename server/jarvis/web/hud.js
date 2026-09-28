@@ -362,7 +362,7 @@ addEventListener("pointerdown", (e) => {
 
 // --- pestañas del panel ---------------------------------------------------------------
 
-const TABS = ["agents", "trace", "session"];
+const TABS = ["agents", "leads", "trace", "session"];
 
 function selectTab(name) {
   for (const t of TABS) {
@@ -1065,6 +1065,7 @@ const AGENT_COLORS = {
   organizador: [48, 209, 88],
   escritor: [255, 200, 90],
   compras: [190, 140, 255],
+  captador: [100, 210, 255],
   claude: [217, 119, 87],
   auditor: [255, 77, 120],
 };
@@ -1114,6 +1115,7 @@ function retireSatellite(sat, ms) {
 }
 
 function onActivity(ev) {
+  if (ev.type === "insight") return showInsight(ev);
   const rgb = agentRgb(ev.agent);
   const label = ev.label || ev.agent;
   const sat = satellite(ev);
@@ -1149,6 +1151,12 @@ function onActivity(ev) {
       trace(label, `terminado${ev.note ? ` · ${ev.note}` : ""}: ${ev.summary || ""}`, [48, 209, 88]);
       if (!ev.job && externalJobs.has(ev.agent)) Object.assign(externalJobs.get(ev.agent), { state: "terminado", summary: ev.summary, note: ev.note });
       retireSatellite(sat, 6000);
+      break;
+    case "leads":
+      sat.span.textContent = ev.new ? `${ev.new} leads nuevos` : "sin leads nuevos";
+      trace(label, ev.new ? `ha encontrado ${ev.new} leads nuevos: ${(ev.names || []).join(", ")}` : "no ha encontrado leads nuevos", rgb);
+      pulses.push({ fromSat: sat.key, to: REGION.hippocampus, t: 0, dur: reducedMotion ? 0.01 : 0.9, rgb });
+      loadLeads();
       break;
     case "agent_error":
       sat.state = "error";
@@ -1259,6 +1267,226 @@ async function loadAgents() {
   setBadge("agents", jobs.filter((j) => j.state === "trabajando").length);
 }
 setInterval(loadAgents, 30000);
+
+// --- leads: posibles clientes que encuentra el captador ------------------------------------
+
+const LEAD_STATUS = {
+  nuevo: { label: "Nuevo", plural: "Nuevos", rgb: [41, 151, 255] },
+  contactado: { label: "Contactado", plural: "Contactados", rgb: [255, 159, 10] },
+  interesado: { label: "Interesado", plural: "Interesados", rgb: [48, 209, 88] },
+  descartado: { label: "Descartado", plural: "Descartados", rgb: [142, 142, 147] },
+};
+let leads = [];
+let leadFilter = "";
+
+function safeUrl(url) {
+  return /^https?:\/\/[^\s<>"']+$/i.test(url || "") ? url : "";
+}
+
+function copyText(text, button) {
+  const done = () => {
+    const old = button.lastChild.textContent;
+    button.lastChild.textContent = "Copiado";
+    setTimeout(() => (button.lastChild.textContent = old), 1400);
+  };
+  navigator.clipboard?.writeText(text).then(done, () => {});
+}
+
+function iconButton(icon, text, onClick, cls = "pill-btn") {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = cls;
+  b.insertAdjacentHTML("afterbegin", `<svg class="icon"><use href="#i-${icon}"/></svg>`);
+  const span = document.createElement("span");
+  span.textContent = text;
+  b.append(span);
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+async function loadLeads() {
+  if (mode === "server" && !getToken()) return;
+  try {
+    const resp = await api("/api/leads");
+    if (resp.status === 404) {
+      leads = null;
+    } else if (resp.ok) {
+      leads = (await resp.json()).leads;
+    }
+  } catch {
+    /* sin conexión: se deja lo que había */
+  }
+  renderLeads();
+}
+
+async function setLeadStatus(lead, status) {
+  try {
+    const resp = await api("/api/leads/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: lead.id, status }),
+    });
+    if (!resp.ok) throw new Error(resp.status);
+    lead.status = status;
+    trace("Leads", `${lead.name}: ${LEAD_STATUS[status].label.toLowerCase()}`, LEAD_STATUS[status].rgb);
+  } catch {
+    trace("Leads", `no he podido cambiar ${lead.name}`, [255, 69, 58]);
+  }
+  renderLeads();
+}
+
+function renderLeads() {
+  const list = $("leads-list");
+  const filter = $("lead-filter");
+  list.textContent = "";
+  filter.textContent = "";
+  if (leads === null) {
+    $("lead-stats").textContent = "";
+    list.innerHTML = '<p class="empty">Los leads necesitan los agentes activados en el servidor (AGENTS_ENABLED).</p>';
+    setBadge("leads", 0);
+    return;
+  }
+  const counts = Object.fromEntries(Object.keys(LEAD_STATUS).map((k) => [k, leads.filter((l) => l.status === k).length]));
+  $("lead-stats").textContent = leads.length
+    ? `${leads.length} en total · ${counts.nuevo} por contactar · ${counts.interesado} interesados`
+    : "";
+  for (const [key, text] of [["", "Todos"], ...Object.entries(LEAD_STATUS).map(([k, v]) => [k, v.plural])]) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip-btn";
+    chip.setAttribute("aria-pressed", String(leadFilter === key));
+    chip.textContent = key ? `${text} ${counts[key]}` : text;
+    chip.addEventListener("click", () => {
+      leadFilter = key;
+      renderLeads();
+    });
+    filter.append(chip);
+  }
+  const shown = leads.filter((l) => !leadFilter || l.status === leadFilter);
+  for (const lead of shown) {
+    const st = LEAD_STATUS[lead.status] || LEAD_STATUS.nuevo;
+    const li = document.createElement("li");
+    li.className = `lead ${lead.status}`;
+    li.style.setProperty("--c", `rgb(${st.rgb.join(",")})`);
+    const head = document.createElement("div");
+    head.className = "lead-head";
+    const name = document.createElement("strong");
+    name.textContent = lead.name;
+    const pill = document.createElement("span");
+    pill.className = "status";
+    pill.textContent = st.label;
+    head.append(name, pill);
+    const kind = document.createElement("p");
+    kind.className = "lead-kind";
+    kind.textContent = [lead.kind, lead.area].filter(Boolean).join(" · ");
+    li.append(head, kind);
+    if (lead.fit) {
+      const fit = document.createElement("p");
+      fit.className = "lead-fit";
+      fit.textContent = lead.fit;
+      li.append(fit);
+    }
+    const contact = document.createElement("div");
+    contact.className = "lead-contact";
+    const url = safeUrl(lead.web);
+    if (url) {
+      const a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.className = "pill-btn";
+      a.insertAdjacentHTML("afterbegin", '<svg class="icon"><use href="#i-link"/></svg>');
+      const host = document.createElement("span");
+      host.textContent = new URL(url).hostname.replace(/^www\./, "");
+      a.append(host);
+      contact.append(a);
+    }
+    if (lead.contact) contact.append(iconButton("copy", lead.contact, (e) => copyText(lead.contact, e.currentTarget)));
+    if (contact.children.length) li.append(contact);
+    if (lead.message) {
+      const msg = document.createElement("blockquote");
+      msg.textContent = lead.message;
+      li.append(msg, iconButton("copy", "Copiar mensaje", (e) => copyText(lead.message, e.currentTarget), "pill-btn quiet"));
+    }
+    const actions = document.createElement("div");
+    actions.className = "lead-actions";
+    actions.setAttribute("role", "group");
+    actions.setAttribute("aria-label", `Estado de ${lead.name}`);
+    for (const [key, v] of Object.entries(LEAD_STATUS)) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = v.label;
+      b.setAttribute("aria-pressed", String(lead.status === key));
+      b.style.setProperty("--c", `rgb(${v.rgb.join(",")})`);
+      b.addEventListener("click", () => lead.status !== key && setLeadStatus(lead, key));
+      actions.append(b);
+    }
+    const meta = document.createElement("p");
+    meta.className = "lead-meta";
+    meta.textContent = [lead.found ? `Encontrado ${lead.found.slice(0, 10).split("-").reverse().join("/")}` : "", lead.note].filter(Boolean).join(" · ");
+    li.append(actions, meta);
+    list.append(li);
+  }
+  if (!shown.length) {
+    list.innerHTML = leads.length
+      ? '<p class="empty">Ninguno con este estado.</p>'
+      : '<p class="empty">Aún no hay leads. Pídeselo al captador: «busca clientes para mi taller de impresión 3D en Sabadell».</p>';
+  }
+  setBadge("leads", counts.nuevo);
+}
+
+// --- fichas: los datos clave de cada respuesta, flotando junto al cerebro -----------------------
+
+const MAX_INSIGHTS = 3;
+
+function showInsight(card, quiet = false) {
+  const box = $("insights");
+  const idx = card.tools?.length ? toolRegion(card.tools[0]) : REGION.language;
+  const rgb = REGIONS[idx].color;
+  const el = document.createElement("article");
+  el.className = "insight";
+  el.style.setProperty("--c", `rgb(${rgb.join(",")})`);
+  const head = document.createElement("header");
+  const title = document.createElement("h3");
+  title.textContent = card.title;
+  const time = document.createElement("time");
+  time.className = "num";
+  time.textContent = (card.ts || "").slice(11, 16);
+  head.append(title, time);
+  const dl = document.createElement("dl");
+  for (const item of card.items || []) {
+    const dt = document.createElement("dt");
+    dt.textContent = item.k;
+    const dd = document.createElement("dd");
+    dd.textContent = item.v;
+    dl.append(dt, dd);
+  }
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "insight-close";
+  close.setAttribute("aria-label", `Quitar la ficha ${card.title}`);
+  close.innerHTML = '<svg class="icon"><use href="#i-close"/></svg>';
+  close.addEventListener("click", () => el.remove());
+  el.append(head, dl, close);
+  box.prepend(el);
+  while (box.children.length > MAX_INSIGHTS) box.lastChild.remove();
+  if (quiet) return;
+  regionState[idx].act = Math.max(regionState[idx].act, 0.9);
+  pulses.push({ from: REGION.language, to: idx, t: 0, dur: reducedMotion ? 0.01 : 0.6, rgb });
+  trace("Ficha", `${card.title}: ${(card.items || []).map((i) => `${i.k} ${i.v}`).join(" · ")}`, rgb);
+}
+
+async function loadInsights() {
+  if (mode === "server" && !getToken()) return;
+  try {
+    const resp = await api("/api/insights");
+    if (!resp.ok) return;
+    const { insights } = await resp.json();
+    insights.slice(-2).forEach((c) => showInsight(c, true));
+  } catch {
+    /* servidor antiguo */
+  }
+}
 
 // Etiquetas de región (HTML sobre el lienzo) y panel de estado del córtex.
 const labels = REGIONS.map((r, i) => {
@@ -1582,6 +1810,8 @@ async function init() {
   activityLoop();
   loadModels();
   loadAgents();
+  loadLeads();
+  loadInsights();
   moveInk();
   if (mode === "server") {
     $("hint").textContent = matchMedia("(pointer: coarse)").matches

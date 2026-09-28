@@ -23,6 +23,9 @@
     <symbol id="i-session" viewBox="0 0 24 24"><path d="M4 19V11M10 19V5M16 19v-6M22 19H2"/></symbol>
     <symbol id="i-camera" viewBox="0 0 24 24"><path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2.3l1.6-2.2h7.2L17.2 7h2.3A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/><circle cx="12" cy="13" r="3.6"/></symbol>
     <symbol id="i-memory" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></symbol>
+    <symbol id="i-leads" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
     <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4 4v4.5h4.5"/></symbol>
   </svg>
 
@@ -62,6 +65,7 @@
         <header><span id="cards-title">Resultados</span><button id="cards-close" type="button" aria-label="Cerrar resultados"><svg class="icon"><use href="#i-close"/></svg></button></header>
         <div id="cards-list"></div>
       </section>
+      <section id="insights" aria-label="Fichas de las respuestas" aria-live="polite"></section>
       <div class="stage-foot">
         <p id="trail" aria-label="Recorrido del último turno"></p>
         <p id="subtitle" aria-live="polite"></p>
@@ -77,6 +81,7 @@
     <aside id="panel">
       <nav class="tabs" role="tablist" aria-label="Panel">
         <button role="tab" id="tab-agents" aria-controls="pane-agents" aria-selected="true"><svg class="icon"><use href="#i-agents"/></svg>Agentes<span class="badge" id="badge-agents" hidden></span></button>
+        <button role="tab" id="tab-leads" aria-controls="pane-leads" aria-selected="false" tabindex="-1"><svg class="icon"><use href="#i-leads"/></svg>Leads<span class="badge" id="badge-leads" hidden></span></button>
         <button role="tab" id="tab-trace" aria-controls="pane-trace" aria-selected="false" tabindex="-1"><svg class="icon"><use href="#i-trace"/></svg>Traza<span class="badge" id="badge-trace" hidden></span></button>
         <button role="tab" id="tab-session" aria-controls="pane-session" aria-selected="false" tabindex="-1"><svg class="icon"><use href="#i-session"/></svg>Sesión</button>
         <span class="tab-ink" aria-hidden="true"></span>
@@ -87,6 +92,13 @@
         <ol id="jobs-list" class="jobs"></ol>
         <h2>Equipo. <span class="gris">Cada uno con su modelo.</span></h2>
         <ul id="agents-list" class="agents"></ul>
+      </section>
+
+      <section role="tabpanel" id="pane-leads" aria-labelledby="tab-leads" hidden>
+        <h2>Leads. <span class="gris">Clientes que podrían encajar.</span></h2>
+        <p id="lead-stats" class="lead-stats"></p>
+        <div id="lead-filter" class="filter" role="group" aria-label="Filtrar leads"></div>
+        <ol id="leads-list" class="leads"></ol>
       </section>
 
       <section role="tabpanel" id="pane-trace" aria-labelledby="tab-trace" hidden>

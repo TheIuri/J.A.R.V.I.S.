@@ -21,6 +21,8 @@ from pydantic import BaseModel
 from .activity import ActivityLog
 from .agents import REPORT_FOLDER, SPECS, AgentTeam, agent_tools, split_report
 from .config import Settings, load_settings
+from .insights import Insights
+from .leads import STATUSES as LEAD_STATUSES, LeadStore, lead_tools
 from .llm import FallbackLLM, LLMError, OpenAICompatLLM
 from .memory import MemoryRejected, MemoryStore, RuleRetriever
 from .notify import NoticeBoard, NtfyPush, parse_quiet
@@ -31,6 +33,7 @@ from .stt import FasterWhisperSTT, GroqSTT
 from .tools import build_registry
 from .tools.info import research_tools
 from .tools.calendar import Calendars, parse_calendars
+from .tools.registry import ToolError
 from .tools.reminders import ReminderStore
 from .tools.truenas import _default_connect
 from .tools.vision import Vision, check_image
@@ -102,6 +105,8 @@ def build_assistant(settings: Settings) -> Assistant:
     )
     assistant.vault = vault
     assistant.activity = ActivityLog()  # trazabilidad de agentes para el HUD
+    if settings.insights_enabled:
+        assistant.insights = Insights(llm, assistant.activity)
     if reminders:
         assistant.board, assistant.watcher = build_watcher(settings, assistant, reminders, calendars)
     if tools and settings.agents_enabled:
@@ -119,9 +124,14 @@ def build_assistant(settings: Settings) -> Assistant:
 
         agent_llm = chain(settings.agent_llm_providers or settings.llm_providers)
         own = {key: chain(providers) for key, providers in settings.agent_models.items() if key in SPECS}
-        team = AgentTeam(agent_llm, available, vault, assistant.board, settings.timezone, own, assistant.activity)
+        leads = LeadStore(data / "leads.json")
+        team = AgentTeam(
+            agent_llm, available, vault, assistant.board, settings.timezone, own, assistant.activity,
+            leads, settings.leads_profile,
+        )
         assistant.team = team
-        for tool in agent_tools(team):
+        assistant.leads = leads
+        for tool in agent_tools(team) + lead_tools(leads):
             tools.register(tool)
         log.info("Agentes: %s (informes en %s)", ", ".join(team.available), "Obsidian" if vault else "memoria")
     return assistant
@@ -204,6 +214,12 @@ class AgentEvent(BaseModel):
     task: str = ""
     tool: str = ""
     model: str = ""
+
+
+class LeadUpdate(BaseModel):
+    id: int
+    status: str
+    note: str = ""
 
 
 class SessionRequest(BaseModel):
@@ -401,6 +417,30 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
                 for j in list(team.jobs.values())[-10:]
             ],
         }
+
+    @app.get("/api/insights", dependencies=[Depends(require_token)])
+    def insights() -> dict:
+        """Las ultimas fichas con los datos clave de las respuestas (las nuevas llegan por /api/activity)."""
+        ins: Insights | None = getattr(state["assistant"], "insights", None)
+        return {"insights": list(ins.recent) if ins else [], "enabled": ins is not None}
+
+    def lead_store() -> LeadStore:
+        store = getattr(state["assistant"], "leads", None)
+        if store is None:
+            raise HTTPException(status_code=404, detail="Leads desactivados (hacen falta los agentes)")
+        return store
+
+    @app.get("/api/leads", dependencies=[Depends(require_token)])
+    def leads_list() -> dict:
+        store = lead_store()
+        return {"leads": list(reversed(store.leads)), "counts": store.counts(), "statuses": list(LEAD_STATUSES)}
+
+    @app.post("/api/leads/update", dependencies=[Depends(require_token)])
+    def leads_update(req: LeadUpdate) -> dict:
+        try:
+            return {"lead": lead_store().update(req.id, req.status, req.note)}
+        except ToolError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/models", dependencies=[Depends(require_token)])
     def models() -> dict:

@@ -370,6 +370,7 @@ terminar, el informe va a Obsidian y te avisa: en el HUD y, si tienes ntfy, en e
 | **Organizador** | cruza agenda, recordatorios, tiempo, notas y recuerdos y propone un plan | *"Organízame la semana"* | `JARVIS/Planes` |
 | **Escritor** | redacta textos largos con tus notas y recuerdos | *"Escríbeme una reclamación para la compañía de la luz"* | `JARVIS/Textos` |
 | **Compras** | compara productos: características, precios, opiniones y una tabla comparativa | *"Compárame robots aspiradores de menos de 300 €"* | `JARVIS/Compras` |
+| **Captador de clientes** | busca negocios que podrían necesitar lo que ofreces, con su contacto público y un primer mensaje | *"Busca clientes para mi taller de impresión 3D en Sabadell"* | `JARVIS/Leads` |
 
 - **Modelo por agente**: `AGENT_<NOMBRE>_PROVIDERS` le da a un agente su propia cadena, por ejemplo
   `AGENT_COMPRAS_PROVIDERS: "gemini,groq"` o `AGENT_ESCRITOR_PROVIDERS: "gemini,groq"`. Sin eso, usan
@@ -377,6 +378,24 @@ terminar, el informe va a Obsidian y te avisa: en el HUD y, si tienes ntfy, en e
 - *"¿Cómo van los agentes?"* te da el estado. Puede haber 2 trabajando a la vez.
 - Solo aparecen los agentes que tienen sus herramientas: el técnico, por ejemplo, necesita TrueNAS configurado.
 - `AGENTS_ENABLED: "false"` los desactiva.
+
+### Leads: captar clientes
+
+El captador guarda cada posible cliente como un **lead** (en el NAS, `leads.json`) para hacerle seguimiento. Los ves
+en la pestaña **Leads** del HUD: por qué encaja, su web, su contacto (con botón de copiar), un primer mensaje ya
+escrito y el estado (*nuevo*, *contactado*, *interesado*, *descartado*), que cambias con un toque o por voz:
+*"Marca la Cafetería Luna como contactada"*, *"¿Qué leads tengo sin contactar?"*. Los repetidos no se duplican.
+
+- `LEADS_PROFILE` le dice qué ofreces, para no tener que explicarlo cada vez, por ejemplo
+  `LEADS_PROFILE: "Taller de impresión 3D en Badia del Vallès: piezas a medida, prototipos, figuras y repuestos"`.
+- Solo datos públicos de empresas (su web y el contacto que publican), nunca de particulares. JARVIS no envía nada:
+  el mensaje lo mandas tú.
+
+### Fichas de las respuestas
+
+Cuando JARVIS responde con datos (usó herramientas o la respuesta es larga), aparece junto al cerebro una **ficha**
+con los datos clave (*Máxima 22 °C · Cielo soleado · Lista: leche, pan, huevos*). La hace el mismo modelo en segundo
+plano, así que no retrasa la respuesta; gasta una petición más por turno. `INSIGHTS_ENABLED: "false"` las apaga.
 
 **Resumidor nocturno**: con `SUMMARY_AT: "23:30"` (y Obsidian), cada noche añade a tu nota del día un resumen de lo
 que hablaste con JARVIS: temas, lo que se hizo y lo que quedó pendiente. Para eso guarda las conversaciones del

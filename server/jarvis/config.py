@@ -139,6 +139,8 @@ class Settings:
     briefing_at: str = ""  # "08:00": resumen de buenos dias automatico
     briefing_weekends: bool = True
     summary_at: str = ""  # "23:30": resumen nocturno de lo hablado, en la nota del dia (necesita Obsidian)
+    leads_profile: str = ""  # lo que ofreces, para el captador de clientes (p. ej. "taller de impresion 3D en ...")
+    insights_enabled: bool = True  # fichas con los datos clave de cada respuesta en el HUD
     wol_broadcast: str = "255.255.255.255"
 
     @property
@@ -267,5 +269,7 @@ def load_settings() -> Settings:
         briefing_at=_env("BRIEFING_AT"),
         briefing_weekends=_env_bool("BRIEFING_WEEKENDS", True),
         summary_at=_env("SUMMARY_AT"),
+        leads_profile=_env("LEADS_PROFILE"),
+        insights_enabled=_env_bool("INSIGHTS_ENABLED", True),
         wol_broadcast=_env("WOL_BROADCAST", "255.255.255.255"),
     )
