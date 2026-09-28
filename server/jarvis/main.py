@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+from .activity import ActivityLog
 from .agents import REPORT_FOLDER, SPECS, AgentTeam, agent_tools, split_report
 from .config import Settings, load_settings
 from .llm import FallbackLLM, LLMError, OpenAICompatLLM
@@ -100,6 +101,7 @@ def build_assistant(settings: Settings) -> Assistant:
         retriever,
     )
     assistant.vault = vault
+    assistant.activity = ActivityLog()  # trazabilidad de agentes para el HUD
     if reminders:
         assistant.board, assistant.watcher = build_watcher(settings, assistant, reminders, calendars)
     if tools and settings.agents_enabled:
@@ -110,11 +112,15 @@ def build_assistant(settings: Settings) -> Assistant:
                 if name not in available and (tool := tools.get(name)):
                     available[name] = tool
         # Informes largos: mas tokens de salida que una respuesta hablada.
-        agent_llm = FallbackLLM(
-            [OpenAICompatLLM(p, settings.llm_timeout_s * 2, max(4096, settings.llm_max_tokens))
-             for p in settings.agent_llm_providers or settings.llm_providers]
-        )
-        team = AgentTeam(agent_llm, available, vault, assistant.board, settings.timezone)
+        def chain(providers):
+            return FallbackLLM(
+                [OpenAICompatLLM(p, settings.llm_timeout_s * 2, max(4096, settings.llm_max_tokens)) for p in providers]
+            )
+
+        agent_llm = chain(settings.agent_llm_providers or settings.llm_providers)
+        own = {key: chain(providers) for key, providers in settings.agent_models.items() if key in SPECS}
+        team = AgentTeam(agent_llm, available, vault, assistant.board, settings.timezone, own, assistant.activity)
+        assistant.team = team
         for tool in agent_tools(team):
             tools.register(tool)
         log.info("Agentes: %s (informes en %s)", ", ".join(team.available), "Obsidian" if vault else "memoria")
@@ -340,6 +346,35 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps,
             model=req.model, image=_image(req.image),
         )
+
+    @app.get("/api/activity", dependencies=[Depends(require_token)])
+    def activity(after: int = -1, wait: float = 0) -> dict:
+        """Lo que hacen los agentes, en directo (after=-1: solo el ultimo id; wait: espera larga, max 25 s)."""
+        log_: ActivityLog | None = getattr(state["assistant"], "activity", None)
+        if log_ is None:
+            return {"events": [], "last": 0}
+        if after < 0:
+            return {"events": [], "last": log_.last_id}
+        return {"events": log_.since(after, min(max(wait, 0), NOTIFY_WAIT_MAX_S)), "last": log_.last_id}
+
+    @app.get("/api/agents", dependencies=[Depends(require_token)])
+    def agents() -> dict:
+        """Agentes disponibles, su cadena de modelos y sus tareas recientes (panel del HUD)."""
+        team: AgentTeam | None = getattr(state["assistant"], "team", None)
+        if team is None:
+            return {"agents": [], "jobs": []}
+        return {
+            "agents": [
+                {"id": k, "label": SPECS[k].label, "doing": SPECS[k].doing, "description": SPECS[k].description,
+                 "models": team.llm_for(k).name}
+                for k in team.available
+            ],
+            "jobs": [
+                {"id": j.id, "agent": j.agent, "task": j.topic, "state": j.state, "model": j.model,
+                 "steps": len(j.steps), "summary": j.summary, "note": j.note, "started": j.started.isoformat()}
+                for j in list(team.jobs.values())[-10:]
+            ],
+        }
 
     @app.get("/api/models", dependencies=[Depends(require_token)])
     def models() -> dict:

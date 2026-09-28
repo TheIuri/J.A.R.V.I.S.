@@ -43,7 +43,7 @@ CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; c
 # Rutas del servidor que el HUD puede usar (nada mas se reenvia).
 PROXY_POST = {"/api/chat", "/api/voice", "/api/reset", "/api/transcribe"}
 STREAM_POST = {"/api/chat/stream", "/api/voice/stream"}  # flujo de pensamiento en directo (NDJSON)
-PROXY_GET = {"/api/memories", "/api/notifications", "/api/models", "/health"}
+PROXY_GET = {"/api/memories", "/api/notifications", "/api/models", "/api/activity", "/api/agents", "/health"}
 MEMORY_DELETE = re.compile(r"^/api/memories/\d+$")
 MAX_BODY = 12 * 1024 * 1024
 EVENTS_WAIT_S = 20  # espera larga: el navegador recibe los avisos al instante

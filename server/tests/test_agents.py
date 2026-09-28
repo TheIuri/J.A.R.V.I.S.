@@ -80,7 +80,7 @@ def test_research_agent_end_to_end(tmp_path):
     notice = board.since(0)[0]
     assert notice.source == "agente" and notice.text.startswith("El investigador ha terminado: paneles solares en casa.")
     status = agent_tools(team)[1].fn(ToolContext())
-    assert status.startswith("[1] El investigador · paneles solares en casa: terminado: Un panel da unos 400 W.")
+    assert status.startswith("[1] El investigador · paneles solares en casa: terminado [fake:m]: Un panel da unos 400 W.")
     # El agente solo tiene sus tools: el LLM las recibe todas y nada más.
     assert [t["function"]["name"] for t in script.requests[0]["tools"]] == ["web_search"]
 
@@ -89,12 +89,13 @@ def test_team_offers_only_agents_whose_tools_exist_and_keeps_them_apart(tmp_path
     tools = {n: fake_tool(n, f"dato de {n}") for n in
              ("web_search", "web_read", "get_datetime", "calendar_agenda", "obsidian_search", "memory_search")}
     team = AgentTeam(ScriptedLLM([]).llm(), tools)
-    assert team.available == ["investigador", "organizador", "escritor"]  # sin TrueNAS no hay técnico
+    assert team.available == ["investigador", "organizador", "compras", "escritor"]  # sin TrueNAS no hay técnico
     assert team.registries["investigador"].names() == ["web_search", "web_read"]
     assert "web_read" not in team.registries["escritor"].names()  # datos privados, sin web
     assert team.registries["organizador"].names() == ["get_datetime", "calendar_agenda", "obsidian_search", "memory_search"]
     run = agent_tools(team)[0]
-    assert run.parameters["properties"]["agent"]["enum"] == ["investigador", "organizador", "escritor"]
+    assert run.parameters["properties"]["agent"]["enum"] == ["investigador", "organizador", "compras", "escritor"]
+    assert team.registries["compras"].names() == ["web_search", "web_read"]
     with pytest.raises(ToolError, match="no hay ningún agente 'tecnico'"):
         team.start("tecnico", "revisa el NAS")
     # Ningún encargo combina datos privados con web_read.
@@ -161,3 +162,70 @@ def test_agent_result_endpoint_saves_note_and_notifies(tmp_path):
     notice = assistant.board.since(0)[0]
     assert notice.source == "claude" and notice.text.startswith("Claude ha terminado: placas solares. Compensa")
     assert client.post("/api/agent_result", json={"title": "x", "text": "a" * 20001}, headers=auth).status_code == 400
+
+
+def test_each_agent_can_use_its_own_models_and_everything_is_traced(tmp_path):
+    from jarvis.activity import ActivityLog
+    from tests.test_core import llm_with, ok_handler
+    from jarvis.llm import FallbackLLM
+
+    default = ScriptedLLM(["RESUMEN: Por defecto.\n# X"])
+    gemini = FallbackLLM([llm_with(ok_handler("RESUMEN: Hecho con Gemini.\n# Comparativa"), "gemini")])
+    activity = ActivityLog()
+    team = AgentTeam(default.llm(), {"web_search": fake_search()}, llms={"compras": gemini}, activity=activity)
+    job = team.start("compras", "robot aspirador por menos de 300 euros", background=False)
+    assert job.model == "gemini:m" and job.summary == "Hecho con Gemini." and default.requests == []
+    assert team.start("investigador", "algo", background=False).model == "fake:m"  # los demás, el de siempre
+    kinds = [(e["type"], e["agent"]) for e in activity.since(0)]
+    assert kinds[:2] == [("agent_start", "compras"), ("agent_done", "compras")]
+    start = activity.since(0)[0]
+    assert start["models"] == "gemini:m" and start["label"] == "El asesor de compras"
+
+
+def test_agent_tools_are_traced_live():
+    from jarvis.activity import ActivityLog
+
+    script = ScriptedLLM([[("web_search", {"query": "x"})], "RESUMEN: Ok.\n# X"])
+    activity = ActivityLog()
+    AgentTeam(script.llm(), {"web_search": fake_search()}, activity=activity).start("investigador", "x", background=False)
+    assert [e["type"] for e in activity.since(0)] == ["agent_start", "agent_tool", "agent_done"]
+    assert activity.since(0)[1]["tool"] == "web_search" and activity.since(2) == [activity.since(0)[2]]
+
+
+def test_agent_models_config(monkeypatch):
+    from jarvis import config
+
+    monkeypatch.setenv("API_TOKEN", "x")
+    monkeypatch.setenv("LLM_PROVIDERS", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setenv("AGENT_COMPRAS_PROVIDERS", "gemini,groq")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="gemini"):
+        config.load_settings()
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    models = config.load_settings().agent_models
+    assert {k: [p.name for p in v] for k, v in models.items()} == {"compras": ["gemini", "groq"]}
+
+
+def test_activity_and_agents_endpoints():
+    from fastapi.testclient import TestClient
+
+    from jarvis.activity import ActivityLog
+    from jarvis.main import create_app
+    from tests.test_core import make_assistant
+
+    assistant = make_assistant()
+    assistant.activity = ActivityLog()
+    script = ScriptedLLM(["RESUMEN: Ok.\n# X"])
+    assistant.team = AgentTeam(script.llm(), {"web_search": fake_search()}, activity=assistant.activity)
+    client = TestClient(create_app(assistant, api_token="s"))
+    auth = {"Authorization": "Bearer s"}
+    assert client.get("/api/activity").status_code == 401
+    assert client.get("/api/activity", headers=auth).json() == {"events": [], "last": 0}
+    assistant.team.start("compras", "portátil para estudiar", background=False)
+    events = client.get("/api/activity?after=0", headers=auth).json()["events"]
+    assert [e["type"] for e in events] == ["agent_start", "agent_done"]
+    agents = client.get("/api/agents", headers=auth).json()
+    assert {"id": "compras", "label": "El asesor de compras", "doing": "comparando",
+            "description": SPECS["compras"].description, "models": "fake:m"} in agents["agents"]
+    assert agents["jobs"][0]["state"] == "terminado" and agents["jobs"][0]["model"] == "fake:m"

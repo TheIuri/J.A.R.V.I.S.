@@ -110,6 +110,8 @@ class Assistant:
         self.board = None  # tablon de avisos proactivos (notify.NoticeBoard), si esta activo
         self.vault = None  # boveda de Obsidian, si esta configurada
         self.turn_log = None  # turnlog.TurnLog: conversaciones del dia para el resumen nocturno
+        self.activity = None  # activity.ActivityLog: trazabilidad de agentes para el HUD
+        self.team = None  # agents.AgentTeam
         self.watcher = None
         # Un turno cada vez: evita pelearse por la GPU y mantiene el orden del historial.
         self._lock = threading.Lock()
