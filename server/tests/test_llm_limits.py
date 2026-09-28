@@ -29,6 +29,11 @@ def test_retry_after_is_read_from_every_provider_format():
     assert _retry_after(httpx.Response(429, text='[{"error": {"details": [{"retryDelay": "31s"}]}}]')) == 31
     assert _retry_after(httpx.Response(429, headers={"retry-after": "7"})) == 7
     assert _retry_after(httpx.Response(429, text="quota exceeded")) is None
+    cerebras = '{"message":"Requests per minute limit exceeded - too many requests sent.","type":"too_many_requests_error"}'
+    assert _retry_after(httpx.Response(429, text=cerebras, headers={
+        "x-ratelimit-reset-requests-minute": "12.4", "x-ratelimit-reset-tokens-minute": "3",
+        "x-ratelimit-reset-requests-day": "40000"})) == 12.4
+    assert _retry_after(httpx.Response(429, text=cerebras)) == 30  # por minuto, sin plazo
 
 
 def test_agents_wait_for_per_minute_limits_but_conversation_does_not():

@@ -80,7 +80,18 @@ def _retry_after(resp: httpx.Response) -> float | None:
         return header
     # Groq: "Please try again in 10.6s" / "in 1m2.5s"; Gemini: "retryDelay": "31s"
     match = re.search(r'try again in ([\dhms.]+)|"retryDelay":\s*"([\d.]+s)"', resp.text)
-    return _seconds(match.group(1) or match.group(2)) if match else None
+    if match:
+        return _seconds(match.group(1) or match.group(2))
+    # Cerebras y otros: lo dicen en las cabeceras, p. ej. x-ratelimit-reset-requests-minute: 12.4
+    resets = [
+        wait for key, value in resp.headers.items()
+        if key.lower().startswith("x-ratelimit-reset-") and "day" not in key.lower()
+        and (wait := _seconds(value)) is not None and wait <= 120
+    ]
+    if resets:
+        return max(resets)
+    # Limite por minuto sin plazo: medio minuto suele bastar.
+    return 30.0 if re.search(r"per minute|por minuto|\bRPM\b|\bTPM\b", resp.text, re.I) else None
 
 
 # --- cuota ---------------------------------------------------------------------------------
