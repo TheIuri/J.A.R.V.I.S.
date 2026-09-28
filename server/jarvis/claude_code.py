@@ -45,6 +45,23 @@ SESSION_RE = re.compile(r"^[A-Za-z0-9-]{8,80}$")
 TOOL_NAMES = {"WebSearch": "web_search", "WebFetch": "web_read", "mcp__jarvis__agent_run": "agent_run",
               "mcp__jarvis__agent_status": "agent_status"}
 MCP_TOOLS = ("mcp__jarvis__agent_run", "mcp__jarvis__agent_status")  # solo en la conversacion (mcp_agents.py)
+# Modo "cerebro completo": Claude usa TODAS las herramientas de JARVIS (musica, agenda, recordatorios, notas, casa,
+# agentes...). Sin WebFetch, igual que JARVIS: con tus datos a mano, nunca lee paginas web (una web podria intentar
+# que los sacara). Para leer webs estan los agentes.
+FULL_TOOLS = ("WebSearch", "mcp__jarvis")
+MCP_PREFIX = "mcp__jarvis__"
+
+FULL_INTRO = """{system}
+
+Eres JARVIS pensando con Claude. Tus herramientas de JARVIS se llaman mcp__jarvis__<nombre>: usalas igual que harias
+con las tuyas. Si una devuelve "PENDIENTE DE CONFIRMACION", pregunta al usuario si lo confirma y no digas que esta
+hecho. No puedes abrir paginas web: para leer webs a fondo encarga el trabajo a un agente (agent_run).
+Ahorra: antes de buscar en internet o lanzar un agente, mira si ya esta en las notas de Obsidian (obsidian_search) y,
+si hay algo reciente que responde, usalo. Los agentes tambien reutilizan informes parecidos sin gastar.
+Ahora es {now}.{memories}
+
+Primer mensaje del usuario:
+"""
 PASS_ENV = ("PATH", "LANG", "LC_ALL", "TZ", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy",
             "no_proxy", "SSL_CERT_FILE")
 
@@ -99,7 +116,9 @@ class ClaudeCode:
         self.model_ids = [m for m in dict.fromkeys(models) if MODEL_RE.match(m)] or list(DEFAULT_MODELS)
         self.stats: dict[str, dict] = {}  # uso de hoy por modelo
         self.day = ""
-        self.mcp_config: Path | None = None  # config MCP con las herramientas de JARVIS (agentes)
+        self.mcp_config: Path | None = None  # config MCP con las herramientas de JARVIS
+        self.full = False  # cerebro completo: todas las herramientas de JARVIS (ver FULL_TOOLS)
+        self.system = ""  # el prompt de sistema de JARVIS, para el modo completo
         self.limits: dict = {}  # ultimo aviso de limites de la membresia (ventana de 5 h, semanal...)
         self.token = token
         self.home = Path(home)  # config y sesiones de Claude Code (en el dataset: sobreviven a reinicios)
@@ -195,7 +214,10 @@ class ClaudeCode:
         with self._lock:  # una conversacion con Claude a la vez
             resume = self.sessions.get(session)
             prompt = text if resume else self._intro() + text
-            tools = ALLOWED + (MCP_TOOLS if self.mcp_config else ())
+            if self.full and self.mcp_config:
+                tools = FULL_TOOLS
+            else:
+                tools = ALLOWED + (MCP_TOOLS if self.mcp_config else ())
             return self._run(model, resume, prompt, session, emit, tools=tools, mcp=True)
 
     def _intro(self) -> str:
@@ -204,7 +226,10 @@ class ClaudeCode:
         except Exception:
             mem = []
         memories = ("\nLo que sabes del usuario:\n" + "\n".join(f"- {m}" for m in mem[:30])) if mem else ""
-        return INTRO.format(now=datetime.now().strftime("%A %d/%m/%Y %H:%M"), memories=memories)
+        now = datetime.now().strftime("%A %d/%m/%Y %H:%M")
+        if self.full and self.system:
+            return FULL_INTRO.format(system=self.system, now=now, memories=memories)
+        return INTRO.format(now=now, memories=memories)
 
     def task(self, prompt: str, model: str, emit: Callable[[dict], None], tools: tuple[str, ...] = ALLOWED,
              cwd: Path | None = None, max_turns: int = TASK_MAX_TURNS) -> str:

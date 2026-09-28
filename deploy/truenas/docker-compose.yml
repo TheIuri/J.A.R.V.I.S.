@@ -30,6 +30,8 @@ services:
       # MISTRAL_API_KEY: "" # https://console.mistral.ai (plan Experiment, gratis)
       # OPENCODE_API_KEY: "" # https://opencode.ai/auth (OpenCode Zen); modelo con OPENCODE_MODEL u "opencode:<modelo>"
       # CLAUDE_CODE_OAUTH_TOKEN: "" # modo Claude con tu membresia Pro/Max tambien en el movil: en el PC, `claude setup-token`
+      # DEFAULT_MODEL: "claude-sonnet-5" # cerebro por defecto en el HUD (Claude con todas las acciones; Groq de respaldo)
+      # CLAUDE_TOOLS: "full" # "full" = Claude usa todas las herramientas de JARVIS | "web" = lee webs y lanza agentes web
       # CLAUDE_MODELS: "claude-sonnet-5,claude-opus-5-5,claude-fable-5-1,claude-haiku-4-5" # versiones en CEREBRO (la 1a, por defecto)
       # AUDIT_PROJECTS: "caliperworks=/code/caliperworks" # proyectos que el auditor puede revisar (JARVIS siempre)
       # HUD_MODELS: "claude" # en CEREBRO solo los de Claude (sin Automatico: las acciones de PC, casa y musica no estan)

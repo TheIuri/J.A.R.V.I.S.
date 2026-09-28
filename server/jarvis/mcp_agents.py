@@ -1,9 +1,11 @@
-"""Herramientas de JARVIS para Claude Code (servidor MCP por stdio): encargar trabajo a los agentes.
+"""Herramientas de JARVIS para Claude Code (servidor MCP por stdio).
 
-Claude Code lo arranca en la conversacion con Claude (`--mcp-config`). Solo ofrece los agentes que trabajan con
-internet (investigador, compras, captador): nunca los que leen datos privados, porque el chat de Claude lee webs y
-una web podria intentar que los sacara. Habla con JARVIS por HTTP en local, con un token interno que se crea en cada
-arranque y solo sirve para esto.
+Claude Code lo arranca en la conversacion con Claude (`--mcp-config`). Dos modos (JARVIS_MCP_MODE):
+- full: todas las herramientas de JARVIS (musica, agenda, recordatorios, notas, casa, agentes...). Claude no tiene
+  WebFetch en este modo, asi que ninguna web le puede pedir que saque tus datos.
+- agents: solo encargar trabajo a los agentes que trabajan con internet (investigador, compras, captador); nunca los
+  que leen datos privados, porque en este modo Claude si lee webs.
+Habla con JARVIS por HTTP en local, con un token interno que se crea en cada arranque y solo sirve para esto.
 
 Protocolo: JSON-RPC 2.0, un mensaje por linea (MCP stdio): initialize, tools/list, tools/call y ping.
 """
@@ -20,6 +22,7 @@ from typing import Any
 URL = os.environ.get("JARVIS_INTERNAL_URL", "http://127.0.0.1:8765")
 TOKEN = os.environ.get("JARVIS_INTERNAL_TOKEN", "")
 PROTOCOL = "2025-06-18"
+MODE = os.environ.get("JARVIS_MCP_MODE", "agents")
 
 
 def _call(method: str, path: str, body: dict | None = None) -> dict:
@@ -39,6 +42,8 @@ def _call(method: str, path: str, body: dict | None = None) -> dict:
 
 
 def _tools() -> list[dict[str, Any]]:
+    if MODE == "full":
+        return _call("GET", "/internal/tools")["tools"]
     agents = _call("GET", "/internal/agents").get("agents", [])
     desc = "; ".join(f"{a['id']}: {a['description']}" for a in agents)
     return [
@@ -66,6 +71,8 @@ def _tools() -> list[dict[str, Any]]:
 
 
 def _run_tool(name: str, args: dict) -> str:
+    if MODE == "full":
+        return _call("POST", "/internal/tools/call", {"name": name, "arguments": args})["result"]
     if name == "agent_run":
         return _call("POST", "/internal/agents/run", {
             "agent": str(args.get("agent", "")), "task": str(args.get("task", "")), "refresh": bool(args.get("refresh")),

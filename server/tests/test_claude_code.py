@@ -252,3 +252,61 @@ def test_claude_chat_can_start_only_web_agents_through_jarvis(tmp_path, monkeypa
     assert res["result"]["content"][0]["text"].startswith("El asesor") and not res["result"]["isError"]
     assert calls[-1] == ("POST", "/internal/agents/run", {"agent": "compras", "task": "monitor", "refresh": False})
     assert mcp_agents.handle({"jsonrpc": "2.0", "id": 4, "method": "nada"})["error"]["code"] == -32601
+
+
+def test_claude_as_full_brain_uses_jarvis_tools_confirms_and_falls_back(tmp_path, monkeypatch):
+    from jarvis import main as jmain
+    from jarvis.tools.registry import Tool, ToolRegistry
+
+    did = []
+    registry = ToolRegistry()
+    registry.register(Tool("spotify_control", "Controla Spotify", {"type": "object", "properties": {
+        "action": {"type": "string"}}, "required": ["action"]}, lambda _ctx, action: f"hecho: {action}"))
+    registry.register(Tool("calendar_add", "Crea un evento", {"type": "object", "properties": {
+        "title": {"type": "string"}}, "required": ["title"]},
+        lambda _ctx, title: did.append(title) or f"creado {title}", confirm=True, describe=lambda a: f"crear {a['title']}"))
+    registry.register(Tool("web_read", "Lee una web", {"type": "object", "properties": {}}, lambda _ctx: "x"))
+    assistant = make_assistant()
+    assistant.tools = registry
+    assistant.claude = ClaudeCode("tok", tmp_path / "home", exe=fake_claude(tmp_path))
+    assistant.claude.full, assistant.claude.system = True, "Eres Jarvis. Todo lo de musica es con Spotify."
+    client = TestClient(create_app(assistant, api_token="s"))
+    auth = {"Authorization": "Bearer s"}
+    mcp = json.loads((tmp_path / "home" / "mcp.json").read_text())["mcpServers"]["jarvis"]["env"]
+    assert mcp["JARVIS_MCP_MODE"] == "full"
+
+    # Claude recibe el prompt de JARVIS y todas sus herramientas, pero no WebFetch.
+    client.post("/claude/chat/stream", json={"text": "pausa", "model": "claude-sonnet-5", "session": "m"}, headers=auth)
+    call = json.loads((tmp_path / "home" / "call.json").read_text())
+    allowed = call["argv"][call["argv"].index("--allowedTools") + 1]
+    assert allowed == "WebSearch,mcp__jarvis" and "WebFetch" in call["argv"][call["argv"].index("--disallowedTools") + 1]
+    assert "Todo lo de musica es con Spotify" in call["prompt"] and "obsidian_search" in call["prompt"]
+
+    monkeypatch.setattr(jmain, "INTERNAL_HOSTS", {"testclient"})
+    internal = {"X-Jarvis-Internal": mcp["JARVIS_INTERNAL_TOKEN"]}
+    names = [t["name"] for t in client.get("/internal/tools", headers=internal).json()["tools"]]
+    assert names == ["spotify_control", "calendar_add"]  # nada de leer webs
+    assert client.post("/internal/tools/call", json={"name": "web_read"}, headers=internal).status_code == 400
+    ok = client.post("/internal/tools/call", json={"name": "spotify_control", "arguments": {"action": "pause"}},
+                     headers=internal).json()
+    assert ok["result"] == "hecho: pause"
+
+    # Una accion con confirmacion: queda pendiente (en la conversacion "m", la ultima de Claude) y el "si" del
+    # usuario la hace sin pasar por Claude.
+    res = client.post("/internal/tools/call", json={"name": "calendar_add", "arguments": {"title": "Dentista"}},
+                      headers=internal).json()["result"]
+    assert res.startswith("PENDIENTE DE CONFIRMACION") and did == []
+    before = (tmp_path / "home" / "call.json").stat().st_mtime_ns
+    out = client.post("/claude/chat/stream", json={"text": "sí", "model": "claude-sonnet-5",
+                                                   "session": "m"}, headers=auth)
+    last = json.loads(out.text.splitlines()[-1])
+    assert did == ["Dentista"] and last["reply"].startswith("Hecho")
+    assert (tmp_path / "home" / "call.json").stat().st_mtime_ns == before  # Claude ni se ha enterado
+
+    # Claude sin cupo: contesta la cadena de JARVIS.
+    (tmp_path / "claude").write_text(f"#!{sys.executable}\nimport json\nprint(json.dumps({{'type': 'result', "
+                                     f"'is_error': True, 'result': 'limite de uso'}}))\n")
+    out = client.post("/claude/chat/stream", json={"text": "hola", "model": "claude-sonnet-5", "session": "m"},
+                      headers=auth)
+    last = json.loads(out.text.splitlines()[-1])
+    assert last["type"] == "done" and last["reply"] == "Buenos dias." and last["provider"] == "fake:m"

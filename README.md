@@ -514,10 +514,20 @@ Claude Code; solo falta tu token de la membresía (no es una API de pago):
 Cámbialas con `CLAUDE_MODELS` (nombres de modelo de Claude separados por comas). Si tu plan no incluye alguna, al
 elegirla Claude dará un error: quítala de la lista.
 
-**Claude lanza agentes**: en la conversación con Claude puedes pedir *"busca clientes para caliperworks"* o
-*"investiga a fondo…"*: Claude se lo encarga al captador, al investigador o al de compras (con su modelo elegido en
-**Agentes**) y te avisan al terminar. Solo esos tres, los que trabajan con internet: los agentes con tus datos
-privados (organizador, escritor, técnico) nunca se lanzan desde Claude, porque el chat de Claude lee webs.
+**Claude como cerebro principal (con todas las acciones)**: con el token puesto, Claude usa **todas las herramientas
+de JARVIS**: Spotify, agenda, recordatorios, memoria, notas de Obsidian, casa, agentes, auditor… Las acciones que
+piden confirmación te las pregunta igual y tu *"sí"* las hace sin gastar cupo. Para que sea el de por defecto:
+```yaml
+DEFAULT_MODEL: "claude-sonnet-5"   # el HUD lo elige solo (si en ese navegador no elegiste otro)
+LLM_PROVIDERS: "groq"              # respaldo: si Claude se queda sin cupo o falla, contesta Groq
+```
+- **Ahorra cupo**: antes de buscar en internet o lanzar un agente mira si ya está en Obsidian; los agentes reutilizan
+  informes parecidos sin gastar (ver *Sin repetir investigaciones*).
+- **Seguridad**: en este modo Claude **busca** en internet pero **no abre páginas**, igual que JARVIS con Groq: con tus
+  datos a mano, ninguna web le puede pedir que los saque. Para leer webs a fondo, que lo encargue a un agente.
+- Las acciones del PC (abrir apps, volumen, temporizadores) siguen siendo del modo Automático en el HUD del PC.
+- `CLAUDE_TOOLS: "web"` vuelve al modo anterior: Claude lee webs y solo puede lanzar el investigador, el de compras
+  y el captador (nunca los agentes con datos privados).
 
 **Solo Claude**: con `HUD_MODELS: "claude"` el selector solo ofrece los modelos de Claude. Ojo: en modo Claude JARVIS
 solo busca y lee en internet; controlar el PC, la casa, la música o los recordatorios necesita el modo Automático.
