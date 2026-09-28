@@ -27,6 +27,7 @@ import threading
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -247,9 +248,18 @@ class AgentTeam:
         lead_profile: str = "",
         lead_profiles: dict[str, str] | None = None,
         history: AgentHistory | None = None,
+        prefs: Path | None = None,
     ):
         self.llm = llm  # por defecto
         self.history = history  # lo ya investigado, para no repetirlo
+        self.prefs = Path(prefs) if prefs else None  # modelo elegido en el HUD para cada agente
+        self.prefer: dict[str, str] = {}
+        if self.prefs:
+            try:
+                self.prefer = {k: v for k, v in json.loads(self.prefs.read_text(encoding="utf-8")).items()
+                               if isinstance(k, str) and isinstance(v, str)}
+            except (OSError, ValueError, AttributeError):
+                self.prefer = {}
         self.llms = llms or {}  # cadena propia de algun agente
         self.activity = activity
         self.leads = leads  # donde guarda el captador sus leads
@@ -292,6 +302,24 @@ class AgentTeam:
     def llm_for(self, agent: str) -> FallbackLLM:
         return self.llms.get(agent, self.llm)
 
+    def model_choices(self, agent: str) -> list[str]:
+        """Modelos que puede usar un agente: los de su cadena y el catalogo de esos proveedores."""
+        return [m["id"] for m in self.llm_for(agent).models(catalog=True)]
+
+    def set_model(self, agent: str, model: str) -> None:
+        """Modelo que va primero para un agente ("" = su cadena tal cual); el resto queda de respaldo."""
+        if agent not in self.registries:
+            raise ToolError(f"no hay ningún agente '{agent}'")
+        if model and model not in self.model_choices(agent):
+            raise ToolError(f"el agente {agent} no puede usar {model}")
+        if model:
+            self.prefer[agent] = model
+        else:
+            self.prefer.pop(agent, None)
+        if self.prefs:
+            self.prefs.parent.mkdir(parents=True, exist_ok=True)
+            self.prefs.write_text(json.dumps(self.prefer, indent=1), encoding="utf-8")
+
     def _trace(self, kind: str, job: Job, **data) -> None:
         if self.activity:
             self.activity.emit(kind, job=job.id, agent=job.agent, label=SPECS[job.agent].label, **data)
@@ -328,7 +356,9 @@ class AgentTeam:
     def _run(self, job: Job) -> None:
         spec = SPECS[job.agent]
         log.info("agente %d (%s): %r", job.id, job.agent, job.topic)
-        self._trace("agent_start", job, task=job.topic, models=self.llm_for(job.agent).name)
+        prefer = self.prefer.get(job.agent)
+        self._trace("agent_start", job, task=job.topic,
+                    models=f"{prefer} (elegido)" if prefer else self.llm_for(job.agent).name)
         try:
             text = self._work(job, spec)
             found, text = extract_leads(text)
@@ -366,7 +396,8 @@ class AgentTeam:
              + (self._offer(job.topic) if job.agent == "captador" else "")},
         ]
         for _ in range(MAX_ROUNDS):
-            reply = llm.chat(messages, specs or None, patient=True)  # en segundo plano: espera a los limites por minuto
+            # En segundo plano: espera a los limites por minuto. prefer: el modelo elegido en el HUD, si lo hay.
+            reply = llm.chat(messages, specs or None, prefer=self.prefer.get(job.agent), patient=True)
             job.model = reply.provider or job.model
             if not reply.tool_calls:
                 return reply.text
@@ -386,7 +417,7 @@ class AgentTeam:
                 result = tools.execute(call.name, call.arguments, ctx)
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
         messages.append({"role": "user", "content": "Ya no puedes usar más herramientas: escribe el informe ahora."})
-        reply = llm.chat(messages, patient=True)
+        reply = llm.chat(messages, prefer=self.prefer.get(job.agent), patient=True)
         job.model = reply.provider or job.model
         return reply.text
 

@@ -22,8 +22,8 @@ from pydantic import BaseModel
 from .activity import ActivityLog
 from .agent_history import AgentHistory
 from .agents import REPORT_FOLDER, SPECS, AgentTeam, agent_tools, extract_options, short_summary, split_report
-from .claude_code import MODELS as CLAUDE_MODELS
-from .claude_code import ClaudeCode
+from .claude_code import DEFAULT_MODELS as CLAUDE_DEFAULTS
+from .claude_code import ClaudeCode, label
 from .config import Settings, load_settings
 from .insights import Insights
 from .leads import STATUSES as LEAD_STATUSES, LeadStore, lead_tools
@@ -132,6 +132,7 @@ def build_assistant(settings: Settings) -> Assistant:
         team = AgentTeam(
             agent_llm, available, vault, assistant.board, settings.timezone, own, assistant.activity,
             leads, settings.leads_profile, settings.leads_profiles, AgentHistory(data / "agents_history.json"),
+            data / "agent_models.json",
         )
         assistant.team = team
         assistant.leads = leads
@@ -145,9 +146,10 @@ def build_assistant(settings: Settings) -> Assistant:
             return [m.content for m in store.all()] if store else []
 
         assistant.claude = ClaudeCode(settings.claude_token, data / "claude", memories=memories,
-                                      timezone=settings.timezone)
+                                      timezone=settings.timezone, models=settings.claude_models or CLAUDE_DEFAULTS)
         log.info("Claude (membresia) en el NAS: %s", "disponible" if assistant.claude.available else
                  "falta el programa claude en la imagen")
+    assistant.only_claude = settings.hud_models == "claude"
     return assistant
 
 
@@ -220,6 +222,11 @@ EXTERNAL_AGENTS = {
     "claude": ("Claude", REPORT_FOLDER),
     "auditor": ("El auditor de seguridad", "JARVIS/Seguridad"),
 }
+
+
+class AgentModelRequest(BaseModel):
+    agent: str
+    model: str = ""  # "" = la cadena del agente tal cual
 
 
 class AgentEvent(BaseModel):
@@ -413,6 +420,18 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             return {"events": [], "last": log_.last_id}
         return {"events": log_.since(after, min(max(wait, 0), NOTIFY_WAIT_MAX_S)), "last": log_.last_id}
 
+    @app.post("/api/agents/model", dependencies=[Depends(require_token)])
+    def agent_model(req: AgentModelRequest) -> dict:
+        """Elegir desde el HUD el modelo que va primero para un agente (el resto de su cadena, de respaldo)."""
+        team: AgentTeam | None = getattr(state["assistant"], "team", None)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Agentes desactivados")
+        try:
+            team.set_model(req.agent, req.model)
+        except ToolError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"agent": req.agent, "prefer": team.prefer.get(req.agent, "")}
+
     @app.get("/api/agents", dependencies=[Depends(require_token)])
     def agents() -> dict:
         """Agentes disponibles, su cadena de modelos y sus tareas recientes (panel del HUD)."""
@@ -422,7 +441,8 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         return {
             "agents": [
                 {"id": k, "label": SPECS[k].label, "doing": SPECS[k].doing, "description": SPECS[k].description,
-                 "models": team.llm_for(k).name,
+                 "models": team.llm_for(k).name, "prefer": team.prefer.get(k, ""),
+                 "choices": team.model_choices(k),
                  **({"profiles": [*(["general"] if team.lead_profile else []), *team.lead_profiles]}
                     if k == "captador" else {})}
                 for k in team.available
@@ -469,7 +489,10 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         if team is not None:
             for llm in [team.llm, *team.llms.values()]:
                 agents += [p.name for p in llm.providers if p.name not in chain + agents]
-        return {"chain": chain, "agents": agents, "models": usage_report(chain + agents)}
+        out = {"chain": chain, "agents": agents, "models": usage_report(chain + agents)}
+        if claude():
+            out["claude"] = claude().usage()
+        return out
 
     @app.get("/api/models", dependencies=[Depends(require_token)])
     def models() -> dict:
@@ -568,6 +591,8 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         out: dict = {"mode": "server", "pc_apps": None}
         if claude():
             out["claude_models"] = claude().models()
+            if getattr(state["assistant"], "only_claude", False):
+                out["only_claude"] = True  # HUD_MODELS=claude: en CEREBRO solo Claude
         return out
 
     @app.post("/claude/chat/stream", dependencies=[Depends(require_token)])
@@ -579,7 +604,7 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         text = req.text.strip()
         if not text:
             raise HTTPException(status_code=400, detail="Texto vacio")
-        if req.model not in CLAUDE_MODELS:
+        if req.model not in c.model_ids:
             raise HTTPException(status_code=400, detail="Modelo de Claude desconocido")
         a: Assistant = state["assistant"]
         events: queue.Queue = queue.Queue()
@@ -594,8 +619,8 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
                 events.put({"type": "error", "detail": str(exc)})
                 return
             ms = round((time.perf_counter() - start) * 1000)
-            label = CLAUDE_MODELS[req.model][1]
-            events.put({"type": "reply", "text": reply, "provider": label, "ms": ms})
+            name = label(req.model)
+            events.put({"type": "reply", "text": reply, "provider": name, "ms": ms})
             audio, ms_tts = None, 0
             if req.speak:
                 events.put({"type": "speaking"})
@@ -606,7 +631,7 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
                     log.exception("fallo la voz de la respuesta de Claude")
                 ms_tts = round((time.perf_counter() - start) * 1000)
             events.put({
-                "type": "done", "transcript": text, "reply": reply, "provider": label,
+                "type": "done", "transcript": text, "reply": reply, "provider": name,
                 "timings_ms": {"claude": ms, "tts": ms_tts, "total": ms + ms_tts}, "tools_used": used,
                 "pc_actions": [], "cards": [], "audio_wav_b64": _b64(audio),
             })

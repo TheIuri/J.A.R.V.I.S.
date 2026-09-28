@@ -30,7 +30,8 @@ const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 let state = "idle";
 let mode = "local";
 let pcApps = null;
-let claudeModels = []; // modo Claude (membresía) disponible en el HUD del PC
+let claudeModels = []; // modo Claude (membresía): en el HUD del PC o en el NAS
+let onlyClaude = false; // HUD_MODELS=claude: en CEREBRO solo los de Claude
 const MODEL_KEY = "jarvis_model";
 let wakeEnabled = false; // "Hey Jarvis" en el PC (modo local con openwakeword)
 let wakeActive = false; // se oyó "Hey Jarvis" y se espera la frase
@@ -282,12 +283,15 @@ function isClaude() {
 }
 
 function modelRgb(id) {
+  const fam = /^claude-(sonnet|opus|haiku)/.exec(String(id));
+  if (fam) return MODEL_COLORS[`claude-${fam[1]}`];
   return MODEL_COLORS[id] || MODEL_COLORS[String(id).split(":")[0]] || [141, 151, 173];
 }
 
 async function loadModels() {
-  const options = [{ id: "", label: "Automático", detail: "La cadena de JARVIS, con respaldo", group: "JARVIS · servidor" }];
-  try {
+  const claudeOnly = onlyClaude && claudeModels.length > 0;
+  const options = claudeOnly ? [] : [{ id: "", label: "Automático", detail: "La cadena de JARVIS, con respaldo", group: "JARVIS · servidor" }];
+  if (!claudeOnly) try {
     const resp = await api("/api/models");
     if (resp.ok) {
       // Por proveedor: primero los de tu cadena y después el resto de su catálogo.
@@ -414,6 +418,7 @@ function fmtNum(n) {
 }
 
 function fmtWait(s) {
+  if (s >= 2 * 86400) return `${Math.round(s / 86400)} días`;
   return s >= 3600 ? `${Math.round(s / 3600)} h` : s >= 60 ? `${Math.round(s / 60)} min` : `${s} s`;
 }
 
@@ -446,13 +451,81 @@ function quotaBar(left, state) {
   return bar;
 }
 
+// --- cuota de Claude (membresía): ventanas de 5 h y semanal, y lo gastado hoy ---------------------
+const CLAUDE_WINDOW = { five_hour: "Sesión de 5 h", seven_day: "Semana", seven_day_opus: "Semana · Opus",
+  seven_day_sonnet: "Semana · Sonnet", seven_day_overage_included: "Semana (con extra)", overage: "Uso extra" };
+
+function claudeWindows() {
+  const lim = usage?.claude?.limits;
+  if (!lim || !lim.status) return [];
+  const out = [];
+  if (lim.type) out.push({ key: lim.type, used: lim.used, resets_at: lim.resets_at });
+  for (const [key, w] of Object.entries(lim.windows || {})) if (key !== lim.type) out.push({ key, ...w });
+  return out;
+}
+
+function claudeQuota(modelId) {
+  const c = usage?.claude;
+  if (!c) return null;
+  const lim = c.limits || {};
+  const state = lim.status === "rejected" ? "limit" : lim.status === "allowed_warning" ? "low" : "ok";
+  const wins = claudeWindows().filter((w) => w.used != null);
+  const worst = wins.length ? wins.reduce((a, b) => (b.used > a.used ? b : a)) : null;
+  const st = (c.models || []).find((m) => m.id === modelId);
+  const today = st ? `Hoy ${st.turns} pregunta${st.turns === 1 ? "" : "s"} · ${fmtNum(st.input_tokens + st.output_tokens)} tokens` : "Hoy sin usar";
+  const wait = worst?.resets_at ? Math.max(0, Math.round(worst.resets_at - Date.now() / 1000)) : 0;
+  const line = worst
+    ? `${CLAUDE_WINDOW[worst.key] || worst.key}: ${Math.round(worst.used * 100)}% usado${wait ? ` · se renueva en ${fmtWait(wait)}` : ""}`
+    : state === "limit" ? `En su límite${wait ? ` · vuelve en ${fmtWait(wait)}` : ""}` : today;
+  return { state, left: worst ? 1 - worst.used : state === "limit" ? 0 : null, line, today, note: line };
+}
+
+function renderClaudeUsage(list) {
+  const c = usage?.claude;
+  if (!c) return;
+  const q = claudeQuota(currentModel);
+  const li = document.createElement("li");
+  li.className = q.state;
+  li.innerHTML = '<div class="q-head"><span class="q-name">Claude · membresía</span><span class="q-role">tu plan</span><span class="q-state"></span></div>';
+  li.querySelector(".q-state").className = `q-state ${q.state}`;
+  li.querySelector(".q-state").textContent = QUOTA_TEXT[q.state];
+  for (const w of claudeWindows()) {
+    if (w.used == null) continue;
+    const row = document.createElement("div");
+    row.className = "q-meter";
+    const label = document.createElement("span");
+    label.textContent = CLAUDE_WINDOW[w.key] || w.key;
+    const num = document.createElement("span");
+    num.className = "num";
+    const wait = w.resets_at ? Math.max(0, Math.round(w.resets_at - Date.now() / 1000)) : 0;
+    num.textContent = `${Math.round(w.used * 100)}% usado${wait ? ` · ${fmtWait(wait)}` : ""}`;
+    row.append(label, quotaBar(w.used, q.state), num); // barra = lo usado, como en la app de Claude
+    li.append(row);
+  }
+  for (const m of c.models || []) {
+    const foot = document.createElement("p");
+    foot.className = "q-foot";
+    foot.textContent = [`${m.label}: ${m.turns} pregunta${m.turns === 1 ? "" : "s"}`, `${fmtNum(m.input_tokens)} entrada · ${fmtNum(m.output_tokens)} salida`,
+      m.cache_tokens ? `${fmtNum(m.cache_tokens)} en caché` : "", m.web_searches ? `${m.web_searches} búsquedas` : "",
+      m.errors ? `${m.errors} fallos` : ""].filter(Boolean).join(" · ");
+    li.append(foot);
+  }
+  if (!claudeWindows().length) {
+    const foot = document.createElement("p");
+    foot.className = "q-foot";
+    foot.textContent = "Los límites de tu plan aparecen tras la primera pregunta a Claude.";
+    li.append(foot);
+  }
+  list.append(li);
+}
+
 // Estado del cerebro elegido: en automático manda el primero de la cadena que no esté en su límite.
 function activeQuota() {
   if (!usage) return null;
   const byName = new Map(usage.models.map((m) => [m.name, m]));
   const chain = usage.chain.map((n) => byName.get(n)).filter(Boolean);
+  if (isClaude()) return claudeQuota(currentModel);
   if (!chain.length) return null;
-  if (isClaude()) return null;
   if (currentModel) {
     const own = usage.models.filter((m) => m.name === currentModel || m.provider === currentModel);
     return own.sort((a, b) => QUOTA_RANK[b.state] - QUOTA_RANK[a.state])[0] || null;
@@ -476,6 +549,13 @@ function renderUsage() {
   document.querySelectorAll("#model-menu .mi-quota").forEach((el) => {
     const models = usage.models.filter((m) => m.name === el.dataset.model);
     el.textContent = "";
+    if (el.dataset.model.startsWith("claude-")) {
+      const q = claudeQuota(el.dataset.model);
+      if (!q) return;
+      el.className = `mi-quota ${q.state}`;
+      el.append(document.createTextNode(q.today)); // el límite es del plan: se ve en el punto y en Sesión
+      return;
+    }
     if (!models.length) return;
     const worst = models.reduce((a, b) => (QUOTA_RANK[b.state] > QUOTA_RANK[a.state] ? b : a));
     el.className = `mi-quota ${worst.state}`;
@@ -484,6 +564,7 @@ function renderUsage() {
   // En la pestaña Sesión: todos, conversación y agentes.
   const list = $("quota-list");
   list.textContent = "";
+  renderClaudeUsage(list);
   for (const m of usage.models) {
     const li = document.createElement("li");
     li.className = m.state;
@@ -521,7 +602,7 @@ function renderUsage() {
     li.append(foot);
     list.append(li);
   }
-  if (!usage.models.length) list.innerHTML = '<p class="empty">Aún no se ha usado ningún modelo desde que arrancó el servidor.</p>';
+  if (!list.children.length) list.innerHTML = '<p class="empty">Aún no se ha usado ningún modelo desde que arrancó el servidor.</p>';
 }
 
 async function loadUsage() {
@@ -1454,6 +1535,43 @@ function elapsed(iso) {
   return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min`;
 }
 
+// Modelo de cada agente: el elegido va primero y su cadena queda de respaldo.
+function agentModelPicker(a) {
+  const label = document.createElement("label");
+  label.className = "agent-model";
+  const span = document.createElement("span");
+  span.textContent = "Modelo";
+  const sel = document.createElement("select");
+  sel.setAttribute("aria-label", `Modelo de ${a.label}`);
+  sel.append(new Option(`Su cadena (${a.models})`, ""));
+  const groups = new Map();
+  for (const id of a.choices) {
+    const prov = id.split(":")[0];
+    const name = PROVIDER_NAME[prov] || prov;
+    if (!groups.has(name)) groups.set(name, document.createElement("optgroup"));
+    groups.get(name).label = name;
+    groups.get(name).append(new Option(providerLabel(id), id));
+  }
+  groups.forEach((g) => sel.append(g));
+  sel.value = a.prefer || "";
+  sel.addEventListener("change", async () => {
+    sel.disabled = true;
+    try {
+      const resp = await api("/api/agents/model", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent: a.id, model: sel.value }),
+      });
+      if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || `HTTP ${resp.status}`);
+      trace(a.label, sel.value ? `ahora trabaja con ${providerLabel(sel.value)}` : "vuelve a su cadena de modelos", agentRgb(a.id));
+    } catch (err) {
+      trace(a.label, `no se pudo cambiar el modelo: ${err.message || err}`, [255, 69, 58]);
+    }
+    loadAgents();
+  });
+  label.append(span, sel);
+  return label;
+}
+
 async function loadAgents() {
   if (mode === "server" && !getToken()) return;
   let data = { agents: [], jobs: [] };
@@ -1477,8 +1595,9 @@ async function loadAgents() {
     p.textContent = a.description;
     const chip = document.createElement("span");
     chip.className = "chip";
-    chip.textContent = a.models;
+    chip.textContent = a.prefer ? `${providerLabel(a.prefer)} · resto de respaldo` : a.models;
     body.append(strong, p, chip);
+    if (a.choices?.length) body.append(agentModelPicker(a));
     if (a.profiles) {
       // El captador: para qué productos o negocios sabe buscar clientes (LEADS_PROFILE_<NOMBRE>).
       const prof = document.createElement("p");
@@ -2078,7 +2197,7 @@ async function init() {
   tick();
   requestAnimationFrame(frame);
   try {
-    ({ mode, pc_apps: pcApps, wake: wakeEnabled = false, claude_models: claudeModels = [] } = await (
+    ({ mode, pc_apps: pcApps, wake: wakeEnabled = false, claude_models: claudeModels = [], only_claude: onlyClaude = false } = await (
       await fetch("/hud/config")
     ).json());
   } catch {

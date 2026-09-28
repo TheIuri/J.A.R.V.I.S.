@@ -435,3 +435,10 @@ a.card:hover { background: #333336; transform: translateY(-1px); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Modelo de cada agente (panel Agentes) */
+.agent-model { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--apagado); }
+.agent-model select { flex: 1; min-width: 0; max-width: 100%; padding: 5px 8px; border-radius: 8px; font: inherit;
+  font-size: 12.5px; color: var(--claro); background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); }
+.agent-model select:focus-visible { outline: 2px solid var(--azul); outline-offset: 1px; }
+.agent-model select:disabled { opacity: .5; }

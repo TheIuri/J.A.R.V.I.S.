@@ -227,7 +227,8 @@ def test_activity_and_agents_endpoints():
     assert [e["type"] for e in events] == ["agent_start", "agent_done"]
     agents = client.get("/api/agents", headers=auth).json()
     assert {"id": "compras", "label": "El asesor de compras", "doing": "comparando",
-            "description": SPECS["compras"].description, "models": "fake:m"} in agents["agents"]
+            "description": SPECS["compras"].description, "models": "fake:m", "prefer": "",
+            "choices": ["fake:m"]} in agents["agents"]
     assert agents["jobs"][0]["state"] == "terminado" and agents["jobs"][0]["model"] == "fake:m"
 
 
@@ -298,3 +299,31 @@ def test_history_reuses_a_similar_task_without_launching_the_agent(tmp_path):
     assert AgentHistory(tmp_path / "h.json").find("compras", "impresoras 3D de resina", now=late) is None
     history.add("tecnico", "estado del NAS", "todo bien")
     assert history.find("tecnico", "estado del NAS") is None
+
+
+def test_hud_can_choose_the_model_of_each_agent(tmp_path):
+    import pytest
+    from fastapi.testclient import TestClient
+
+    from jarvis.agents import AgentTeam
+    from jarvis.main import create_app
+    from jarvis.tools.registry import ToolError
+    from tests.test_core import make_assistant
+    from tests.test_tools import ScriptedLLM
+
+    team = AgentTeam(ScriptedLLM(["RESUMEN: hecho.\n# x"]).llm(), {"web_search": fake_search()},
+                     prefs=tmp_path / "agent_models.json")
+    with pytest.raises(ToolError):
+        team.set_model("compras", "otro:modelo")
+    team.set_model("compras", "fake:m")
+    assert AgentTeam(ScriptedLLM([]).llm(), {"web_search": fake_search()},
+                     prefs=tmp_path / "agent_models.json").prefer == {"compras": "fake:m"}
+    assert team.start("compras", "portátil", background=False).state == "terminado"
+
+    assistant = make_assistant()
+    assistant.team = team
+    client = TestClient(create_app(assistant, api_token="s"))
+    auth = {"Authorization": "Bearer s"}
+    assert client.post("/api/agents/model", json={"agent": "compras", "model": "x:y"}, headers=auth).status_code == 400
+    assert client.post("/api/agents/model", json={"agent": "compras", "model": ""}, headers=auth).json()["prefer"] == ""
+    assert "compras" not in team.prefer

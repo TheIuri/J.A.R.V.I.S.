@@ -27,12 +27,10 @@ from typing import Callable
 
 log = logging.getLogger(__name__)
 
-# id en el HUD -> (alias de Claude Code, nombre visible)
-MODELS = {
-    "claude-sonnet": ("sonnet", "Claude Sonnet"),
-    "claude-opus": ("opus", "Claude Opus"),
-    "claude-haiku": ("haiku", "Claude Haiku"),
-}
+# Versiones que se ofrecen en el HUD (CLAUDE_MODELS las cambia). El id es el nombre del modelo que se
+# pasa a Claude Code con --model; el primero es el de por defecto.
+DEFAULT_MODELS = ("claude-sonnet-5", "claude-opus-5-5", "claude-fable-5-1", "claude-haiku-4-5")
+MODEL_RE = re.compile(r"^claude-[a-z0-9][a-z0-9.-]{0,60}$")
 ALLOWED = ("WebSearch", "WebFetch")
 DISALLOWED = ("Bash", "Edit", "MultiEdit", "Write", "NotebookEdit", "Read", "Glob", "Grep", "LS", "Task", "TodoWrite")
 TIMEOUT_S = 5 * 60
@@ -54,15 +52,37 @@ Primer mensaje del usuario:
 """
 
 
+def label(model: str) -> str:
+    """"claude-opus-5-5" -> "Claude Opus 5.5"; "claude-haiku-4-5-20251001" -> "Claude Haiku 4.5"."""
+    parts = [x for x in model.removeprefix("claude-").split("-") if not re.fullmatch(r"\d{8}", x)]
+    family = parts[0].capitalize() if parts else "?"
+    version = ".".join(parts[1:])
+    return f"Claude {family}{f' {version}' if version else ''}"
+
+
 def _short(text: str, limit: int = 160) -> str:
     text = " ".join(str(text).split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def _fraction(value) -> float | None:
+    """Uso como fraccion 0-1 (Claude Code lo da asi; si viniera en %, se convierte)."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(v / 100 if v > 1 else v, 4)
+
+
 class ClaudeCode:
     def __init__(self, token: str, home: Path, exe: str | None = None,
-                 memories: Callable[[], list[str]] = lambda: [], timezone: str = "Europe/Madrid"):
+                 memories: Callable[[], list[str]] = lambda: [], timezone: str = "Europe/Madrid",
+                 models: list[str] | tuple[str, ...] = DEFAULT_MODELS):
         self.exe = exe if exe is not None else shutil.which("claude")
+        self.model_ids = [m for m in dict.fromkeys(models) if MODEL_RE.match(m)] or list(DEFAULT_MODELS)
+        self.stats: dict[str, dict] = {}  # uso de hoy por modelo
+        self.day = ""
+        self.limits: dict = {}  # ultimo aviso de limites de la membresia (ventana de 5 h, semanal...)
         self.token = token
         self.home = Path(home)  # config y sesiones de Claude Code (en el dataset: sobreviven a reinicios)
         self.memories = memories
@@ -75,7 +95,45 @@ class ClaudeCode:
         return bool(self.exe and self.token)
 
     def models(self) -> list[dict]:
-        return [{"id": k, "label": v[1]} for k, v in MODELS.items()] if self.available else []
+        return [{"id": m, "label": label(m)} for m in self.model_ids] if self.available else []
+
+    def usage(self) -> dict:
+        """Para el widget de cuota: lo gastado hoy por modelo y los limites de la membresia."""
+        self._roll_day()
+        return {"models": [{"id": k, "label": label(k), **v} for k, v in self.stats.items()], "limits": self.limits}
+
+    def _roll_day(self) -> None:
+        today = datetime.now().strftime("%Y-%m-%d")
+        if today != self.day:
+            self.day, self.stats = today, {}
+
+    def _count(self, model: str, result: dict | None, error: bool) -> None:
+        self._roll_day()
+        st = self.stats.setdefault(model, {"turns": 0, "errors": 0, "input_tokens": 0, "output_tokens": 0,
+                                           "cache_tokens": 0, "web_searches": 0, "ms": 0})
+        st["turns"] += 1
+        st["errors"] += int(error)
+        u = (result or {}).get("usage") or {}
+        st["input_tokens"] += int(u.get("input_tokens") or 0)
+        st["output_tokens"] += int(u.get("output_tokens") or 0)
+        st["cache_tokens"] += int(u.get("cache_read_input_tokens") or 0) + int(u.get("cache_creation_input_tokens") or 0)
+        st["web_searches"] += int((u.get("server_tool_use") or {}).get("web_search_requests") or 0)
+        st["ms"] += int((result or {}).get("duration_ms") or 0)
+
+    def _limit(self, info: dict) -> None:
+        """rate_limit_event de Claude Code: estado, que ventana manda, cuando se renueva y lo usado."""
+        windows = {}
+        for key, w in (info.get("unifiedWindows") or {}).items():
+            if isinstance(w, dict):
+                windows[key] = {"used": _fraction(w.get("utilization")), "resets_at": w.get("resetsAt")}
+        self.limits = {
+            "status": info.get("status"),  # allowed | allowed_warning | rejected
+            "type": info.get("rateLimitType"),  # five_hour | seven_day | ...
+            "used": _fraction(info.get("utilization")),
+            "resets_at": info.get("resetsAt"),
+            "windows": windows,
+            "at": int(time.time()),
+        }
 
     def reset(self, session: str) -> None:
         self.sessions.pop(session, None)
@@ -103,13 +161,12 @@ class ClaudeCode:
     def ask(self, text: str, model: str, session: str, emit: Callable[[dict], None]) -> tuple[str, list[str]]:
         if not self.available:
             raise RuntimeError("Claude no está configurado en el servidor (falta CLAUDE_CODE_OAUTH_TOKEN)")
-        if model not in MODELS:
+        if model not in self.model_ids:
             raise ValueError(f"modelo desconocido: {model}")
-        alias = MODELS[model][0]
         with self._lock:  # una conversacion con Claude a la vez
             resume = self.sessions.get(session)
             prompt = text if resume else self._intro() + text
-            return self._run(alias, resume, prompt, session, emit)
+            return self._run(model, resume, prompt, session, emit)
 
     def _intro(self) -> str:
         try:
@@ -165,13 +222,17 @@ class ClaudeCode:
                                       "ok": not item.get("is_error"),
                                       "ms": round((time.monotonic() - started.get(tid, time.monotonic())) * 1000),
                                       "text": _short(content or "")})
+                    elif kind == "rate_limit_event" and isinstance(msg.get("rate_limit_info"), dict):
+                        self._limit(msg["rate_limit_info"])
                     elif kind == "result":
                         result = msg
                 proc.wait()
             finally:
                 timer.cancel()
             stderr = proc.stderr.read()
-        if not result or result.get("is_error") or not str(result.get("result", "")).strip():
+        failed = not result or result.get("is_error") or not str(result.get("result", "")).strip()
+        self._count(alias, result, bool(failed))
+        if failed:
             self.sessions.pop(session, None)  # empezar limpio la proxima vez
             detail = (result or {}).get("result") or stderr.strip().splitlines()[-1:] or ["sin respuesta"]
             detail = detail if isinstance(detail, str) else detail[0]
