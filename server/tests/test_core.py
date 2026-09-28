@@ -203,6 +203,9 @@ def test_hud_can_choose_the_provider_and_others_stay_as_fallback():
     assert llm.chat([{"role": "user", "content": "hola"}], prefer="gemini").text == "soy gemini"
     broken = FallbackLLM([llm_with(ok_handler("soy groq"), "groq"), llm_with(fail_handler, "gemini")])
     assert broken.chat([{"role": "user", "content": "hola"}], prefer="gemini").text == "soy groq"
+    # El 429 de "broken" deja a gemini:m (el mismo modelo) apartado un rato; aqui se prueba otra cosa.
+    for p in llm.providers:
+        p.usage.blocked_until = 0
 
     assistant = Assistant(FakeSTT(), llm, FakeTTS(), "s")
     client = TestClient(create_app(assistant, api_token="s"))

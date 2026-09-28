@@ -1424,6 +1424,15 @@ async function loadAgents() {
     chip.className = "chip";
     chip.textContent = a.models;
     body.append(strong, p, chip);
+    if (a.profiles) {
+      // El captador: para qué productos o negocios sabe buscar clientes (LEADS_PROFILE_<NOMBRE>).
+      const prof = document.createElement("p");
+      prof.className = "profiles";
+      prof.textContent = a.profiles.length
+        ? `Busca clientes para: ${a.profiles.join(", ")}. Nómbralo en el encargo («busca clientes para ${a.profiles.at(-1)}»).`
+        : "Sin perfiles: añade LEADS_PROFILE para que sepa qué ofreces.";
+      body.append(prof);
+    }
     li.append(dot, body);
     agents.append(li);
   }

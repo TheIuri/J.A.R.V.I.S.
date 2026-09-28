@@ -29,6 +29,11 @@ def test_retry_after_is_read_from_every_provider_format():
     assert _retry_after(httpx.Response(429, text='[{"error": {"details": [{"retryDelay": "31s"}]}}]')) == 31
     assert _retry_after(httpx.Response(429, headers={"retry-after": "7"})) == 7
     assert _retry_after(httpx.Response(429, text="quota exceeded")) is None
+    cerebras = '{"message":"Requests per minute limit exceeded - too many requests sent.","type":"too_many_requests_error"}'
+    assert _retry_after(httpx.Response(429, text=cerebras, headers={
+        "x-ratelimit-reset-requests-minute": "12.4", "x-ratelimit-reset-tokens-minute": "3",
+        "x-ratelimit-reset-requests-day": "40000"})) == 12.4
+    assert _retry_after(httpx.Response(429, text=cerebras)) == 30  # por minuto, sin plazo
 
 
 def test_agents_wait_for_per_minute_limits_but_conversation_does_not():
@@ -102,3 +107,46 @@ def test_usage_endpoint():
     out = client.get("/api/usage", headers={"Authorization": "Bearer s"}).json()
     assert out["chain"] == [p.name for p in assistant.llm.providers] and out["agents"] == []
     assert out["models"][0]["requests"] >= 1
+
+
+def test_rotation_skips_models_at_their_limit():
+    calls = []
+
+    def first(request):
+        calls.append("first")
+        return limited("30s")
+
+    def second(request):
+        calls.append("second")
+        return httpx.Response(200, json=OK)
+
+    chain = FallbackLLM([llm("cerebras", first, "rot-a"), llm("groq", second, "rot-b")])
+    assert chain.chat([{"role": "user", "content": "x"}]).provider == "groq:rot-b"
+    assert calls == ["first", "second"]
+    calls.clear()
+    chain.chat([{"role": "user", "content": "x"}])
+    assert calls == ["second"]  # en su limite: ni se intenta mientras dura la espera
+
+
+def test_rotation_anticipates_the_per_minute_token_budget():
+    calls = []
+    headers = {"x-ratelimit-limit-tokens-minute": "60000", "x-ratelimit-remaining-tokens-minute": "500",
+               "x-ratelimit-reset-tokens-minute": "40"}
+
+    def first(request):
+        calls.append("first")
+        return httpx.Response(200, json=OK, headers=headers)
+
+    def second(request):
+        calls.append("second")
+        return httpx.Response(200, json=OK)
+
+    chain = FallbackLLM([llm("cerebras", first, "bud-a"), llm("groq", second, "bud-b")])
+    chain.chat([{"role": "user", "content": "x"}])
+    assert calls == ["first"]
+    calls.clear()
+    chain.chat([{"role": "user", "content": "x" * 4000}])  # ~1000 tokens + 100 de respuesta > 500
+    assert calls == ["second"]
+    calls.clear()
+    chain.chat([{"role": "user", "content": "x"}])  # peticion pequena: cabe
+    assert calls == ["first"]

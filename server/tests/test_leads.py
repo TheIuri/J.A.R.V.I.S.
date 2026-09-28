@@ -145,3 +145,19 @@ def test_lead_hunter_uses_the_profile_the_task_names(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "g")
     monkeypatch.setenv("LEADS_PROFILE_CALIPERWORKS", "Software para talleres")
     assert config.load_settings().leads_profiles == {"caliperworks": "Software para talleres"}
+
+
+def test_agents_endpoint_lists_the_hunter_profiles():
+    from fastapi.testclient import TestClient
+
+    from jarvis.main import create_app
+    from tests.test_core import make_assistant
+
+    assistant = make_assistant()
+    assistant.team = AgentTeam(ScriptedLLM([]).llm(), {"web_search": fake_search()}, lead_profile="Taller",
+                               lead_profiles={"caliperworks": "Software"})
+    agents = TestClient(create_app(assistant, api_token="s")).get(
+        "/api/agents", headers={"Authorization": "Bearer s"}).json()["agents"]
+    hunter = next(a for a in agents if a["id"] == "captador")
+    assert hunter["profiles"] == ["general", "caliperworks"]
+    assert "profiles" not in next(a for a in agents if a["id"] == "compras")

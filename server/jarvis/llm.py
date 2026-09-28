@@ -80,7 +80,18 @@ def _retry_after(resp: httpx.Response) -> float | None:
         return header
     # Groq: "Please try again in 10.6s" / "in 1m2.5s"; Gemini: "retryDelay": "31s"
     match = re.search(r'try again in ([\dhms.]+)|"retryDelay":\s*"([\d.]+s)"', resp.text)
-    return _seconds(match.group(1) or match.group(2)) if match else None
+    if match:
+        return _seconds(match.group(1) or match.group(2))
+    # Cerebras y otros: lo dicen en las cabeceras, p. ej. x-ratelimit-reset-requests-minute: 12.4
+    resets = [
+        wait for key, value in resp.headers.items()
+        if key.lower().startswith("x-ratelimit-reset-") and "day" not in key.lower()
+        and (wait := _seconds(value)) is not None and wait <= 120
+    ]
+    if resets:
+        return max(resets)
+    # Limite por minuto sin plazo: medio minuto suele bastar.
+    return 30.0 if re.search(r"per minute|por minuto|\bRPM\b|\bTPM\b", resp.text, re.I) else None
 
 
 # --- cuota ---------------------------------------------------------------------------------
@@ -150,10 +161,22 @@ class Usage:
         self.last_error_at = time.time()
         if retry_after is not None or "429" in message:
             self.limited += 1
-            # Sin plazo conocido (p. ej. cupo diario agotado) se marca una hora como orientacion.
-            self.blocked_until = self.last_error_at + (retry_after if retry_after is not None else 3600)
+            # Sin plazo conocido (p. ej. cupo diario agotado) se aparta 5 minutos y se vuelve a probar.
+            self.blocked_until = self.last_error_at + (retry_after if retry_after is not None else 300)
         if headers is not None:
             self.headers(headers)
+
+    def can_take(self, need_tokens: int) -> bool:
+        """False si esta en su limite o si, segun el proveedor, este minuto no le quedan tokens para la peticion."""
+        now = time.time()
+        if self.blocked_until > now:
+            return False
+        for meter in self.meters.values():
+            if meter["kind"] == "tokens" and meter["window"] == "min" and meter.get("reset_at", 0) > now:
+                remaining = meter.get("remaining")
+                if remaining is not None and remaining < need_tokens:
+                    return False
+        return True
 
     def state(self) -> str:
         now = time.time()
@@ -281,9 +304,14 @@ class FallbackLLM:
         """prefer: proveedor elegido en el HUD; va primero y el resto quedan de respaldo.
         patient: si todos estan en su limite por minuto, espera lo que digan (hasta MAX_PATIENCE_S) y
         reintenta. Solo para trabajos en segundo plano (agentes); la conversacion no puede esperar."""
-        order = sorted(self.providers, key=lambda p: p.provider != prefer) if prefer else self.providers
+        preferred = sorted(self.providers, key=lambda p: p.provider != prefer) if prefer else self.providers
+        # Tokens que pedira: ~4 caracteres por token de entrada, mas lo maximo que puede responder.
+        prompt_tokens = sum(len(str(m.get("content") or "")) for m in messages) // 4 + len(str(tools or "")) // 4
         errors: list[str] = []
         for attempt in range(3 if patient else 1):
+            # Rotacion: los que estan en su limite (o no les llega el cupo del minuto) pasan al final,
+            # como ultimo recurso; asi no se gasta un intento en el que va a fallar.
+            order = sorted(preferred, key=lambda p: not p.usage.can_take(prompt_tokens + p.max_tokens))
             errors, waits = [], []
             for provider in order:
                 try:

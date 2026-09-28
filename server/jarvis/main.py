@@ -408,7 +408,9 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         return {
             "agents": [
                 {"id": k, "label": SPECS[k].label, "doing": SPECS[k].doing, "description": SPECS[k].description,
-                 "models": team.llm_for(k).name}
+                 "models": team.llm_for(k).name,
+                 **({"profiles": [*(["general"] if team.lead_profile else []), *team.lead_profiles]}
+                    if k == "captador" else {})}
                 for k in team.available
             ],
             "jobs": [
