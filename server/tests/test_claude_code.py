@@ -135,3 +135,21 @@ def test_web_agents_can_work_with_claude_and_fall_back_to_their_chain(tmp_path):
     claude.token = ""  # sin membresia (p. ej. se quito el token): sigue con la cadena del agente
     job = team.start("compras", "monitor", background=False)
     assert job.state == "terminado" and job.summary == "con la cadena." and len(script.requests) == 1
+
+
+def test_agent_task_that_runs_out_of_turns_still_writes_the_report(tmp_path):
+    exe = tmp_path / "claude"
+    exe.write_text(f"""#!{sys.executable}
+import json, sys
+prompt = sys.stdin.read()
+print(json.dumps({{"type": "system", "session_id": "task-session-1"}}))
+if "--resume" in sys.argv:
+    assert sys.argv[sys.argv.index("--resume") + 1] == "task-session-1" and "NO uses mas herramientas" in prompt
+    print(json.dumps({{"type": "result", "result": "RESUMEN: tres talleres encajan."}}))
+else:
+    print(json.dumps({{"type": "result", "subtype": "error_max_turns", "is_error": True}}))
+""")
+    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+    claude = ClaudeCode("tok", tmp_path / "home", exe=str(exe))
+    assert claude.task("busca clientes", "claude-sonnet-5", lambda e: None) == "RESUMEN: tres talleres encajan."
+    assert claude.usage()["models"][0]["turns"] == 2 and claude.usage()["models"][0]["errors"] == 1

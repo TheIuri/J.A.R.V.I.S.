@@ -33,6 +33,7 @@ from zoneinfo import ZoneInfo
 
 from .activity import ActivityLog
 from .agent_history import AgentHistory
+from .claude_code import TASK_TOOL_BUDGET
 from .claude_code import label as claude_label
 from .leads import LeadStore, extract_leads, safe_url
 from .llm import FallbackLLM, LLMError
@@ -168,7 +169,10 @@ SPECS = {
 # Claude Code puede hacer aqui. Los que usan datos privados (NAS, agenda, notas) no.
 CLAUDE_AGENTS = ("investigador", "compras", "captador")
 CLAUDE_TOOLS_NOTE = ("\n\nTrabajas con Claude Code: en lugar de web_search usa WebSearch y en lugar de web_read usa WebFetch "
-                     "(wikipedia y news no estan: buscalas con WebSearch). Responde solo con el informe final.")
+                     "(wikipedia y news no estan: buscalas con WebSearch). Tienes un presupuesto de {budget} usos de "
+                     "herramientas en total: reparte bien (pocas busquedas buenas y lee solo las webs mas prometedoras) "
+                     "y, al llegar a unos {stop}, deja de buscar y escribe el informe con lo que tengas. "
+                     "Responde solo con el informe final.")
 # Tools con datos privados: nunca junto a web_read en el mismo agente.
 PRIVATE_TOOLS = {"truenas_status", "calendar_agenda", "reminder_list", "obsidian_search", "obsidian_read", "memory_search"}
 assert all(not (set(s.tools) & PRIVATE_TOOLS and "web_read" in s.tools) for s in SPECS.values())
@@ -481,7 +485,8 @@ class AgentTeam:
                 job.steps.append(event.get("name", "?"))
                 self._trace("agent_tool", job, tool=event.get("name", "?"), model=job.model)
 
-        return self.claude.task(f"{spec.prompt}{CLAUDE_TOOLS_NOTE}\n\n{self._task_text(job)}", model, emit)
+        note = CLAUDE_TOOLS_NOTE.format(budget=TASK_TOOL_BUDGET, stop=TASK_TOOL_BUDGET - 3)
+        return self.claude.task(f"{spec.prompt}{note}\n\n{self._task_text(job)}", model, emit)
 
     def _work_chain(self, job: Job, spec: AgentSpec) -> str:
         ctx = ToolContext()

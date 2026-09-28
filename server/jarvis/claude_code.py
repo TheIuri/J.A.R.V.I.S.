@@ -36,7 +36,10 @@ DISALLOWED = ("Bash", "Edit", "MultiEdit", "Write", "NotebookEdit", "Read", "Glo
 TIMEOUT_S = 5 * 60
 MAX_TURNS = 15
 TASK_TIMEOUT_S = 15 * 60  # encargos de los agentes (investigar, comparar, buscar clientes)
-TASK_MAX_TURNS = 30
+TASK_MAX_TURNS = 40
+TASK_TOOL_BUDGET = 20  # lo que se le pide que no pase (busquedas + lecturas); el tope real es TASK_MAX_TURNS
+WRAP_UP = ("Se acabo el tiempo de buscar: NO uses mas herramientas. Escribe ahora el informe final completo, con el "
+           "formato pedido, usando solo lo que ya has encontrado.")
 SESSION_RE = re.compile(r"^[A-Za-z0-9-]{8,80}$")
 TOOL_NAMES = {"WebSearch": "web_search", "WebFetch": "web_read"}
 PASS_ENV = ("PATH", "LANG", "LC_ALL", "TZ", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy",
@@ -74,6 +77,14 @@ def _fraction(value) -> float | None:
     except (TypeError, ValueError):
         return None
     return round(v / 100 if v > 1 else v, 4)
+
+
+class MaxTurns(RuntimeError):
+    """Claude Code llego al tope de turnos sin escribir la respuesta."""
+
+    def __init__(self, session_id: str | None):
+        super().__init__("Claude ha llegado al máximo de pasos")
+        self.session_id = session_id
 
 
 class ClaudeCode:
@@ -190,12 +201,20 @@ class ClaudeCode:
             raise RuntimeError("Claude no está configurado en el servidor")
         if model not in self.model_ids:
             raise ValueError(f"modelo desconocido: {model}")
-        text, _ = self._run(model, None, prompt, None, emit, TASK_MAX_TURNS, TASK_TIMEOUT_S)
+        try:
+            text, _ = self._run(model, None, prompt, None, emit, TASK_MAX_TURNS, TASK_TIMEOUT_S)
+        except MaxTurns as exc:
+            if not exc.session_id:
+                raise
+            # No tirar lo investigado: se retoma la misma sesion solo para que escriba el informe.
+            log.info("Claude llego al tope de pasos; le pido el informe con lo que tiene")
+            text, _ = self._run(model, exc.session_id, WRAP_UP, None, emit, 3, TIMEOUT_S)
         return text
 
     def _run(self, alias, resume, prompt, session, emit, max_turns=MAX_TURNS, timeout=TIMEOUT_S) -> tuple[str, list[str]]:
         names: dict[str, str] = {}
         used: list[str] = []
+        session_id = None
         started: dict[str, float] = {}
         result = None
         self.home.mkdir(parents=True, exist_ok=True)
@@ -216,8 +235,10 @@ class ClaudeCode:
                     except json.JSONDecodeError:
                         continue
                     kind = msg.get("type")
-                    if session and msg.get("session_id") and SESSION_RE.match(str(msg["session_id"])):
-                        self.sessions[session] = msg["session_id"]
+                    if msg.get("session_id") and SESSION_RE.match(str(msg["session_id"])):
+                        session_id = msg["session_id"]
+                        if session:
+                            self.sessions[session] = session_id
                     if kind == "assistant":
                         for item in msg.get("message", {}).get("content", []):
                             if item.get("type") == "tool_use":
@@ -255,5 +276,7 @@ class ClaudeCode:
             detail = (result or {}).get("result") or stderr.strip().splitlines()[-1:] or ["sin respuesta"]
             detail = detail if isinstance(detail, str) else detail[0]
             log.warning("Claude Code fallo: %s", _short(detail, 300))
+            if (result or {}).get("subtype") == "error_max_turns":
+                raise MaxTurns(session_id)
             raise RuntimeError(f"Claude no ha respondido: {_short(detail, 200)}")
         return str(result["result"]).strip(), used
