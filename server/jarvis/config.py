@@ -158,6 +158,7 @@ class Settings:
     leads_profile: str = ""  # lo que ofreces, para el captador de clientes (p. ej. "taller de impresion 3D en ...")
     insights_enabled: bool = True  # fichas con los datos clave de cada respuesta en el HUD
     wol_broadcast: str = "255.255.255.255"
+    claude_token: str = ""  # CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`): modo Claude con la membresia en el NAS
 
     @property
     def groq_api_key(self) -> str:
@@ -304,4 +305,5 @@ def load_settings() -> Settings:
                         if (m := re.fullmatch(r"LEADS_PROFILE_([A-Z0-9]+)", k)) and v.strip()},
         insights_enabled=_env_bool("INSIGHTS_ENABLED", True),
         wol_broadcast=_env("WOL_BROADCAST", "255.255.255.255"),
+        claude_token=_env("CLAUDE_CODE_OAUTH_TOKEN"),
     )

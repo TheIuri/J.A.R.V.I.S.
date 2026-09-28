@@ -256,7 +256,7 @@ function providerLabel(spec) {
 
 // Si ha contestado otro modelo que el elegido (limite, caida...), es un respaldo.
 function isBackup(spec) {
-  if (!spec || !currentModel) return false;
+  if (!spec || !currentModel || currentModel.startsWith("claude-")) return false; // Claude no tiene respaldo
   return spec !== currentModel && !spec.startsWith(`${currentModel}:`);
 }
 
@@ -308,7 +308,7 @@ async function loadModels() {
   } catch {
     /* servidor antiguo: solo automático */
   }
-  claudeModels.forEach((m) => options.push({ id: m.id, label: m.label, detail: "Tu membresía, desde este PC", group: "Claude · membresía" }));
+  claudeModels.forEach((m) => options.push({ id: m.id, label: m.label, detail: mode === "server" ? "Tu membresía, desde el NAS" : "Tu membresía, desde este PC", group: "Claude · membresía" }));
   modelOptions = options;
   let saved = "";
   try {
@@ -1491,7 +1491,7 @@ async function loadAgents() {
     li.append(dot, body);
     agents.append(li);
   }
-  if (claudeModels.length) {
+  if (claudeModels.length && mode !== "server") { // encargos y auditorias con Claude: solo en el PC
     for (const [id, label, desc] of [["claude", "Claude", "tareas complejas con tu membresía"], ["auditor", "Auditor de seguridad", "revisa el servidor o el código con Claude"]]) {
       const li = document.createElement("li");
       li.style.setProperty("--c", `rgb(${agentRgb(id).join(",")})`);

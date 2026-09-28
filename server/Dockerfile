@@ -16,6 +16,14 @@ COPY requirements.txt requirements-cuda.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && if [ "$WITH_CUDA" = "true" ]; then pip install --no-cache-dir -r requirements-cuda.txt; fi
 
+# Claude Code (binario oficial de npm, sin Node) para el modo Claude con la membresia desde el NAS.
+# Solo se usa si pones CLAUDE_CODE_OAUTH_TOKEN; WITH_CLAUDE=false lo deja fuera de la imagen.
+ARG WITH_CLAUDE=true
+ARG CLAUDE_CODE_VERSION=latest
+COPY install_claude.py ./
+RUN if [ "$WITH_CLAUDE" = "true" ]; then python install_claude.py "$CLAUDE_CODE_VERSION" /usr/local/bin/claude; fi \
+    && rm install_claude.py
+
 COPY jarvis ./jarvis
 
 EXPOSE 8765
