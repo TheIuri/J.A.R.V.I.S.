@@ -242,6 +242,7 @@ const MODEL_COLORS = {
   "claude-opus": [236, 146, 110],
   "claude-haiku": [244, 180, 140],
 };
+const PROVIDER_NAME = { groq: "Groq", gemini: "Gemini", cerebras: "Cerebras", mistral: "Mistral", opencode: "OpenCode", openrouter: "OpenRouter", ollama: "Ollama" };
 let currentModel = "";
 let modelOptions = [];
 
@@ -262,9 +263,19 @@ async function loadModels() {
   try {
     const resp = await api("/api/models");
     if (resp.ok) {
-      for (const m of (await resp.json()).models) {
-        const [provider, ...rest] = m.label.split(":");
-        options.push({ id: m.id, label: provider.charAt(0).toUpperCase() + provider.slice(1), detail: rest.join(":"), group: "JARVIS · servidor" });
+      // Por proveedor: primero los de tu cadena y después el resto de su catálogo.
+      const models = (await resp.json()).models;
+      const providers = [...new Set(models.map((m) => m.provider || String(m.id).split(":")[0]))];
+      for (const prov of providers) {
+        const own = models.filter((m) => (m.provider || String(m.id).split(":")[0]) === prov);
+        own.sort((a, b) => Number(b.chain !== false) - Number(a.chain !== false));
+        for (const m of own) {
+          const model = m.model || String(m.id).split(":").slice(1).join(":");
+          options.push({
+            id: m.id, label: model, group: PROVIDER_NAME[prov] || prov.charAt(0).toUpperCase() + prov.slice(1),
+            detail: m.chain === false ? "" : "En tu cadena", provider: prov,
+          });
+        }
       }
     }
   } catch {
@@ -311,7 +322,7 @@ function renderModelMenu() {
     text.append(name, small);
     const meter = document.createElement("span");
     meter.className = "mi-quota";
-    meter.dataset.provider = m.id;
+    meter.dataset.model = m.id;
     text.append(meter);
     item.append(sw, text);
     item.insertAdjacentHTML("beforeend", '<svg class="icon"><use href="#i-check"/></svg>');
@@ -331,7 +342,7 @@ function applyModel(id, announce) {
   const rgb = `rgb(${modelRgb(m.id).join(",")})`;
   $("model-btn").style.setProperty("--swatch", rgb);
   $("model-swatch").style.setProperty("--swatch", rgb);
-  $("model-label").textContent = m.detail && m.id ? `${m.label} · ${m.detail.split(",")[0]}` : m.label;
+  $("model-label").textContent = m.provider ? `${m.group} · ${m.label}` : m.label;
   $("model-menu").querySelectorAll(".menu-item").forEach((el) => el.setAttribute("aria-checked", String(el.dataset.id === m.id)));
   try {
     localStorage.setItem(MODEL_KEY, m.id);
@@ -416,7 +427,7 @@ function activeQuota() {
   if (!chain.length) return null;
   if (isClaude()) return null;
   if (currentModel) {
-    const own = chain.filter((m) => m.provider === currentModel);
+    const own = usage.models.filter((m) => m.name === currentModel || m.provider === currentModel);
     return own.sort((a, b) => QUOTA_RANK[b.state] - QUOTA_RANK[a.state])[0] || null;
   }
   const first = chain[0];
@@ -436,7 +447,7 @@ function renderUsage() {
   }
   // En el menú: la cuota de cada proveedor bajo su nombre.
   document.querySelectorAll("#model-menu .mi-quota").forEach((el) => {
-    const models = usage.models.filter((m) => m.provider === el.dataset.provider && usage.chain.includes(m.name));
+    const models = usage.models.filter((m) => m.name === el.dataset.model);
     el.textContent = "";
     if (!models.length) return;
     const worst = models.reduce((a, b) => (QUOTA_RANK[b.state] > QUOTA_RANK[a.state] ? b : a));

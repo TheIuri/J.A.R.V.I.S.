@@ -97,7 +97,8 @@ h2 .gris { color: var(--apagado); }
 .qbar.limit i { background: var(--rojo); }
 .chevron { width: 14px; height: 14px; color: var(--claro); transition: transform .35s var(--sale); }
 #model-btn[aria-expanded="true"] .chevron { transform: rotate(180deg); }
-#model-menu { position: absolute; top: calc(100% + 10px); left: 50%; width: 340px; transform: translateX(-50%);
+#model-menu { position: absolute; top: calc(100% + 10px); left: 50%; width: 360px; transform: translateX(-50%);
+  max-height: min(70vh, 560px); overflow-y: auto; overscroll-behavior: contain;
   padding: 8px; border-radius: 20px; background: rgba(36, 36, 38, 0.9); -webkit-backdrop-filter: var(--cristal);
   backdrop-filter: var(--cristal); animation: menu-entra .35s var(--sale); z-index: 20; }
 #model-menu[hidden] { display: none; }
@@ -108,6 +109,7 @@ h2 .gris { color: var(--apagado); }
 .menu-item:hover, .menu-item:focus-visible { background: var(--relleno); outline: none; }
 .menu-item .swatch { width: 22px; height: 22px; }
 .menu-item .mi-text { flex: 1; display: grid; line-height: 1.3; min-width: 0; font-weight: 500; }
+.menu-item .mi-text > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-item small { color: var(--claro); font-size: 12.5px; font-weight: 400; }
 .menu-item .icon { color: var(--azul); visibility: hidden; }
 .menu-item[aria-checked="true"] .icon { visibility: visible; }
