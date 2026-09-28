@@ -32,7 +32,7 @@ def _plain(text: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9 ]", " ", text).split())
 
 
-def _safe_url(url: str) -> str:
+def safe_url(url: str) -> str:
     url = url.strip()
     if re.match(r"^[\w-]+(\.[\w-]+)+(/|$)", url):  # "cafeterialuna.es" sin esquema
         url = "https://" + url
@@ -55,7 +55,7 @@ def extract_leads(text: str) -> tuple[list[dict[str, str]], str]:
         if not isinstance(item, dict):
             continue
         lead = {key: " ".join(str(item.get(src) or "").split())[:limit] for src, (key, limit) in FIELDS.items()}
-        lead["web"] = _safe_url(lead["web"])
+        lead["web"] = safe_url(lead["web"])
         if lead["name"]:
             leads.append(lead)
     return leads, (text[: match.start()] + text[match.end():]).strip()

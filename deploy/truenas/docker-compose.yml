@@ -25,6 +25,9 @@ services:
       LLM_PROVIDERS: "groq" # "groq,gemini" para tener reserva (necesita GEMINI_API_KEY)
       GROQ_API_KEY: "" # <<< https://console.groq.com/keys
       # GEMINI_API_KEY: "" # https://aistudio.google.com/apikey
+      # CEREBRAS_API_KEY: "" # https://cloud.cerebras.ai (mucho cupo gratis: ideal para los agentes)
+      # MISTRAL_API_KEY: "" # https://console.mistral.ai (plan Experiment, gratis)
+      # Cadenas con modelo concreto: "groq,groq:llama-3.3-70b-versatile,cerebras"
       # GROQ_MODEL: "openai/gpt-oss-120b" # si Groq lo retira, elige otro en console.groq.com/docs/models
       # GROQ_REASONING_EFFORT: "low" # pon "" si eliges un modelo que no razona
       # GEMINI_MODEL: "gemini-flash-latest" # alias de Google al Flash vigente

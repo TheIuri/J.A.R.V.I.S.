@@ -50,6 +50,7 @@ PROXY_POST = {"/api/chat", "/api/voice", "/api/reset", "/api/transcribe", "/api/
 STREAM_POST = {"/api/chat/stream", "/api/voice/stream"}  # flujo de pensamiento en directo (NDJSON)
 PROXY_GET = {
     "/api/memories", "/api/notifications", "/api/models", "/api/activity", "/api/agents", "/api/leads", "/api/insights",
+    "/api/usage",
     "/health",
 }
 MEMORY_DELETE = re.compile(r"^/api/memories/\d+$")

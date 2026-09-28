@@ -14,10 +14,11 @@ from dataclasses import dataclass, field
 VISION_DEFAULTS = {
     "groq": "meta-llama/llama-4-scout-17b-16e-instruct",
     "gemini": "gemini-flash-latest",
+    "mistral": "mistral-small-latest",  # Mistral Small tambien ve imagenes; Cerebras no tiene vision
     "openrouter": "meta-llama/llama-4-scout:free",
     "ollama": "llava",
 }
-REASONING_DEFAULTS = {"groq": "low"}
+REASONING_DEFAULTS = {"groq": "low", "cerebras": "low"}  # solo para modelos gpt-oss (los demas no razonan)
 
 # Proveedores LLM con API compatible con OpenAI: (base_url, variable de la API key, modelo por defecto).
 # Cualquiera se puede sobrescribir con <NOMBRE>_BASE_URL / <NOMBRE>_MODEL / <NOMBRE>_API_KEY,
@@ -30,6 +31,9 @@ LLM_PRESETS: dict[str, tuple[str, str | None, str]] = {
         "GEMINI_API_KEY",
         "gemini-flash-latest",  # alias de Google al Flash vigente: no se rompe cuando retiran uno
     ),
+    # Capas gratuitas generosas (clave gratis en cloud.cerebras.ai y console.mistral.ai)
+    "cerebras": ("https://api.cerebras.ai/v1", "CEREBRAS_API_KEY", "gpt-oss-120b"),
+    "mistral": ("https://api.mistral.ai/v1", "MISTRAL_API_KEY", "mistral-small-latest"),
     "openrouter": (
         "https://openrouter.ai/api/v1",
         "OPENROUTER_API_KEY",
@@ -165,17 +169,24 @@ def _coords(lat: str, lon: str) -> tuple[float, float] | None:
         raise RuntimeError("HOME_LATITUDE y HOME_LONGITUDE deben ser numeros, p. ej. 41.508 y 2.117") from exc
 
 
-def _llm_provider(name: str) -> LLMProviderConfig:
+def _llm_provider(spec: str) -> LLMProviderConfig:
+    """"groq" (modelo de GROQ_MODEL o el de fabrica) o "groq:llama-3.3-70b-versatile" (ese modelo).
+    Asi se encadenan varios modelos del mismo proveedor: en Groq cada modelo tiene su propio cupo."""
+    name, _, explicit = spec.strip().partition(":")
+    name, explicit = name.strip().lower(), explicit.strip()
     if name not in LLM_PRESETS:
         raise ValueError(f"Proveedor LLM desconocido: {name!r}. Opciones: {', '.join(LLM_PRESETS)}")
     base_url, key_var, model = LLM_PRESETS[name]
     prefix = name.upper()
+    model = explicit or _env(f"{prefix}_MODEL", model)
+    effort = REASONING_DEFAULTS.get(name, "") if "gpt-oss" in model else ""
     return LLMProviderConfig(
         name=name,
         base_url=_env(f"{prefix}_BASE_URL", base_url).rstrip("/"),
         api_key=_env(f"{prefix}_API_KEY") if key_var else "",
-        model=_env(f"{prefix}_MODEL", model),
-        reasoning_effort=_env(f"{prefix}_REASONING_EFFORT", REASONING_DEFAULTS.get(name, "")),
+        model=model,
+        # <NOMBRE>_REASONING_EFFORT vale para el modelo por defecto; uno explicito usa lo que le toca.
+        reasoning_effort=effort if explicit else _env(f"{prefix}_REASONING_EFFORT", effort),
     )
 
 
@@ -188,7 +199,7 @@ def _vision_order(*chains: list[LLMProviderConfig]) -> list[LLMProviderConfig]:
     names = [n.strip().lower() for n in _env("VISION_PROVIDERS").split(",") if n.strip()]
     if names:
         return [seen.get(n) or _llm_provider(n) for n in names]
-    return sorted(seen.values(), key=lambda p: p.name != "gemini")
+    return sorted((p for p in seen.values() if p.name in VISION_DEFAULTS), key=lambda p: p.name != "gemini")
 
 
 def _vision(p: LLMProviderConfig) -> LLMProviderConfig:
@@ -202,16 +213,16 @@ def load_settings() -> Settings:
     if not token:
         raise RuntimeError("API_TOKEN es obligatorio: nunca expongas el servidor sin autenticacion.")
 
-    names = [n.strip().lower() for n in _env("LLM_PROVIDERS", "groq").split(",") if n.strip()]
+    names = [n.strip() for n in _env("LLM_PROVIDERS", "groq").split(",") if n.strip()]
     providers = [_llm_provider(n) for n in names]
     # El agente investigador lee paginas largas: puede ir con otra cadena (p. ej. "gemini,groq").
-    agent_names = [n.strip().lower() for n in _env("AGENT_LLM_PROVIDERS").split(",") if n.strip()]
+    agent_names = [n.strip() for n in _env("AGENT_LLM_PROVIDERS").split(",") if n.strip()]
     agent_providers = [_llm_provider(n) for n in agent_names] or providers
     agent_models = {}
     for var, value in os.environ.items():
         match = re.fullmatch(r"AGENT_([A-Z]+)_PROVIDERS", var)
         if match and match.group(1) != "LLM" and value.strip():
-            agent_models[match.group(1).lower()] = [_llm_provider(n.strip().lower()) for n in value.split(",") if n.strip()]
+            agent_models[match.group(1).lower()] = [_llm_provider(n.strip()) for n in value.split(",") if n.strip()]
     every = providers + agent_providers + [p for chain in agent_models.values() for p in chain]
     missing = sorted({p.name for p in every if LLM_PRESETS[p.name][1] and not p.api_key})
     if missing:

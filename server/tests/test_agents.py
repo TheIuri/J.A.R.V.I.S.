@@ -78,7 +78,7 @@ def test_research_agent_end_to_end(tmp_path):
     note = (tmp_path / job.note).read_text()
     assert "# Paneles solares" in note and "puntos clave" in note  # no lo bloquea el filtro de secretos
     notice = board.since(0)[0]
-    assert notice.source == "agente" and notice.text.startswith("El investigador ha terminado: paneles solares en casa.")
+    assert notice.source == "agente" and notice.text == "El investigador ha terminado. Un panel da unos 400 W. Compensa en 7 años."
     status = agent_tools(team)[1].fn(ToolContext())
     assert status.startswith("[1] El investigador · paneles solares en casa: terminado [fake:m]: Un panel da unos 400 W.")
     # El agente solo tiene sus tools: el LLM las recibe todas y nada más.
@@ -160,7 +160,7 @@ def test_agent_result_endpoint_saves_note_and_notifies(tmp_path):
     assert out["summary"] == "Compensa en 7 años." and out["note"].startswith("JARVIS/Investigaciones/")
     assert "puntos clave" in (tmp_path / out["note"]).read_text()
     notice = assistant.board.since(0)[0]
-    assert notice.source == "claude" and notice.text.startswith("Claude ha terminado: placas solares. Compensa")
+    assert notice.source == "claude" and notice.text == "Claude ha terminado. Compensa en 7 años."
     assert client.post("/api/agent_result", json={"title": "x", "text": "a" * 20001}, headers=auth).status_code == 400
 
 
@@ -229,3 +229,36 @@ def test_activity_and_agents_endpoints():
     assert {"id": "compras", "label": "El asesor de compras", "doing": "comparando",
             "description": SPECS["compras"].description, "models": "fake:m"} in agents["agents"]
     assert agents["jobs"][0]["state"] == "terminado" and agents["jobs"][0]["model"] == "fake:m"
+
+
+def test_short_summary_is_short_and_clean():
+    from jarvis.agents import short_summary
+
+    assert short_summary("El **CONOPUPlus 16 L/día** gana. Lo tienes en [Obsidian](http://x). Tercera frase.") == (
+        "El CONOPUPlus 16 L/día gana. Lo tienes en Obsidian.")
+    long = "palabra " * 80
+    out = short_summary(long)
+    assert len(out) <= 220 and out.endswith("…")
+
+
+def test_options_become_cards(tmp_path):
+    from jarvis.activity import ActivityLog
+    from jarvis.agents import extract_options
+
+    block = ('```opciones\n[{"nombre": "Deshumidificador A", "datos": "12 L/día · 38 dB", "precio": "180 €", '
+             '"pros": "silencioso", "contras": "depósito pequeño", "url": "tienda.es/a", "recomendado": true},'
+             '{"nombre": "B", "url": "javascript:alert(1)", "recomendado": true}, {"datos": "sin nombre"}]\n```')
+    cards, rest = extract_options("RESUMEN: Gana el A.\n# Informe\nTexto\n" + block)
+    assert [c["title"] for c in cards] == ["Deshumidificador A", "B"]
+    assert cards[0] == {"title": "Deshumidificador A", "data": "12 L/día · 38 dB", "price": "180 €",
+                        "pros": "silencioso", "cons": "depósito pequeño", "url": "https://tienda.es/a", "best": True}
+    assert cards[1]["url"] == "" and cards[1]["best"] is False  # solo una recomendada
+    assert "```" not in rest
+    script = ScriptedLLM(["RESUMEN: Gana el A, por **silencioso**.\n# Informe\n" + block])
+    activity = ActivityLog()
+    team = AgentTeam(script.llm(), {"web_search": fake_search()}, Vault(tmp_path), activity=activity)
+    job = team.start("compras", "deshumidificador", background=False)
+    assert job.summary == "Gana el A, por silencioso." and len(job.cards) == 2
+    assert "```opciones" not in (tmp_path / job.note).read_text()
+    done = [e for e in activity.since(0) if e["type"] == "agent_done"][0]
+    assert done["cards"][0]["title"] == "Deshumidificador A"

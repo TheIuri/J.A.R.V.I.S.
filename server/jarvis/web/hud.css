@@ -23,6 +23,7 @@
   --boton-vivo: #0064d2;
   --verde: #30d158;
   --rojo: #ff453a;
+  --naranja: #ff9f0a;
   --r-baldosa: 28px;
   --r-control: 12px;
   --sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
@@ -84,6 +85,16 @@ h2 .gris { color: var(--apagado); }
 .model-text { display: flex; align-items: baseline; gap: 6px; flex: 1; min-width: 0; text-align: left; }
 .model-caption { font-size: 13px; color: var(--apagado); }
 #model-label { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quota-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--verde); }
+.quota-dot.low, .quota-dot.error { background: var(--naranja); }
+.quota-dot.limit { background: var(--rojo); animation: late 1.4s var(--sale) infinite; --live: var(--rojo); }
+.mi-quota { display: flex; align-items: center; gap: 8px; margin-top: 3px; font-size: 12px; font-weight: 400; color: var(--claro); }
+.mi-quota:empty { display: none; }
+.mi-quota.limit { color: var(--rojo); }
+.qbar { flex: none; width: 44px; height: 4px; border-radius: 2px; background: var(--relleno-2); overflow: hidden; }
+.qbar i { display: block; height: 100%; border-radius: 2px; background: var(--verde); }
+.qbar.low i, .qbar.error i { background: var(--naranja); }
+.qbar.limit i { background: var(--rojo); }
 .chevron { width: 14px; height: 14px; color: var(--claro); transition: transform .35s var(--sale); }
 #model-btn[aria-expanded="true"] .chevron { transform: rotate(180deg); }
 #model-menu { position: absolute; top: calc(100% + 10px); left: 50%; width: 340px; transform: translateX(-50%);
@@ -117,7 +128,8 @@ body:not(.gl) #orb { -webkit-mask-image: radial-gradient(ellipse at center, #000
   width: min(620px, calc(100% - var(--lado-izq) - var(--lado-der) - 4 * var(--hueco)));
   display: grid; justify-items: center; gap: 4px; text-align: center; }
 #trail { margin: 0; min-height: 1.4em; font-size: 12.5px; color: var(--apagado); }
-#subtitle { margin: 0; min-height: 1.5em; font-size: 21px; font-weight: 600; line-height: 1.35; letter-spacing: -0.02em;
+#subtitle { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  margin: 0; min-height: 1.5em; font-size: 21px; font-weight: 600; line-height: 1.35; letter-spacing: -0.02em;
   text-wrap: balance; max-width: 36ch; text-shadow: 0 2px 24px #000; }
 #you { margin: 0; min-height: 1.3em; font-size: 14px; color: var(--claro); }
 #state { margin: 6px 0 0; font-size: 13px; font-weight: 600; color: var(--azul); }
@@ -175,6 +187,22 @@ a.card:hover { background: #333336; transform: translateY(-1px); }
 .card .d { font-size: 13px; color: var(--claro); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3;
   -webkit-box-orient: vertical; overflow: hidden; }
 .card.wiki .d { -webkit-line-clamp: 6; }
+/* opciones de un agente (compras, investigador) */
+.card.option { position: relative; display: grid; gap: 6px; }
+.card.option.best { background: color-mix(in srgb, var(--c, var(--azul)) 16%, var(--baldosa-2)); }
+.opt-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.opt-head .t { margin: 0; }
+.price { flex: none; font-size: 14px; font-weight: 600; color: var(--texto); }
+.badge-best { justify-self: start; padding: 2px 9px; border-radius: 999px; background: var(--c, var(--azul)); color: #000;
+  font-size: 11.5px; font-weight: 600; }
+.card.option .d { -webkit-line-clamp: 2; }
+.pc { position: relative; padding-left: 16px; font-size: 13px; color: var(--claro); }
+.pc::before { position: absolute; left: 0; top: 0; font-weight: 700; }
+.pc.pro::before { content: "+"; color: var(--verde); }
+.pc.con::before { content: "−"; color: var(--rojo); }
+.card.option .pill-btn { justify-self: start; margin-top: 2px; }
+.cards-note { margin: 4px 6px 0; font-size: 12.5px; color: var(--apagado); }
+.jobs .pill-btn { margin-top: 10px; }
 @keyframes entra-lado { from { opacity: 0; transform: translateX(16px); filter: blur(6px); } }
 
 /* cámara */
@@ -308,6 +336,21 @@ a.card:hover { background: #333336; transform: translateY(-1px); }
 .insight-close .icon { width: 13px; height: 13px; }
 .insight:hover .insight-close, .insight-close:focus-visible { opacity: 1; }
 @keyframes ficha { from { opacity: 0; transform: translateY(-8px) scale(.97); filter: blur(6px); } }
+
+/* cuota */
+.quota { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.quota li { padding: 12px 14px; border-radius: 16px; background: var(--baldosa-2); }
+.q-head { display: flex; align-items: baseline; gap: 8px; }
+.q-name { flex: 1; min-width: 0; font: 12.5px var(--mono); overflow-wrap: anywhere; }
+.q-role { font-size: 12px; color: var(--apagado); }
+.q-state { flex: none; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; color: var(--verde);
+  background: color-mix(in srgb, var(--verde) 16%, transparent); }
+.q-state.low, .q-state.error { color: var(--naranja); background: color-mix(in srgb, var(--naranja) 16%, transparent); }
+.q-state.limit { color: var(--rojo); background: color-mix(in srgb, var(--rojo) 18%, transparent); }
+.q-meter { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 10px; margin-top: 8px; font-size: 12.5px; color: var(--claro); }
+.q-meter .qbar { grid-column: 1 / -1; width: 100%; }
+.q-meter .num { font-size: 12px; }
+.q-foot { margin: 8px 0 0; font-size: 12px; color: var(--apagado); }
 
 /* sesión */
 .metrics { display: grid; grid-template-columns: auto 1fr; margin: 0; font-size: 14px; }

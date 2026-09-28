@@ -42,6 +42,7 @@
           <span class="model-caption">Cerebro</span>
           <span id="model-label">Automático</span>
         </span>
+        <span class="quota-dot" id="quota-dot" hidden></span>
         <svg class="icon chevron"><use href="#i-chevron"/></svg>
       </button>
       <div id="model-menu" role="menu" aria-label="Elegir modelo" hidden></div>
@@ -117,6 +118,8 @@
           <dt>Modelo</dt><dd id="s-model" class="num">—</dd>
           <dt>Herramientas</dt><dd id="s-tools" class="num">—</dd>
         </dl>
+        <h2>Cuota. <span class="gris">Lo que queda de cada modelo.</span></h2>
+        <ul id="quota-list" class="quota"></ul>
         <h2>Córtex. <span class="gris">Qué región trabaja.</span></h2>
         <ul id="cortex"></ul>
         <div class="actions">

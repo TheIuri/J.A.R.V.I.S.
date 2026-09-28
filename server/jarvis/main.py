@@ -19,11 +19,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from .activity import ActivityLog
-from .agents import REPORT_FOLDER, SPECS, AgentTeam, agent_tools, split_report
+from .agents import REPORT_FOLDER, SPECS, AgentTeam, agent_tools, extract_options, short_summary, split_report
 from .config import Settings, load_settings
 from .insights import Insights
 from .leads import STATUSES as LEAD_STATUSES, LeadStore, lead_tools
-from .llm import FallbackLLM, LLMError, OpenAICompatLLM
+from .llm import FallbackLLM, LLMError, OpenAICompatLLM, usage_report
 from .memory import MemoryRejected, MemoryStore, RuleRetriever
 from .notify import NoticeBoard, NtfyPush, parse_quiet
 from .obsidian import Vault
@@ -413,7 +413,8 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             ],
             "jobs": [
                 {"id": j.id, "agent": j.agent, "task": j.topic, "state": j.state, "model": j.model,
-                 "steps": len(j.steps), "summary": j.summary, "note": j.note, "started": j.started.isoformat()}
+                 "steps": len(j.steps), "summary": j.summary, "note": j.note, "started": j.started.isoformat(),
+                 "cards": j.cards}
                 for j in list(team.jobs.values())[-10:]
             ],
         }
@@ -441,6 +442,18 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             return {"lead": lead_store().update(req.id, req.status, req.note)}
         except ToolError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/usage", dependencies=[Depends(require_token)])
+    def usage() -> dict:
+        """Cuota de cada modelo: lo gastado hoy, lo que queda segun el proveedor y si esta en su limite."""
+        a: Assistant = state["assistant"]
+        chain = [p.name for p in a.llm.providers]
+        team: AgentTeam | None = getattr(a, "team", None)
+        agents: list[str] = []
+        if team is not None:
+            for llm in [team.llm, *team.llms.values()]:
+                agents += [p.name for p in llm.providers if p.name not in chain + agents]
+        return {"chain": chain, "agents": agents, "models": usage_report(chain + agents)}
 
     @app.get("/api/models", dependencies=[Depends(require_token)])
     def models() -> dict:
@@ -483,7 +496,9 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         if req.source not in EXTERNAL_AGENTS:
             raise HTTPException(status_code=400, detail="Agente desconocido")
         label, folder = EXTERNAL_AGENTS[req.source]
-        summary, report = split_report(req.text)
+        cards, text = extract_options(req.text)
+        summary, report = split_report(text)
+        summary = short_summary(summary)
         title = " ".join(req.title.split())[:100] or "tarea"
         note = ""
         vault = getattr(a, "vault", None)
@@ -498,10 +513,10 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
                 log.warning("no se pudo guardar el informe de %s: %s", req.source, exc)
         board = getattr(a, "board", None)
         if board:
-            where = f" Lo tienes en Obsidian, en {note}." if note else ""
-            board.post("info", req.source, f"{label} ha terminado: {title}. {summary}{where}")
+            board.post("info", req.source, f"{label} ha terminado. {summary}")
         if getattr(a, "activity", None):
-            a.activity.emit("agent_done", agent=req.source, label=label, summary=summary, note=note, model="Claude")
+            a.activity.emit("agent_done", agent=req.source, label=label, summary=summary, note=note, model="Claude",
+                            cards=cards)
         log.info("informe de %s recibido (%d caracteres) -> %s", req.source, len(req.text), note or "sin nota")
         return {"note": note, "summary": summary}
 
