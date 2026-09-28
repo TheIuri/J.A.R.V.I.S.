@@ -31,6 +31,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .activity import ActivityLog
+from .agent_history import AgentHistory
 from .leads import LeadStore, extract_leads, safe_url
 from .llm import FallbackLLM, LLMError
 from .notify import NoticeBoard
@@ -245,8 +246,10 @@ class AgentTeam:
         leads: LeadStore | None = None,
         lead_profile: str = "",
         lead_profiles: dict[str, str] | None = None,
+        history: AgentHistory | None = None,
     ):
         self.llm = llm  # por defecto
+        self.history = history  # lo ya investigado, para no repetirlo
         self.llms = llms or {}  # cadena propia de algun agente
         self.activity = activity
         self.leads = leads  # donde guarda el captador sus leads
@@ -311,6 +314,17 @@ class AgentTeam:
             self._run(job)
         return job
 
+    def reuse(self, agent: str, task: str, done: dict) -> str:
+        """Contesta con un trabajo anterior parecido: el agente no se lanza y no gasta tokens."""
+        when = done["date"][:10]
+        if self.activity:
+            self.activity.emit("agent_reused", agent=agent, label=SPECS[agent].label, task=task, topic=done["topic"],
+                               date=done["date"], summary=done["summary"], note=done["note"], cards=done["cards"],
+                               model=done.get("model", ""))
+        where = f" Está en Obsidian: {done['note']}." if done["note"] else ""
+        return (f"{SPECS[agent].label} ya investigó algo parecido el {when} (\"{done['topic']}\"): {done['summary']}{where} "
+                "No se ha vuelto a lanzar. Díselo al usuario y ofrécele actualizarlo si lo quiere al día.")
+
     def _run(self, job: Job) -> None:
         spec = SPECS[job.agent]
         log.info("agente %d (%s): %r", job.id, job.agent, job.topic)
@@ -327,6 +341,8 @@ class AgentTeam:
                 new = self.leads.add(found, source=job.note or job.topic)
                 self._trace("leads", job, found=len(found), new=len(new), names=[lead["name"] for lead in new][:10])
             job.state = "terminado"
+            if self.history is not None:
+                self.history.add(job.agent, job.topic, job.summary, job.note, job.cards, job.model)
             # El aviso se dice en voz alta: corto, sin repetir el encargo ni la ruta (esa va en la tarjeta).
             self._notify(job, "info", f"{spec.label} ha terminado. {job.summary}")
             self._trace("agent_done", job, summary=job.summary, note=job.note, model=job.model, steps=len(job.steps),
@@ -391,7 +407,11 @@ class AgentTeam:
 
 
 def agent_tools(team: AgentTeam) -> list[Tool]:
-    def run(_ctx: ToolContext, agent: str, task: str) -> str:
+    def run(_ctx: ToolContext, agent: str, task: str, refresh: bool = False) -> str:
+        if agent in SPECS and team.history is not None and not refresh:
+            done = team.history.find(agent, task)
+            if done:
+                return team.reuse(agent, task, done)
         job = team.start(agent, task)
         where = " y lo guardará en Obsidian" if team.vault else ""
         return f"{SPECS[agent].label} se ha puesto con ello (tarea {job.id}). Avisará al terminar{where}."
@@ -415,13 +435,16 @@ def agent_tools(team: AgentTeam) -> list[Tool]:
             name="agent_run",
             description=(
                 "Encarga una tarea larga a un agente que trabaja en segundo plano, la guarda en Obsidian y avisa al "
-                f"terminar. Agentes: {agents}. Para preguntas rápidas responde tú o usa las herramientas normales."
+                f"terminar. Agentes: {agents}. Para preguntas rápidas responde tú o usa las herramientas normales. "
+                "Si ya se investigó algo parecido hace poco, devuelve ese informe sin gastar tokens; usa refresh=true "
+                "solo si el usuario pide actualizarlo o buscarlo de nuevo."
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "agent": {"type": "string", "enum": team.available},
                     "task": {"type": "string", "description": "El encargo completo, con el detalle que dio el usuario"},
+                    "refresh": {"type": "boolean", "description": "true: repetirlo aunque ya haya un informe parecido"},
                 },
                 "required": ["agent", "task"],
             },

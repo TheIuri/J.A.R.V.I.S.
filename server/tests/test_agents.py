@@ -262,3 +262,39 @@ def test_options_become_cards(tmp_path):
     assert "```opciones" not in (tmp_path / job.note).read_text()
     done = [e for e in activity.since(0) if e["type"] == "agent_done"][0]
     assert done["cards"][0]["title"] == "Deshumidificador A"
+
+
+def test_history_reuses_a_similar_task_without_launching_the_agent(tmp_path):
+    from datetime import datetime, timedelta
+
+    from jarvis.activity import ActivityLog
+    from jarvis.agent_history import AgentHistory, keywords, similar
+    from jarvis.agents import AgentTeam, agent_tools
+    from jarvis.tools import ToolContext
+    from tests.test_tools import ScriptedLLM
+
+    assert similar(keywords("compárame las mejores impresoras 3D de resina"), keywords("impresora 3D resina barata"))
+    assert not similar(keywords("impresoras 3D de resina"), keywords("aspiradoras robot"))
+
+    history = AgentHistory(tmp_path / "h.json")
+    script = ScriptedLLM(["RESUMEN: La mejor es la Elegoo Saturn.\n# Resinas\n- Elegoo"])
+    activity = ActivityLog()
+    team = AgentTeam(script.llm(), {"web_search": fake_search()}, activity=activity, history=history)
+    job = team.start("compras", "impresoras 3D de resina", background=False)
+    assert job.state == "terminado" and len(history.entries) == 1
+
+    run = agent_tools(team)[0]
+    out = run.fn(ToolContext(), agent="compras", task="compárame impresoras de resina 3D")
+    assert "ya investigó algo parecido" in out and "Elegoo Saturn" in out
+    assert len(team.jobs) == 1 and len(script.requests) == 1  # no se ha lanzado otro: 0 tokens
+    reused = [e for e in activity.since(0) if e["type"] == "agent_reused"][0]
+    assert reused["agent"] == "compras" and reused["summary"].startswith("La mejor")
+
+    # refresh=true lo repite; y lo guardado sobrevive a un reinicio.
+    assert "se ha puesto con ello" in run.fn(ToolContext(), agent="compras", task="impresoras 3D de resina", refresh=True)
+    assert AgentHistory(tmp_path / "h.json").find("compras", "resina impresoras 3D")
+    # Caducado, o un agente cuyo resultado envejece rápido: nada que reutilizar.
+    late = datetime.now() + timedelta(days=31)
+    assert AgentHistory(tmp_path / "h.json").find("compras", "impresoras 3D de resina", now=late) is None
+    history.add("tecnico", "estado del NAS", "todo bien")
+    assert history.find("tecnico", "estado del NAS") is None

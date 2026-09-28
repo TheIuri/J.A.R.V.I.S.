@@ -19,6 +19,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from .activity import ActivityLog
+from .agent_history import AgentHistory
 from .agents import REPORT_FOLDER, SPECS, AgentTeam, agent_tools, extract_options, short_summary, split_report
 from .config import Settings, load_settings
 from .insights import Insights
@@ -127,7 +128,7 @@ def build_assistant(settings: Settings) -> Assistant:
         leads = LeadStore(data / "leads.json")
         team = AgentTeam(
             agent_llm, available, vault, assistant.board, settings.timezone, own, assistant.activity,
-            leads, settings.leads_profile, settings.leads_profiles,
+            leads, settings.leads_profile, settings.leads_profiles, AgentHistory(data / "agents_history.json"),
         )
         assistant.team = team
         assistant.leads = leads

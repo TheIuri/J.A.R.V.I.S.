@@ -133,6 +133,10 @@ body:not(.gl) #orb { -webkit-mask-image: radial-gradient(ellipse at center, #000
 #subtitle { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
   margin: 0; min-height: 1.5em; font-size: 21px; font-weight: 600; line-height: 1.35; letter-spacing: -0.02em;
   text-wrap: balance; max-width: 36ch; text-shadow: 0 2px 24px #000; }
+#source { margin: 2px 0 0; display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; color: var(--claro); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.1); }
+#source::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--swatch, var(--azul)); }
+#source.backup { color: #ffd60a; border-color: rgba(255,214,10,.35); }
 #you { margin: 0; min-height: 1.3em; font-size: 14px; color: var(--claro); }
 #state { margin: 6px 0 0; font-size: 13px; font-weight: 600; color: var(--azul); }
 #state.error { color: var(--rojo); }
