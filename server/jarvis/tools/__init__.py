@@ -10,7 +10,7 @@ from ..memory import MemoryStore
 from ..obsidian import Vault
 from .basic import datetime_tool, weather_tool
 from .calendar import Calendars, calendar_tool, parse_calendars
-from .calendar_write import GoogleCalendar, OutlookCalendar, calendar_add_tool
+from .calendar_write import GoogleCalendar, OutlookCalendar, calendar_add_tool, calendar_missing_tool
 from .delegate import delegate_tool
 from .homeassistant import HomeAssistant, ha_tools
 from .info import info_tools
@@ -61,6 +61,8 @@ def build_registry(
     writers = _calendar_writers(settings)
     if writers:
         registry.register(calendar_add_tool(writers, settings.timezone))
+    else:
+        registry.register(calendar_missing_tool())  # que diga la verdad en vez de inventarse que lo ha creado
     for tool in reminder_tools(reminders) if reminders else []:
         registry.register(tool)
     if settings.ha_url and settings.ha_token:

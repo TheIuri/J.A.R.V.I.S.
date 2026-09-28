@@ -479,6 +479,18 @@ y el escritor no: usan tus datos privados (NAS, agenda, notas) y esos nunca van 
 primero, con datos clave, precio, lo mejor, lo peor y la fuente). Se abren al terminar y luego desde **Agentes → Ver
 resultados**. El aviso hablado es corto: el resumen en una o dos frases; el informe completo queda en Obsidian.
 
+**Vigilancia de alucinaciones (0 tokens)**: al terminar un informe, JARVIS comprueba con código (sin preguntar a
+ningún modelo) que cada web, email, teléfono y precio que da el agente aparece en lo que de verdad leyó. Lo que no
+aparece sale marcado **"Sin verificar"** en la tarjeta o el lead, en una sección *Verificación de datos* de la nota de
+Obsidian y en el aviso ("Ojo: 2 datos sin verificar"). No significa que sea falso, sino que no hay fuente que lo
+respalde: compruébalo antes de usarlo.
+
+**Agentes personalizados**: en **Agentes → Nuevo agente** (o pidiéndoselo a JARVIS: *"crea un agente que vigile los
+precios del filamento"*) creas un especialista con nombre, instrucciones y modelo (p. ej. Claude Sonnet). Límites
+fijos: **solo busca y lee en internet** (nunca tus datos privados), máximo **8**, instrucciones de hasta 2000
+caracteres y el mismo presupuesto de pasos que los demás. Sale en el equipo y en *Encargo*, reutiliza sus informes
+durante 30 días y guarda en `JARVIS/Agentes/<nombre>`. Crear no pide confirmación; quitarlo por voz sí.
+
 **Sin repetir investigaciones (0 tokens)**: cada informe del investigador y del de compras se apunta en el NAS
 (`agents_history.json`). Si pides algo parecido mientras siga vigente (compras: 30 días; investigador: 90), JARVIS te
 contesta con ese informe y sus tarjetas sin lanzar el agente. Di "actualízalo" o "búscalo de nuevo" para repetirlo. El

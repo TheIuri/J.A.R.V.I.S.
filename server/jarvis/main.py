@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from .activity import ActivityLog
 from .agent_history import AgentHistory
 from .auditor import Auditor, audit_tool, parse_projects
-from .agents import CLAUDE_AGENTS, REPORT_FOLDER, SPECS, AgentTeam, agent_tools, extract_options, short_summary, split_report
+from .agents import REPORT_FOLDER, SPECS, AgentTeam, agent_tools, extract_options, short_summary, split_report
 from .claude_code import DEFAULT_MODELS as CLAUDE_DEFAULTS
 from .claude_code import ClaudeCode, label
 from .config import Settings, load_settings
@@ -136,7 +136,7 @@ def build_assistant(settings: Settings) -> Assistant:
         team = AgentTeam(
             agent_llm, available, vault, assistant.board, settings.timezone, own, assistant.activity,
             leads, settings.leads_profile, settings.leads_profiles, AgentHistory(data / "agents_history.json"),
-            data / "agent_models.json", data / "lead_profiles.json",
+            data / "agent_models.json", data / "lead_profiles.json", data / "custom_agents.json",
         )
         assistant.team = team
         assistant.leads = leads
@@ -255,6 +255,13 @@ class AgentRunRequest(BaseModel):
     agent: str
     task: str
     refresh: bool = False  # repetirlo aunque haya un informe parecido reciente
+
+
+class CustomAgentRequest(BaseModel):
+    name: str
+    description: str = ""
+    instructions: str
+    model: str = ""
 
 
 class AgentModelRequest(BaseModel):
@@ -418,12 +425,12 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
     @app.get("/internal/agents", dependencies=[Depends(require_internal)], include_in_schema=False)
     def internal_agents() -> dict:
         team = web_team()
-        return {"agents": [{"id": k, "description": SPECS[k].description} for k in CLAUDE_AGENTS if k in team.available]}
+        return {"agents": [{"id": k, "description": team.specs[k].description} for k in team.web_agents()]}
 
     @app.post("/internal/agents/run", dependencies=[Depends(require_internal)], include_in_schema=False)
     def internal_agent_run(req: AgentRunRequest) -> dict:
         team = web_team()
-        if req.agent not in CLAUDE_AGENTS:  # nunca los agentes con datos privados
+        if not team.is_web(req.agent):  # nunca los agentes con datos privados
             raise HTTPException(status_code=400, detail=f"agente no disponible: {req.agent}")
         try:
             job, message = team.request(req.agent, req.task, req.refresh)
@@ -458,8 +465,9 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
 
     @app.get("/internal/agents/status", dependencies=[Depends(require_internal)], include_in_schema=False)
     def internal_agent_status() -> dict:
-        jobs = [j for j in web_team().jobs.values() if j.agent in CLAUDE_AGENTS][-5:]
-        lines = [f"[{j.id}] {SPECS[j.agent].label} · {j.topic}: {j.state}"
+        team = web_team()
+        jobs = [j for j in team.jobs.values() if team.is_web(j.agent)][-5:]
+        lines = [f"[{j.id}] {team.specs[j.agent].label} · {j.topic}: {j.state}"
                  + (f": {j.summary}" if j.summary and j.state != "trabajando" else "") for j in jobs]
         return {"status": "\n".join(lines) or "No hay encargos a estos agentes."}
 
@@ -575,6 +583,27 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"job": job.id if job else None, "reused": job is None, "message": message}
 
+    @app.post("/api/agents/custom", dependencies=[Depends(require_token)])
+    def create_custom_agent(req: CustomAgentRequest) -> dict:
+        """Nuevo agente personalizado (solo internet, maximo 8)."""
+        team: AgentTeam | None = getattr(state["assistant"], "team", None)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Agentes desactivados")
+        try:
+            return {"agent": team.create_agent(req.name, req.description, req.instructions, req.model)}
+        except ToolError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/agents/custom/{key}", dependencies=[Depends(require_token)])
+    def delete_custom_agent(key: str) -> dict:
+        team: AgentTeam | None = getattr(state["assistant"], "team", None)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Agentes desactivados")
+        try:
+            return {"deleted": team.delete_agent(key)}
+        except ToolError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.post("/api/agents/model", dependencies=[Depends(require_token)])
     def agent_model(req: AgentModelRequest) -> dict:
         """Elegir desde el HUD el modelo que va primero para un agente (el resto de su cadena, de respaldo)."""
@@ -595,7 +624,8 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             return {"agents": [], "jobs": []}
         return {
             "agents": [
-                {"id": k, "label": SPECS[k].label, "doing": SPECS[k].doing, "description": SPECS[k].description,
+                {"id": k, "label": team.specs[k].label, "doing": team.specs[k].doing,
+                 "description": team.specs[k].description, "custom": k in team.custom,
                  "models": team.llm_for(k).name, "prefer": team.prefer.get(k, ""),
                  "choices": team.model_choices(k),
                  **({"profiles": [*(["general"] if team.lead_profile else []), *team.lead_profiles]}

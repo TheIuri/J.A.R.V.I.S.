@@ -1252,6 +1252,15 @@ function showCards(cards) {
 $("cards-close").addEventListener("click", hideCards);
 
 // Resultados de un agente (investigador, compras...): una tarjeta por opción, la recomendada primero.
+// Vigilancia de alucinaciones: datos que el agente dio pero no aparecen en lo que leyó.
+function unverifiedNote(items) {
+  const p = document.createElement("p");
+  p.className = "unverified";
+  p.textContent = `Sin verificar: ${items.join(" · ")}`;
+  p.title = "No aparece en ninguna fuente que leyó el agente. Compruébalo antes de usarlo.";
+  return p;
+}
+
 function showOptions(label, cards, note, rgb) {
   const list = $("cards-list");
   list.textContent = "";
@@ -1278,6 +1287,7 @@ function showOptions(label, cards, note, rgb) {
       el.append(badge);
     }
     el.append(head);
+    if (c.unverified?.length) el.append(unverifiedNote(c.unverified));
     if (c.data) {
       const d = document.createElement("div");
       d.className = "d";
@@ -1478,6 +1488,11 @@ function onActivity(ev) {
       if (!ev.job && ext) ext.steps++;
       break;
     }
+    case "agent_verify":
+      trace(label, ev.unverified?.length
+        ? `comprobados ${ev.checked} datos · ${ev.unverified.length} sin verificar: ${ev.unverified.join(", ")}`
+        : `comprobados ${ev.checked} datos: todos salen en las fuentes`, ev.unverified?.length ? [255, 214, 10] : [48, 209, 88]);
+      break;
     case "agent_done":
       sat.state = "done";
       sat.el.classList.add("done");
@@ -1632,6 +1647,36 @@ $("agent-form").addEventListener("submit", async (e) => {
   }
 });
 
+// Agentes personalizados: formulario de alta (el servidor pone los límites).
+function fillCustomForm(agents) {
+  $("custom-new").hidden = !agents.length;
+  const sel = $("custom-model");
+  const prev = sel.value;
+  sel.textContent = "";
+  sel.append(new Option("Modelo: la cadena de los agentes", ""));
+  for (const m of claudeModels) sel.append(new Option(`Modelo: ${m.label}`, m.id));
+  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+}
+
+$("custom-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("custom-msg").textContent = "";
+  try {
+    const resp = await api("/api/agents/custom", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: $("custom-name").value, description: $("custom-desc").value,
+        instructions: $("custom-instr").value, model: $("custom-model").value }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(body.detail || `HTTP ${resp.status}`);
+    $("custom-msg").textContent = `Creado «${body.agent.name}». Ya puedes hacerle encargos.`;
+    for (const id of ["custom-name", "custom-desc", "custom-instr"]) $(id).value = "";
+    loadAgents();
+  } catch (err) {
+    $("custom-msg").textContent = `No se pudo: ${err.message || err}`;
+  }
+});
+
 async function loadAgents() {
   if (mode === "server" && !getToken()) return;
   let data = { agents: [], jobs: [] };
@@ -1642,6 +1687,7 @@ async function loadAgents() {
     /* sin conexión: se deja lo que había */
   }
   fillAgentForm(data.agents);
+  fillCustomForm(data.agents);
   const agents = $("agents-list");
   agents.textContent = "";
   for (const a of data.agents) {
@@ -1659,6 +1705,19 @@ async function loadAgents() {
     chip.textContent = a.prefer ? `${modelName(a.prefer)} · su cadena de respaldo` : a.models;
     body.append(strong, p, chip);
     if (a.choices?.length) body.append(agentModelPicker(a));
+    if (a.custom) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "btn-quiet";
+      del.textContent = "Quitar agente";
+      del.addEventListener("click", async () => {
+        if (!confirm(`¿Quitar el agente «${a.label}»? Sus informes siguen en Obsidian.`)) return;
+        const resp = await api(`/api/agents/custom/${encodeURIComponent(a.id)}`, { method: "DELETE" });
+        if (resp.ok) trace(a.label, "agente quitado", agentRgb(a.id));
+        loadAgents();
+      });
+      body.append(del);
+    }
     if (a.profiles) {
       // El captador: para qué productos o negocios sabe buscar clientes (LEADS_PROFILE_<NOMBRE>).
       const prof = document.createElement("p");
@@ -1930,6 +1989,7 @@ function renderLeads() {
       fit.textContent = lead.fit;
       li.append(fit);
     }
+    if (lead.unverified?.length) li.append(unverifiedNote(lead.unverified));
     const contact = document.createElement("div");
     contact.className = "lead-contact";
     const url = safeUrl(lead.web);

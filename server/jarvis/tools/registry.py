@@ -50,6 +50,10 @@ class Tool:
     confirm: bool = False  # se ofrece, pero solo se ejecuta si el usuario dice "si" en el turno siguiente
     describe: Callable[[dict[str, Any]], str] | None = None  # texto de la pregunta de confirmacion
     live_description: Callable[[], str] | None = None  # si cambia en marcha (p. ej. perfiles del captador)
+    live_parameters: Callable[[], dict[str, Any]] | None = None  # idem con el esquema (p. ej. agentes nuevos)
+
+    def params(self) -> dict[str, Any]:
+        return self.live_parameters() if self.live_parameters else self.parameters
     needs_image: bool = False  # solo se ofrece si el turno trae foto de la camara
     timeout_s: float = 10.0
 
@@ -114,7 +118,7 @@ class ToolRegistry:
         """Definiciones en formato OpenAI. Solo se ofrecen las tools que se pueden ejecutar ahora."""
         specs = []
         for t in self._available(ctx):
-            params = t.parameters
+            params = t.params()
             if t.name == "pc_open_app":
                 params = json.loads(json.dumps(params))
                 params["properties"]["app"]["enum"] = ctx.pc_apps
@@ -135,7 +139,7 @@ class ToolRegistry:
                 raise ToolError(f"argumentos no son JSON valido: {exc}") from exc
             if not isinstance(args, dict):
                 raise ToolError("los argumentos deben ser un objeto JSON")
-            _validate(tool.parameters, args)
+            _validate(tool.params(), args)
             if tool.name == "pc_open_app" and args.get("app") not in (ctx.pc_apps or []):
                 raise ToolError(f"app no permitida; opciones: {ctx.pc_apps}")
             if tool.confirm:

@@ -104,6 +104,10 @@ def test_creating_an_event_needs_a_yes():
 
 def test_registry_offers_it_only_with_credentials(tmp_path):
     base = dict(api_token="t", data_dir=str(tmp_path))
-    assert "calendar_add" not in build_registry(Settings(**base)).names()
+    # Sin Google ni Outlook la tool existe, pero solo para decir la verdad: no crea nada y explica como conectarlo.
+    missing = build_registry(Settings(**base))
+    from jarvis.tools import ToolContext as _Ctx
+    out = missing.execute("calendar_add", '{"title": "Dentista", "date": "2026-10-01"}', _Ctx())
+    assert out.startswith("ERROR: todavía no puedo crear eventos") and "recordatorio" in out
     reg = build_registry(Settings(**base, outlook_client_id="c", outlook_refresh_token="r"))
     assert "calendar_add" in reg.names()
