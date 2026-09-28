@@ -33,17 +33,25 @@ import httpx
 
 from claude_mode import MODELS as CLAUDE_MODELS
 from claude_mode import ClaudeChat
-from delegate import Delegate
+from delegate import Delegate, load_projects
 from pc_actions import PCActions, load_apps
 
 # La interfaz vive en el servidor (tambien la sirve el NAS para el movil); aqui se usa la copia del repo.
 STATIC_DIR = Path(__file__).resolve().parent.parent / "server" / "jarvis" / "web"
-CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
+CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".woff2": "font/woff2",
+}
 
 # Rutas del servidor que el HUD puede usar (nada mas se reenvia).
-PROXY_POST = {"/api/chat", "/api/voice", "/api/reset", "/api/transcribe"}
+PROXY_POST = {"/api/chat", "/api/voice", "/api/reset", "/api/transcribe", "/api/leads/update"}
 STREAM_POST = {"/api/chat/stream", "/api/voice/stream"}  # flujo de pensamiento en directo (NDJSON)
-PROXY_GET = {"/api/memories", "/api/notifications", "/api/models", "/health"}
+PROXY_GET = {
+    "/api/memories", "/api/notifications", "/api/models", "/api/activity", "/api/agents", "/api/leads", "/api/insights",
+    "/health",
+}
 MEMORY_DELETE = re.compile(r"^/api/memories/\d+$")
 MAX_BODY = 12 * 1024 * 1024
 EVENTS_WAIT_S = 20  # espera larga: el navegador recibe los avisos al instante
@@ -54,7 +62,10 @@ class Hud:
         self.api = httpx.Client(base_url=server.rstrip("/"), headers={"Authorization": f"Bearer {token}"}, timeout=90)
         self._events: list[dict] = []
         self._cond = threading.Condition()
-        delegate = Delegate(self.report, self.announce)
+        delegate = Delegate(
+            self.report, self.announce, event=self.agent_event,
+            projects=load_projects(Path(__file__).with_name("audit.json")),
+        )
         self.actions = PCActions(load_apps(apps_path), self.announce, delegate) if actions_enabled else None
         self.wake = None  # WakeListener si "Hey Jarvis" esta activo
         self.claude = ClaudeChat(shutil.which("claude"), self.memories)  # modo Claude (membresia)
@@ -107,10 +118,17 @@ class Hud:
             "tools_used": used, "pc_actions": [], "cards": [], "audio_wav_b64": audio,
         })
 
-    def report(self, title: str, text: str) -> None:
+    def agent_event(self, event: dict) -> None:
+        """Lo que hace Claude Code, al servidor, para que el cerebro del HUD lo dibuje en directo."""
+        try:
+            self.api.post("/api/agent_event", json=event, timeout=5)
+        except httpx.HTTPError:
+            pass
+
+    def report(self, title: str, text: str, agent: str = "claude") -> None:
         """Informe de Claude Code: el servidor lo guarda en Obsidian y avisa a todos los HUD (y al movil)."""
         try:
-            self.api.post("/api/agent_result", json={"title": title, "text": text, "source": "claude"}).raise_for_status()
+            self.api.post("/api/agent_result", json={"title": title, "text": text, "source": agent}).raise_for_status()
         except httpx.HTTPError as exc:
             print(f"(no se pudo entregar el informe de Claude: {exc})")
             self.announce("Claude ha terminado, pero no he podido guardar el informe.")
@@ -258,8 +276,9 @@ def make_handler(hud: Hud, port: int):
             path = self.path.split("?")[0]
             if path in ("/", "/index.html"):
                 path = "/index.html"
-            static = STATIC_DIR / path.lstrip("/")
-            if static.suffix in CONTENT_TYPES and static.parent == STATIC_DIR and static.is_file():
+            static = (STATIC_DIR / path.lstrip("/")).resolve()
+            # Solo archivos de la carpeta de la web (y sus subcarpetas: vendor/, fonts/); nada fuera de ella.
+            if static.suffix in CONTENT_TYPES and STATIC_DIR.resolve() in static.parents and static.is_file():
                 return self._send(200, static.read_bytes(), CONTENT_TYPES[static.suffix])
             if path == "/hud/config":
                 claude = [{"id": k, "label": v[1]} for k, v in CLAUDE_MODELS.items()] if hud.claude.exe else []

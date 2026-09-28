@@ -18,8 +18,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+from .activity import ActivityLog
 from .agents import REPORT_FOLDER, SPECS, AgentTeam, agent_tools, split_report
 from .config import Settings, load_settings
+from .insights import Insights
+from .leads import STATUSES as LEAD_STATUSES, LeadStore, lead_tools
 from .llm import FallbackLLM, LLMError, OpenAICompatLLM
 from .memory import MemoryRejected, MemoryStore, RuleRetriever
 from .notify import NoticeBoard, NtfyPush, parse_quiet
@@ -30,6 +33,7 @@ from .stt import FasterWhisperSTT, GroqSTT
 from .tools import build_registry
 from .tools.info import research_tools
 from .tools.calendar import Calendars, parse_calendars
+from .tools.registry import ToolError
 from .tools.reminders import ReminderStore
 from .tools.truenas import _default_connect
 from .tools.vision import Vision, check_image
@@ -100,6 +104,9 @@ def build_assistant(settings: Settings) -> Assistant:
         retriever,
     )
     assistant.vault = vault
+    assistant.activity = ActivityLog()  # trazabilidad de agentes para el HUD
+    if settings.insights_enabled:
+        assistant.insights = Insights(llm, assistant.activity)
     if reminders:
         assistant.board, assistant.watcher = build_watcher(settings, assistant, reminders, calendars)
     if tools and settings.agents_enabled:
@@ -110,12 +117,21 @@ def build_assistant(settings: Settings) -> Assistant:
                 if name not in available and (tool := tools.get(name)):
                     available[name] = tool
         # Informes largos: mas tokens de salida que una respuesta hablada.
-        agent_llm = FallbackLLM(
-            [OpenAICompatLLM(p, settings.llm_timeout_s * 2, max(4096, settings.llm_max_tokens))
-             for p in settings.agent_llm_providers or settings.llm_providers]
+        def chain(providers):
+            return FallbackLLM(
+                [OpenAICompatLLM(p, settings.llm_timeout_s * 2, max(4096, settings.llm_max_tokens)) for p in providers]
+            )
+
+        agent_llm = chain(settings.agent_llm_providers or settings.llm_providers)
+        own = {key: chain(providers) for key, providers in settings.agent_models.items() if key in SPECS}
+        leads = LeadStore(data / "leads.json")
+        team = AgentTeam(
+            agent_llm, available, vault, assistant.board, settings.timezone, own, assistant.activity,
+            leads, settings.leads_profile,
         )
-        team = AgentTeam(agent_llm, available, vault, assistant.board, settings.timezone)
-        for tool in agent_tools(team):
+        assistant.team = team
+        assistant.leads = leads
+        for tool in agent_tools(team) + lead_tools(leads):
             tools.register(tool)
         log.info("Agentes: %s (informes en %s)", ", ".join(team.available), "Obsidian" if vault else "memoria")
     return assistant
@@ -183,6 +199,27 @@ class AgentResult(BaseModel):
     title: str
     text: str
     source: str = "claude"
+
+
+# Agentes externos (Claude Code en el PC): donde va su informe y como se llaman en el HUD.
+EXTERNAL_AGENTS = {
+    "claude": ("Claude", REPORT_FOLDER),
+    "auditor": ("El auditor de seguridad", "JARVIS/Seguridad"),
+}
+
+
+class AgentEvent(BaseModel):
+    type: str
+    agent: str
+    task: str = ""
+    tool: str = ""
+    model: str = ""
+
+
+class LeadUpdate(BaseModel):
+    id: int
+    status: str
+    note: str = ""
 
 
 class SessionRequest(BaseModel):
@@ -341,6 +378,70 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             model=req.model, image=_image(req.image),
         )
 
+    @app.post("/api/agent_event", dependencies=[Depends(require_token)])
+    def agent_event(ev: AgentEvent) -> dict:
+        """El PC cuenta en directo lo que hace Claude Code (inicio y herramientas) para el cerebro del HUD."""
+        if ev.agent not in EXTERNAL_AGENTS or ev.type not in ("agent_start", "agent_tool", "agent_error"):
+            raise HTTPException(status_code=400, detail="Evento no admitido")
+        log_: ActivityLog | None = getattr(state["assistant"], "activity", None)
+        if log_:
+            log_.emit(ev.type, agent=ev.agent, label=EXTERNAL_AGENTS[ev.agent][0], task=ev.task[:200],
+                      tool=ev.tool[:40], model=ev.model[:40] or "Claude")
+        return {"ok": True}
+
+    @app.get("/api/activity", dependencies=[Depends(require_token)])
+    def activity(after: int = -1, wait: float = 0) -> dict:
+        """Lo que hacen los agentes, en directo (after=-1: solo el ultimo id; wait: espera larga, max 25 s)."""
+        log_: ActivityLog | None = getattr(state["assistant"], "activity", None)
+        if log_ is None:
+            return {"events": [], "last": 0}
+        if after < 0:
+            return {"events": [], "last": log_.last_id}
+        return {"events": log_.since(after, min(max(wait, 0), NOTIFY_WAIT_MAX_S)), "last": log_.last_id}
+
+    @app.get("/api/agents", dependencies=[Depends(require_token)])
+    def agents() -> dict:
+        """Agentes disponibles, su cadena de modelos y sus tareas recientes (panel del HUD)."""
+        team: AgentTeam | None = getattr(state["assistant"], "team", None)
+        if team is None:
+            return {"agents": [], "jobs": []}
+        return {
+            "agents": [
+                {"id": k, "label": SPECS[k].label, "doing": SPECS[k].doing, "description": SPECS[k].description,
+                 "models": team.llm_for(k).name}
+                for k in team.available
+            ],
+            "jobs": [
+                {"id": j.id, "agent": j.agent, "task": j.topic, "state": j.state, "model": j.model,
+                 "steps": len(j.steps), "summary": j.summary, "note": j.note, "started": j.started.isoformat()}
+                for j in list(team.jobs.values())[-10:]
+            ],
+        }
+
+    @app.get("/api/insights", dependencies=[Depends(require_token)])
+    def insights() -> dict:
+        """Las ultimas fichas con los datos clave de las respuestas (las nuevas llegan por /api/activity)."""
+        ins: Insights | None = getattr(state["assistant"], "insights", None)
+        return {"insights": list(ins.recent) if ins else [], "enabled": ins is not None}
+
+    def lead_store() -> LeadStore:
+        store = getattr(state["assistant"], "leads", None)
+        if store is None:
+            raise HTTPException(status_code=404, detail="Leads desactivados (hacen falta los agentes)")
+        return store
+
+    @app.get("/api/leads", dependencies=[Depends(require_token)])
+    def leads_list() -> dict:
+        store = lead_store()
+        return {"leads": list(reversed(store.leads)), "counts": store.counts(), "statuses": list(LEAD_STATUSES)}
+
+    @app.post("/api/leads/update", dependencies=[Depends(require_token)])
+    def leads_update(req: LeadUpdate) -> dict:
+        try:
+            return {"lead": lead_store().update(req.id, req.status, req.note)}
+        except ToolError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/api/models", dependencies=[Depends(require_token)])
     def models() -> dict:
         return {"models": state["assistant"].llm.models()}
@@ -379,21 +480,28 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         if not req.text.strip() or len(req.text) > 20000:
             raise HTTPException(status_code=400, detail="Informe vacío o demasiado largo")
         a: Assistant = state["assistant"]
+        if req.source not in EXTERNAL_AGENTS:
+            raise HTTPException(status_code=400, detail="Agente desconocido")
+        label, folder = EXTERNAL_AGENTS[req.source]
         summary, report = split_report(req.text)
         title = " ".join(req.title.split())[:100] or "tarea"
         note = ""
         vault = getattr(a, "vault", None)
         if vault:
             day = datetime.now().strftime("%Y-%m-%d")
-            header = f"> Tarea hecha por {req.source} (membresía) · {day}\n\n"
+            header = f"> Tarea hecha por {label} con Claude (membresía) · {day}\n\n"
             try:
-                note = vault.create(f"{day} {title}"[:120], header + report[:3800], REPORT_FOLDER, check_secrets=False)
+                note = vault.create(
+                    f"{day} {title}"[:120], header + report[:15000], folder, check_secrets=False, max_chars=16000
+                )
             except Exception as exc:  # sin nota, el aviso llega igual
                 log.warning("no se pudo guardar el informe de %s: %s", req.source, exc)
         board = getattr(a, "board", None)
         if board:
             where = f" Lo tienes en Obsidian, en {note}." if note else ""
-            board.post("info", req.source, f"{req.source.capitalize()} ha terminado: {title}. {summary}{where}")
+            board.post("info", req.source, f"{label} ha terminado: {title}. {summary}{where}")
+        if getattr(a, "activity", None):
+            a.activity.emit("agent_done", agent=req.source, label=label, summary=summary, note=note, model="Claude")
         log.info("informe de %s recibido (%d caracteres) -> %s", req.source, len(req.text), note or "sin nota")
         return {"note": note, "summary": summary}
 

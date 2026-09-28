@@ -10,18 +10,18 @@ const TARGET_RATE = 16000; // lo que espera Whisper
 const MIN_RECORD_MS = 300;
 
 const COLORS = {
-  idle: [255, 181, 71],
-  listening: [76, 201, 240],
-  thinking: [179, 136, 255],
-  speaking: [255, 140, 66],
-  error: [255, 107, 107],
+  idle: [41, 151, 255],
+  listening: [100, 210, 255],
+  thinking: [191, 90, 242],
+  speaking: [255, 159, 10],
+  error: [255, 69, 58],
 };
 const STATE_LABEL = {
-  idle: "EN ESPERA",
-  listening: "ESCUCHANDO",
-  thinking: "PENSANDO",
-  speaking: "HABLANDO",
-  error: "ERROR",
+  idle: "En espera",
+  listening: "Escuchando",
+  thinking: "Pensando",
+  speaking: "Hablando",
+  error: "Error",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -96,6 +96,7 @@ $("login-form").addEventListener("submit", async (e) => {
   if (resp.ok) {
     $("login").hidden = true;
     loadModels(); // con token ya se pueden pedir los modelos
+    loadAgents();
   }
 });
 
@@ -113,6 +114,11 @@ function setState(next, detail) {
   el.textContent = detail ? `${STATE_LABEL[next]} · ${detail}` : STATE_LABEL[next];
   el.classList.toggle("error", next === "error");
   if (next === "error") el.style.color = "";
+  // Indicador de la barra superior.
+  const live = $("live");
+  live.style.setProperty("--live", `rgb(${COLORS[next].join(",")})`);
+  live.classList.toggle("busy", busy);
+  $("live-text").textContent = { idle: "En espera", listening: "Escuchando", thinking: "Pensando", speaking: "Hablando", error: "Error" }[next];
 }
 
 // --- audio ------------------------------------------------------------------
@@ -224,47 +230,202 @@ $("camera").addEventListener("click", toggleCamera);
 
 // --- modelo -----------------------------------------------------------------------
 
+// Color de cada proveedor en el selector y en el indicador.
+const MODEL_COLORS = {
+  "": [41, 151, 255],
+  groq: [255, 122, 69],
+  gemini: [122, 162, 255],
+  openrouter: [179, 136, 255],
+  ollama: [120, 220, 170],
+  anthropic: [217, 119, 87],
+  "claude-sonnet": [217, 119, 87],
+  "claude-opus": [236, 146, 110],
+  "claude-haiku": [244, 180, 140],
+};
+let currentModel = "";
+let modelOptions = [];
+
 function selectedModel() {
-  return $("model").value || "";
+  return currentModel;
 }
 
 function isClaude() {
   return selectedModel().startsWith("claude-");
 }
 
+function modelRgb(id) {
+  return MODEL_COLORS[id] || MODEL_COLORS[String(id).split(":")[0]] || [141, 151, 173];
+}
+
 async function loadModels() {
-  const select = $("model");
-  const options = [{ id: "", label: "Automático (JARVIS)" }];
+  const options = [{ id: "", label: "Automático", detail: "La cadena de JARVIS, con respaldo", group: "JARVIS · servidor" }];
   try {
     const resp = await api("/api/models");
-    if (resp.ok) (await resp.json()).models.forEach((m) => options.push(m));
+    if (resp.ok) {
+      for (const m of (await resp.json()).models) {
+        const [provider, ...rest] = m.label.split(":");
+        options.push({ id: m.id, label: provider.charAt(0).toUpperCase() + provider.slice(1), detail: rest.join(":"), group: "JARVIS · servidor" });
+      }
+    }
   } catch {
     /* servidor antiguo: solo automático */
   }
-  claudeModels.forEach((m) => options.push({ id: m.id, label: `${m.label} · membresía` }));
-  select.textContent = "";
-  for (const m of options) {
-    const opt = document.createElement("option");
-    opt.value = m.id;
-    opt.textContent = m.label;
-    select.append(opt);
-  }
+  claudeModels.forEach((m) => options.push({ id: m.id, label: m.label, detail: "Tu membresía, desde este PC", group: "Claude · membresía" }));
+  modelOptions = options;
   let saved = "";
   try {
     saved = localStorage.getItem(MODEL_KEY) || "";
   } catch {
     /* sin almacenamiento */
   }
-  select.value = options.some((m) => m.id === saved) ? saved : "";
+  renderModelMenu();
+  applyModel(options.some((m) => m.id === saved) ? saved : "", false);
 }
 
-$("model").addEventListener("change", () => {
+function renderModelMenu() {
+  const menu = $("model-menu");
+  menu.textContent = "";
+  let group = null;
+  for (const m of modelOptions) {
+    if (m.group !== group) {
+      group = m.group;
+      const h = document.createElement("div");
+      h.className = "menu-group";
+      h.textContent = group;
+      menu.append(h);
+    }
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "menu-item";
+    item.setAttribute("role", "menuitemradio");
+    item.dataset.id = m.id;
+    const sw = document.createElement("span");
+    sw.className = "swatch";
+    sw.style.setProperty("--swatch", `rgb(${modelRgb(m.id).join(",")})`);
+    const text = document.createElement("span");
+    text.className = "mi-text";
+    const name = document.createElement("span");
+    name.textContent = m.label;
+    const small = document.createElement("small");
+    small.textContent = m.detail || "";
+    text.append(name, small);
+    item.append(sw, text);
+    item.insertAdjacentHTML("beforeend", '<svg class="icon"><use href="#i-check"/></svg>');
+    item.addEventListener("click", () => {
+      applyModel(m.id, true);
+      toggleModelMenu(false);
+      $("model-btn").focus();
+    });
+    menu.append(item);
+  }
+}
+
+function applyModel(id, announce) {
+  const m = modelOptions.find((o) => o.id === id) || modelOptions[0];
+  if (!m) return;
+  currentModel = m.id;
+  const rgb = `rgb(${modelRgb(m.id).join(",")})`;
+  $("model-btn").style.setProperty("--swatch", rgb);
+  $("model-swatch").style.setProperty("--swatch", rgb);
+  $("model-label").textContent = m.detail && m.id ? `${m.label} · ${m.detail.split(",")[0]}` : m.label;
+  $("model-menu").querySelectorAll(".menu-item").forEach((el) => el.setAttribute("aria-checked", String(el.dataset.id === m.id)));
   try {
-    localStorage.setItem(MODEL_KEY, selectedModel());
+    localStorage.setItem(MODEL_KEY, m.id);
   } catch {
     /* sin almacenamiento */
   }
+  if (announce) trace("Cerebro", `ahora piensa con ${m.label}`, modelRgb(m.id));
+}
+
+function toggleModelMenu(open) {
+  const menu = $("model-menu");
+  menu.hidden = !open;
+  $("model-btn").setAttribute("aria-expanded", String(open));
+  if (open) (menu.querySelector('[aria-checked="true"]') || menu.querySelector(".menu-item"))?.focus();
+}
+
+$("model-btn").addEventListener("click", () => toggleModelMenu($("model-menu").hidden));
+$("model-menu").addEventListener("keydown", (e) => {
+  const items = [...$("model-menu").querySelectorAll(".menu-item")];
+  const i = items.indexOf(document.activeElement);
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+  } else if (e.key === "Escape") {
+    toggleModelMenu(false);
+    $("model-btn").focus();
+  }
 });
+addEventListener("pointerdown", (e) => {
+  if (!e.target.closest(".model-switch") && !$("model-menu").hidden) toggleModelMenu(false);
+});
+
+// --- pestañas del panel ---------------------------------------------------------------
+
+const TABS = ["agents", "leads", "trace", "session"];
+
+function selectTab(name) {
+  for (const t of TABS) {
+    const on = t === name;
+    $(`tab-${t}`).setAttribute("aria-selected", String(on));
+    $(`tab-${t}`).tabIndex = on ? 0 : -1;
+    $(`pane-${t}`).hidden = !on;
+  }
+  if (name === "trace") setBadge("trace", (unseenTrace = 0));
+  moveInk();
+}
+
+function moveInk() {
+  const tab = document.querySelector('.tabs [aria-selected="true"]');
+  const ink = document.querySelector(".tab-ink");
+  if (!tab || !ink) return;
+  ink.style.width = `${tab.offsetWidth}px`;
+  ink.style.transform = `translateX(${tab.offsetLeft}px)`;
+}
+
+function setBadge(name, n) {
+  const b = $(`badge-${name}`);
+  b.hidden = !n;
+  b.textContent = n > 99 ? "99+" : String(n);
+}
+
+TABS.forEach((t, i) => {
+  $(`tab-${t}`).addEventListener("click", () => selectTab(t));
+  $(`tab-${t}`).addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    const next = TABS[(i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length];
+    selectTab(next);
+    $(`tab-${next}`).focus();
+  });
+});
+addEventListener("resize", moveInk);
+
+// --- traza: todo lo que pasa, en una línea de tiempo --------------------------------------
+
+const MAX_TRACE = 150;
+let unseenTrace = 0;
+
+function trace(actor, what, rgb) {
+  const li = document.createElement("li");
+  if (rgb) li.style.setProperty("--c", `rgb(${rgb.join(",")})`);
+  const time = document.createElement("time");
+  time.textContent = new Date().toLocaleTimeString("es-ES");
+  const ev = document.createElement("div");
+  ev.className = "ev";
+  const a = document.createElement("span");
+  a.className = "actor";
+  a.textContent = actor;
+  const w = document.createElement("span");
+  w.className = "what";
+  w.textContent = what ? ` ${what}` : "";
+  ev.append(a, w);
+  li.append(time, ev);
+  const list = $("trace");
+  list.prepend(li);
+  while (list.children.length > MAX_TRACE) list.lastChild.remove();
+  if ($("pane-trace").hidden) setBadge("trace", ++unseenTrace);
+  else unseenTrace = 0;
+}
 
 // Voz: normal (el NAS transcribe y piensa) o modo Claude (el NAS transcribe y Claude piensa en el PC).
 async function askVoice(wav) {
@@ -533,6 +694,7 @@ function flushNotices() {
     const n = queuedNotices.shift();
     $("subtitle").textContent = n.text;
     fire(REGION.thalamus, n.text);
+    trace(`Aviso · ${n.source}`, n.text, n.level === "critical" ? [255, 69, 58] : REGIONS[REGION.thalamus].color);
     const turn = document.createElement("div");
     turn.className = `turn notice ${n.level}`;
     const a = document.createElement("div");
@@ -540,7 +702,7 @@ function flushNotices() {
     a.textContent = n.text;
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = `AVISO · ${n.source} · ${n.created.slice(11, 16)}`;
+    meta.textContent = `Aviso · ${n.source} · ${n.created.slice(11, 16)}`;
     turn.append(a, meta);
     $("log").append(turn);
     $("log").scrollTop = $("log").scrollHeight;
@@ -612,16 +774,17 @@ function chime() {
 // desde la región anterior: oído -> hipocampo (memoria) -> prefrontal (razona) -> tools -> lenguaje -> voz.
 
 const REGIONS = [
-  { id: "prefrontal", name: "PREFRONTAL", role: "razonamiento", pos: [0.8, 0.2, 0], color: [255, 77, 141] },
-  { id: "motor", name: "CÓRTEX MOTOR", role: "acciones", pos: [0.2, 0.66, 0], color: [255, 96, 96] },
-  { id: "association", name: "ASOCIACIÓN", role: "consultas", pos: [-0.42, 0.5, 0], color: [179, 136, 255] },
-  { id: "auditory", name: "AUDITIVO", role: "oído", pos: [0.05, -0.2, 0.5], color: [76, 201, 240] },
-  { id: "hippocampus", name: "HIPOCAMPO", role: "memoria", pos: [-0.2, -0.12, -0.25], color: [94, 227, 161] },
-  { id: "language", name: "LENGUAJE", role: "respuesta", pos: [0.52, -0.24, 0.3], color: [255, 181, 71] },
-  { id: "cerebellum", name: "CEREBELO", role: "voz", pos: [-0.6, -0.52, 0], color: [77, 124, 255] },
-  { id: "visual", name: "VISUAL", role: "cámara apagada", pos: [-0.92, 0.08, 0], color: [45, 212, 191], planned: true },
-  { id: "thalamus", name: "TÁLAMO", role: "avisos", pos: [-0.05, 0.12, 0], color: [210, 230, 255] },
+  { id: "prefrontal", name: "Prefrontal", role: "razonamiento", pos: [0.8, 0.2, 0], color: [255, 55, 95] },
+  { id: "motor", name: "Córtex motor", role: "acciones", pos: [0.2, 0.66, 0], color: [255, 159, 10] },
+  { id: "association", name: "Asociación", role: "consultas", pos: [-0.42, 0.5, 0], color: [191, 90, 242] },
+  { id: "auditory", name: "Auditivo", role: "oído", pos: [0.05, -0.2, 0.5], color: [100, 210, 255] },
+  { id: "hippocampus", name: "Hipocampo", role: "memoria", pos: [-0.2, -0.12, -0.25], color: [48, 209, 88] },
+  { id: "language", name: "Lenguaje", role: "respuesta", pos: [0.52, -0.24, 0.3], color: [255, 214, 10] },
+  { id: "cerebellum", name: "Cerebelo", role: "voz", pos: [-0.6, -0.52, 0], color: [10, 132, 255] },
+  { id: "visual", name: "Visual", role: "cámara apagada", pos: [-0.92, 0.08, 0], color: [102, 212, 207], planned: true },
+  { id: "thalamus", name: "Tálamo", role: "avisos", pos: [-0.05, 0.12, 0], color: [220, 235, 255] },
 ];
+window.JARVIS_REGIONS = REGIONS; // brain3d.js (WebGL) lee de aquí la forma y los colores
 const REGION = Object.fromEntries(REGIONS.map((r, i) => [r.id, i]));
 
 const TOOL_LABEL = {
@@ -651,6 +814,7 @@ const TOOL_LABEL = {
   agent_run: "encargar a un agente",
   agent_status: "estado del agente",
   delegate_claude: "encargar a Claude",
+  security_audit: "auditoría de seguridad",
   camera_look: "mirar por la cámara",
   home_camera: "cámara de casa",
   reminder_set: "nuevo recordatorio",
@@ -669,7 +833,7 @@ const MOTOR_TOOLS = new Set(["truenas_app_restart", "wake_on_lan", "home_control
 function toolRegion(name) {
   if (name.startsWith("reminder_")) return REGION.thalamus;
   if (name === "camera_look" || name === "home_camera") return REGION.visual;
-  if (name.startsWith("agent_") || name.startsWith("delegate_")) return REGION.prefrontal; // planificar y delegar
+  if (name.startsWith("agent_") || name.startsWith("delegate_") || name === "security_audit") return REGION.prefrontal; // delegar
   if (name.startsWith("memory_")) return REGION.hippocampus;
   if (name.startsWith("pc_") || /^obsidian_(create|append|daily)/.test(name) || MOTOR_TOOLS.has(name)) return REGION.motor;
   return REGION.association;
@@ -762,7 +926,7 @@ function fire(idx, detail) {
 
 // --- ventana de resultados ------------------------------------------------------------
 
-const CARD_LABEL = { web: "WEB", wiki: "WIKIPEDIA", news: "NOTICIAS" };
+const CARD_LABEL = { web: "Web", wiki: "Wikipedia", news: "Noticias" };
 
 function hideCards() {
   $("cards").hidden = true;
@@ -815,7 +979,7 @@ function showCards(cards) {
     list.append(el);
   }
   const n = list.children.length;
-  $("cards-title").textContent = `RESULTADOS · ${n}`;
+  $("cards-title").textContent = `Resultados · ${n}`;
   $("cards").hidden = n === 0;
 }
 
@@ -847,10 +1011,13 @@ function onFlow(ev) {
       if (!ev.text) break;
       $("you").textContent = ev.text;
       fire(REGION.auditory, ev.text);
+      trace("Tú", ev.text, REGIONS[REGION.auditory].color);
       break;
     case "memory": {
       const items = ev.items || [];
-      fire(REGION.hippocampus, items.length ? `${items.length} recuerdo${items.length > 1 ? "s" : ""} · ${items[0].text}` : "sin recuerdos relevantes");
+      const what = items.length ? `${items.length} recuerdo${items.length > 1 ? "s" : ""} · ${items[0].text}` : "sin recuerdos relevantes";
+      fire(REGION.hippocampus, what);
+      trace("Memoria", what, REGIONS[REGION.hippocampus].color);
       break;
     }
     case "thinking":
@@ -863,13 +1030,15 @@ function onFlow(ev) {
       Object.assign(regionState[idx], { pending: true, fail: false });
       fire(idx, [label, argsSummary(ev.args)].filter(Boolean).join(" · "));
       setState("thinking", label);
+      trace(label.charAt(0).toUpperCase() + label.slice(1), argsSummary(ev.args), REGIONS[idx].color);
       break;
     }
     case "tool_result": {
       const idx = toolRegion(ev.name);
       const label = TOOL_LABEL[ev.name] || ev.name;
       Object.assign(regionState[idx], { pending: false, fail: !ev.ok });
-      fire(idx, `${ev.ok ? "✓" : "✗"} ${label} · ${ev.ms} ms · ${ev.text}`);
+      fire(idx, `${ev.ok ? "hecho" : "falló"} · ${label} · ${ev.ms} ms · ${ev.text}`);
+      trace(ev.ok ? `${label} · ${ev.ms} ms` : `${label} · falló`, ev.text, ev.ok ? REGIONS[idx].color : [255, 69, 58]);
       break;
     }
     case "cards":
@@ -878,11 +1047,444 @@ function onFlow(ev) {
     case "reply":
       $("subtitle").textContent = ev.text;
       fire(REGION.language, ev.text);
+      trace(`JARVIS${ev.provider ? ` · ${ev.provider}` : ""}`, ev.text, REGIONS[REGION.language].color);
+      if (ev.provider) $("s-model").textContent = ev.provider;
       break;
     case "speaking":
       setState("thinking", "poniendo voz");
       fire(REGION.cerebellum, "sintetizando voz");
       break;
+  }
+}
+
+// --- agentes: panel, trazabilidad en directo y satélites en el cerebro ------------------------
+
+const AGENT_COLORS = {
+  investigador: [76, 201, 240],
+  tecnico: [255, 110, 90],
+  organizador: [48, 209, 88],
+  escritor: [255, 200, 90],
+  compras: [190, 140, 255],
+  captador: [100, 210, 255],
+  claude: [217, 119, 87],
+  auditor: [255, 77, 120],
+};
+const agentRgb = (id) => AGENT_COLORS[id] || [210, 230, 255];
+const satellites = new Map(); // clave -> satélite dibujado alrededor del cerebro
+const externalJobs = new Map(); // tareas de Claude Code en el PC (no están en /api/agents)
+let agentsTimer = null;
+
+function satKey(ev) {
+  return ev.job ? `${ev.agent}:${ev.job}` : ev.agent;
+}
+
+function satellite(ev) {
+  const key = satKey(ev);
+  let sat = satellites.get(key);
+  if (!sat) {
+    const used = new Set([...satellites.values()].map((x) => x.slot));
+    let slot = 0;
+    while (used.has(slot)) slot++;
+    const el = document.createElement("div");
+    el.className = "sat";
+    const rgb = agentRgb(ev.agent);
+    el.style.setProperty("--c", `rgb(${rgb.join(",")})`);
+    const b = document.createElement("b");
+    const span = document.createElement("span");
+    const small = document.createElement("small");
+    const text = document.createElement("div");
+    text.append(b, span, small);
+    el.append(text);
+    $("flow").append(el);
+    const ang = slot * 1.15 + 0.4;
+    sat = {
+      key, slot, rgb, el, b, span, small, state: "working", born: performance.now(),
+      pos: [Math.cos(ang) * 1.55, 0.5 + 0.22 * Math.sin(ang * 2), Math.sin(ang) * 1.05], proj: [0, 0, 1, 1],
+    };
+    satellites.set(key, sat);
+  }
+  return sat;
+}
+
+function retireSatellite(sat, ms) {
+  setTimeout(() => sat.el.classList.add("leaving"), ms);
+  setTimeout(() => {
+    sat.el.remove();
+    satellites.delete(sat.key);
+  }, ms + 1300);
+}
+
+function onActivity(ev) {
+  if (ev.type === "insight") return showInsight(ev);
+  const rgb = agentRgb(ev.agent);
+  const label = ev.label || ev.agent;
+  const sat = satellite(ev);
+  sat.b.textContent = label;
+  switch (ev.type) {
+    case "agent_start":
+      sat.state = "working";
+      sat.span.textContent = ev.task || "trabajando";
+      sat.small.textContent = ev.models || ev.model || "";
+      pulses.push({ from: REGION.prefrontal, toSat: sat.key, t: 0, dur: reducedMotion ? 0.01 : 0.9, rgb });
+      fire(REGION.prefrontal, `encarga ${/^el /i.test(label) ? "al " + label.slice(3) : "a " + label}`.toLowerCase());
+      trace(label, `empieza: ${ev.task || ""}`, rgb);
+      if (!ev.job) externalJobs.set(ev.agent, { agent: ev.agent, label, task: ev.task, state: "trabajando", steps: 0, model: "Claude", started: ev.ts });
+      break;
+    case "agent_tool": {
+      const idx = toolRegion(ev.tool || "");
+      const tl = TOOL_LABEL[ev.tool] || ev.tool;
+      sat.span.textContent = tl;
+      if (ev.model) sat.small.textContent = ev.model;
+      pulses.push({ fromSat: sat.key, to: idx, t: 0, dur: reducedMotion ? 0.01 : 0.7, rgb });
+      regionState[idx].act = Math.max(regionState[idx].act, 0.8);
+      trace(label, tl, rgb);
+      const ext = externalJobs.get(ev.agent);
+      if (!ev.job && ext) ext.steps++;
+      break;
+    }
+    case "agent_done":
+      sat.state = "done";
+      sat.el.classList.add("done");
+      sat.span.textContent = ev.summary || "terminado";
+      if (ev.model) sat.small.textContent = ev.model;
+      pulses.push({ fromSat: sat.key, to: REGION.thalamus, t: 0, dur: reducedMotion ? 0.01 : 0.9, rgb: [48, 209, 88] });
+      trace(label, `terminado${ev.note ? ` · ${ev.note}` : ""}: ${ev.summary || ""}`, [48, 209, 88]);
+      if (!ev.job && externalJobs.has(ev.agent)) Object.assign(externalJobs.get(ev.agent), { state: "terminado", summary: ev.summary, note: ev.note });
+      retireSatellite(sat, 6000);
+      break;
+    case "leads":
+      sat.span.textContent = ev.new ? `${ev.new} leads nuevos` : "sin leads nuevos";
+      trace(label, ev.new ? `ha encontrado ${ev.new} leads nuevos: ${(ev.names || []).join(", ")}` : "no ha encontrado leads nuevos", rgb);
+      pulses.push({ fromSat: sat.key, to: REGION.hippocampus, t: 0, dur: reducedMotion ? 0.01 : 0.9, rgb });
+      loadLeads();
+      break;
+    case "agent_error":
+      sat.state = "error";
+      sat.el.classList.add("error");
+      sat.span.textContent = ev.detail || ev.task || "error";
+      trace(label, `no ha podido terminar: ${ev.detail || ev.task || ""}`, [255, 69, 58]);
+      if (!ev.job && externalJobs.has(ev.agent)) Object.assign(externalJobs.get(ev.agent), { state: "error", summary: ev.task });
+      retireSatellite(sat, 6000);
+      break;
+  }
+  clearTimeout(agentsTimer);
+  agentsTimer = setTimeout(loadAgents, 400);
+}
+
+async function activityLoop(after = -1) {
+  let next = after;
+  let delay = 0;
+  if (mode === "server" && !getToken()) return setTimeout(() => activityLoop(after), 3000);
+  try {
+    const resp = await api(`/api/activity?after=${after}&wait=${after < 0 ? 0 : 25}`);
+    if (resp.status === 404) return; // servidor antiguo
+    if (!resp.ok) throw new Error(resp.status);
+    const body = await resp.json();
+    if (after >= 0) body.events.forEach(onActivity);
+    next = body.last;
+  } catch {
+    delay = 5000;
+  }
+  setTimeout(() => activityLoop(next), delay);
+}
+
+function elapsed(iso) {
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min`;
+}
+
+async function loadAgents() {
+  if (mode === "server" && !getToken()) return;
+  let data = { agents: [], jobs: [] };
+  try {
+    const resp = await api("/api/agents");
+    if (resp.ok) data = await resp.json();
+  } catch {
+    /* sin conexión: se deja lo que había */
+  }
+  const agents = $("agents-list");
+  agents.textContent = "";
+  for (const a of data.agents) {
+    const li = document.createElement("li");
+    li.style.setProperty("--c", `rgb(${agentRgb(a.id).join(",")})`);
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    const body = document.createElement("div");
+    const strong = document.createElement("strong");
+    strong.textContent = a.label.replace(/^(El|La) /, "").replace(/^./, (c) => c.toUpperCase());
+    const p = document.createElement("p");
+    p.textContent = a.description;
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = a.models;
+    body.append(strong, p, chip);
+    li.append(dot, body);
+    agents.append(li);
+  }
+  if (claudeModels.length) {
+    for (const [id, label, desc] of [["claude", "Claude", "tareas complejas con tu membresía"], ["auditor", "Auditor de seguridad", "revisa el servidor o el código con Claude"]]) {
+      const li = document.createElement("li");
+      li.style.setProperty("--c", `rgb(${agentRgb(id).join(",")})`);
+      li.innerHTML = '<span class="dot"></span><div><strong></strong><p></p><span class="chip">Claude · membresía</span></div>';
+      li.querySelector("strong").textContent = label;
+      li.querySelector("p").textContent = desc;
+      agents.append(li);
+    }
+  }
+  if (!agents.children.length) agents.innerHTML = '<p class="empty">Sin agentes disponibles en este servidor.</p>';
+
+  const jobs = [...data.jobs.map((j) => ({ ...j, label: (data.agents.find((a) => a.id === j.agent) || {}).label || j.agent })),
+    ...externalJobs.values()].sort((x, y) => (y.started || "").localeCompare(x.started || ""));
+  const list = $("jobs-list");
+  list.textContent = "";
+  for (const j of jobs.slice(0, 8)) {
+    const li = document.createElement("li");
+    li.className = j.state === "trabajando" ? "working" : j.state === "terminado" ? "done" : "error";
+    li.style.setProperty("--c", `rgb(${agentRgb(j.agent).join(",")})`);
+    const who = document.createElement("div");
+    who.className = "who";
+    who.textContent = `${j.label} · ${j.state}`;
+    const task = document.createElement("p");
+    task.className = "task";
+    task.textContent = j.task;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    for (const part of [j.model, j.steps ? `${j.steps} pasos` : "", j.started ? `hace ${elapsed(j.started)}` : ""].filter(Boolean)) {
+      const m = document.createElement("span");
+      m.textContent = part;
+      meta.append(m);
+    }
+    li.append(who, task, meta);
+    if (j.summary && j.state !== "trabajando") {
+      const sum = document.createElement("p");
+      sum.className = "summary";
+      sum.textContent = j.note ? `${j.summary} · ${j.note}` : j.summary;
+      li.append(sum);
+    }
+    list.append(li);
+  }
+  if (!jobs.length) list.innerHTML = '<p class="empty">Nadie trabajando ahora. Pídele algo largo a un agente: «investiga…», «compárame…», «audita…».</p>';
+  setBadge("agents", jobs.filter((j) => j.state === "trabajando").length);
+}
+setInterval(loadAgents, 30000);
+
+// --- leads: posibles clientes que encuentra el captador ------------------------------------
+
+const LEAD_STATUS = {
+  nuevo: { label: "Nuevo", plural: "Nuevos", rgb: [41, 151, 255] },
+  contactado: { label: "Contactado", plural: "Contactados", rgb: [255, 159, 10] },
+  interesado: { label: "Interesado", plural: "Interesados", rgb: [48, 209, 88] },
+  descartado: { label: "Descartado", plural: "Descartados", rgb: [142, 142, 147] },
+};
+let leads = [];
+let leadFilter = "";
+
+function safeUrl(url) {
+  return /^https?:\/\/[^\s<>"']+$/i.test(url || "") ? url : "";
+}
+
+function copyText(text, button) {
+  const done = () => {
+    const old = button.lastChild.textContent;
+    button.lastChild.textContent = "Copiado";
+    setTimeout(() => (button.lastChild.textContent = old), 1400);
+  };
+  navigator.clipboard?.writeText(text).then(done, () => {});
+}
+
+function iconButton(icon, text, onClick, cls = "pill-btn") {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = cls;
+  b.insertAdjacentHTML("afterbegin", `<svg class="icon"><use href="#i-${icon}"/></svg>`);
+  const span = document.createElement("span");
+  span.textContent = text;
+  b.append(span);
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+async function loadLeads() {
+  if (mode === "server" && !getToken()) return;
+  try {
+    const resp = await api("/api/leads");
+    if (resp.status === 404) {
+      leads = null;
+    } else if (resp.ok) {
+      leads = (await resp.json()).leads;
+    }
+  } catch {
+    /* sin conexión: se deja lo que había */
+  }
+  renderLeads();
+}
+
+async function setLeadStatus(lead, status) {
+  try {
+    const resp = await api("/api/leads/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: lead.id, status }),
+    });
+    if (!resp.ok) throw new Error(resp.status);
+    lead.status = status;
+    trace("Leads", `${lead.name}: ${LEAD_STATUS[status].label.toLowerCase()}`, LEAD_STATUS[status].rgb);
+  } catch {
+    trace("Leads", `no he podido cambiar ${lead.name}`, [255, 69, 58]);
+  }
+  renderLeads();
+}
+
+function renderLeads() {
+  const list = $("leads-list");
+  const filter = $("lead-filter");
+  list.textContent = "";
+  filter.textContent = "";
+  if (leads === null) {
+    $("lead-stats").textContent = "";
+    list.innerHTML = '<p class="empty">Los leads necesitan los agentes activados en el servidor (AGENTS_ENABLED).</p>';
+    setBadge("leads", 0);
+    return;
+  }
+  const counts = Object.fromEntries(Object.keys(LEAD_STATUS).map((k) => [k, leads.filter((l) => l.status === k).length]));
+  $("lead-stats").textContent = leads.length
+    ? `${leads.length} en total · ${counts.nuevo} por contactar · ${counts.interesado} interesados`
+    : "";
+  for (const [key, text] of [["", "Todos"], ...Object.entries(LEAD_STATUS).map(([k, v]) => [k, v.plural])]) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip-btn";
+    chip.setAttribute("aria-pressed", String(leadFilter === key));
+    chip.textContent = key ? `${text} ${counts[key]}` : text;
+    chip.addEventListener("click", () => {
+      leadFilter = key;
+      renderLeads();
+    });
+    filter.append(chip);
+  }
+  const shown = leads.filter((l) => !leadFilter || l.status === leadFilter);
+  for (const lead of shown) {
+    const st = LEAD_STATUS[lead.status] || LEAD_STATUS.nuevo;
+    const li = document.createElement("li");
+    li.className = `lead ${lead.status}`;
+    li.style.setProperty("--c", `rgb(${st.rgb.join(",")})`);
+    const head = document.createElement("div");
+    head.className = "lead-head";
+    const name = document.createElement("strong");
+    name.textContent = lead.name;
+    const pill = document.createElement("span");
+    pill.className = "status";
+    pill.textContent = st.label;
+    head.append(name, pill);
+    const kind = document.createElement("p");
+    kind.className = "lead-kind";
+    kind.textContent = [lead.kind, lead.area].filter(Boolean).join(" · ");
+    li.append(head, kind);
+    if (lead.fit) {
+      const fit = document.createElement("p");
+      fit.className = "lead-fit";
+      fit.textContent = lead.fit;
+      li.append(fit);
+    }
+    const contact = document.createElement("div");
+    contact.className = "lead-contact";
+    const url = safeUrl(lead.web);
+    if (url) {
+      const a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.className = "pill-btn";
+      a.insertAdjacentHTML("afterbegin", '<svg class="icon"><use href="#i-link"/></svg>');
+      const host = document.createElement("span");
+      host.textContent = new URL(url).hostname.replace(/^www\./, "");
+      a.append(host);
+      contact.append(a);
+    }
+    if (lead.contact) contact.append(iconButton("copy", lead.contact, (e) => copyText(lead.contact, e.currentTarget)));
+    if (contact.children.length) li.append(contact);
+    if (lead.message) {
+      const msg = document.createElement("blockquote");
+      msg.textContent = lead.message;
+      li.append(msg, iconButton("copy", "Copiar mensaje", (e) => copyText(lead.message, e.currentTarget), "pill-btn quiet"));
+    }
+    const actions = document.createElement("div");
+    actions.className = "lead-actions";
+    actions.setAttribute("role", "group");
+    actions.setAttribute("aria-label", `Estado de ${lead.name}`);
+    for (const [key, v] of Object.entries(LEAD_STATUS)) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = v.label;
+      b.setAttribute("aria-pressed", String(lead.status === key));
+      b.style.setProperty("--c", `rgb(${v.rgb.join(",")})`);
+      b.addEventListener("click", () => lead.status !== key && setLeadStatus(lead, key));
+      actions.append(b);
+    }
+    const meta = document.createElement("p");
+    meta.className = "lead-meta";
+    meta.textContent = [lead.found ? `Encontrado ${lead.found.slice(0, 10).split("-").reverse().join("/")}` : "", lead.note].filter(Boolean).join(" · ");
+    li.append(actions, meta);
+    list.append(li);
+  }
+  if (!shown.length) {
+    list.innerHTML = leads.length
+      ? '<p class="empty">Ninguno con este estado.</p>'
+      : '<p class="empty">Aún no hay leads. Pídeselo al captador: «busca clientes para mi taller de impresión 3D en Sabadell».</p>';
+  }
+  setBadge("leads", counts.nuevo);
+}
+
+// --- fichas: los datos clave de cada respuesta, flotando junto al cerebro -----------------------
+
+const MAX_INSIGHTS = 3;
+
+function showInsight(card, quiet = false) {
+  const box = $("insights");
+  const idx = card.tools?.length ? toolRegion(card.tools[0]) : REGION.language;
+  const rgb = REGIONS[idx].color;
+  const el = document.createElement("article");
+  el.className = "insight";
+  el.style.setProperty("--c", `rgb(${rgb.join(",")})`);
+  const head = document.createElement("header");
+  const title = document.createElement("h3");
+  title.textContent = card.title;
+  const time = document.createElement("time");
+  time.className = "num";
+  time.textContent = (card.ts || "").slice(11, 16);
+  head.append(title, time);
+  const dl = document.createElement("dl");
+  for (const item of card.items || []) {
+    const dt = document.createElement("dt");
+    dt.textContent = item.k;
+    const dd = document.createElement("dd");
+    dd.textContent = item.v;
+    dl.append(dt, dd);
+  }
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "insight-close";
+  close.setAttribute("aria-label", `Quitar la ficha ${card.title}`);
+  close.innerHTML = '<svg class="icon"><use href="#i-close"/></svg>';
+  close.addEventListener("click", () => el.remove());
+  el.append(head, dl, close);
+  box.prepend(el);
+  while (box.children.length > MAX_INSIGHTS) box.lastChild.remove();
+  if (quiet) return;
+  regionState[idx].act = Math.max(regionState[idx].act, 0.9);
+  pulses.push({ from: REGION.language, to: idx, t: 0, dur: reducedMotion ? 0.01 : 0.6, rgb });
+  trace("Ficha", `${card.title}: ${(card.items || []).map((i) => `${i.k} ${i.v}`).join(" · ")}`, rgb);
+}
+
+async function loadInsights() {
+  if (mode === "server" && !getToken()) return;
+  try {
+    const resp = await api("/api/insights");
+    if (!resp.ok) return;
+    const { insights } = await resp.json();
+    insights.slice(-2).forEach((c) => showInsight(c, true));
+  } catch {
+    /* servidor antiguo */
   }
 }
 
@@ -909,7 +1511,7 @@ const labels = REGIONS.map((r, i) => {
 function updateCortexPanel() {
   labels.forEach(({ row, status, i }) => {
     const r = regionState[i];
-    const text = REGIONS[i].planned ? "PLANIFICADO" : r.pending ? "EJECUTANDO" : r.act > 0.35 ? "ACTIVO" : "EN REPOSO";
+    const text = REGIONS[i].planned ? "Planificado" : r.pending ? "Ejecutando" : r.act > 0.35 ? "Activo" : "En reposo";
     status.textContent = text;
     row.className = REGIONS[i].planned ? "planned" : r.act > 0.35 || r.pending ? "live" : "";
   });
@@ -936,29 +1538,9 @@ function rgba([r, gr, b], alpha) {
   return `rgba(${r | 0},${gr | 0},${b | 0},${Math.max(0, Math.min(1, alpha))})`;
 }
 
-function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000) * (reducedMotion ? 0.3 : 1);
-  last = now;
-  const target = COLORS[state];
-  color = color.map((c, i) => c + (target[i] - c) * Math.min(1, dt * 4));
-  const lvl = audioLevel();
-  level += (lvl - level) * Math.min(1, dt * 12);
-  burst = Math.max(0, burst - dt * 2);
-  if (state !== "error") $("state").style.color = rgba(color, 1);
-
-  // Actividad de fondo según el estado (micro, pensando, hablando).
-  const think = state === "thinking" ? 0.3 + 0.15 * Math.sin(now / 160) : 0;
-  regionState.forEach((r, i) => {
-    let base = REGIONS[i].planned ? 0.05 : 0.15;
-    if (i === REGION.auditory && state === "listening") base = 0.35 + level * 0.8;
-    if (i === REGION.prefrontal) base = Math.max(base, think);
-    if ((i === REGION.cerebellum || i === REGION.language) && state === "speaking") base = 0.3 + level * 0.7;
-    if (r.pending) base = Math.max(base, 0.6 + 0.3 * Math.sin(now / 90));
-    r.act = Math.max(base, r.act - dt * 0.45);
-  });
-
-  const W = canvas.width;
-  const H = canvas.height;
+// Respaldo sin WebGL: el cerebro de partículas en 2D.
+function draw2d(now, dt, W, H) {
+  let centers;
   const cx = W / 2;
   const cy = H * 0.5;
   const S = Math.min(W * (W < H * 1.6 ? 0.4 : 0.34), H * 0.46);
@@ -1040,19 +1622,66 @@ function frame(now) {
     }
   }
 
-  // impulsos entre regiones
-  const centers = REGIONS.map((r) => project(r.pos, [0, 0, 0, 0]));
+  // agentes: satélites en órbita, unidos al prefrontal por un haz
+  centers = REGIONS.map((r) => project(r.pos, [0, 0, 0, 0]));
+  const pf = centers[REGION.prefrontal];
+  g.lineCap = "round";
+  for (const sat of satellites.values()) {
+    const bob = Math.sin(now / 900 + sat.slot) * 0.04;
+    project([sat.pos[0], sat.pos[1] + bob, sat.pos[2]], sat.proj);
+    const [x, y, f, depth] = sat.proj;
+    const rgb = sat.state === "done" ? [48, 209, 88] : sat.state === "error" ? [255, 69, 58] : sat.rgb;
+    const alpha = 0.35 + 0.65 * depth;
+    const mx = (pf[0] + x) / 2 + ((pf[0] + x) / 2 - cx) * 0.35;
+    const my = (pf[1] + y) / 2 + ((pf[1] + y) / 2 - cy) * 0.35 - S * 0.1;
+    g.setLineDash([px * 5, px * 7]);
+    g.lineDashOffset = -now / 25;
+    g.strokeStyle = rgba(rgb, 0.45 * alpha);
+    g.lineWidth = Math.max(1, px * 1.3);
+    g.beginPath();
+    g.moveTo(pf[0], pf[1]);
+    g.quadraticCurveTo(mx, my, x, y);
+    g.stroke();
+    g.setLineDash([]);
+    const pulse = sat.state === "working" ? 0.5 + 0.5 * Math.sin(now / 260) : 0.6;
+    const r = px * (7 + pulse * 3) * f;
+    const glow = g.createRadialGradient(x, y, 0, x, y, r * 3);
+    glow.addColorStop(0, rgba(rgb, 0.55 * alpha));
+    glow.addColorStop(1, rgba(rgb, 0));
+    g.fillStyle = glow;
+    g.beginPath();
+    g.arc(x, y, r * 3, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = rgba([255, 255, 255], 0.9 * alpha);
+    g.beginPath();
+    g.arc(x, y, r * 0.45, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = rgba(rgb, 0.9 * alpha);
+    g.lineWidth = Math.max(1, px * 1.5);
+    g.beginPath();
+    g.arc(x, y, r, 0, Math.PI * 2);
+    g.stroke();
+  }
+
+  // impulsos entre regiones y agentes
   for (let k = pulses.length - 1; k >= 0; k--) {
     const p = pulses[k];
     p.t += dt / p.dur;
-    const a = centers[p.from], b = centers[p.to];
+    const fromSat = p.fromSat && satellites.get(p.fromSat);
+    const toSat = p.toSat && satellites.get(p.toSat);
+    if ((p.fromSat && !fromSat) || (p.toSat && !toSat)) {
+      pulses.splice(k, 1);
+      continue;
+    }
+    const a = fromSat ? fromSat.proj : centers[p.from];
+    const b = toSat ? toSat.proj : centers[p.to];
     const mx = (a[0] + b[0]) / 2 + (((a[0] + b[0]) / 2 - cx) * 0.4);
     const my = (a[1] + b[1]) / 2 + (((a[1] + b[1]) / 2 - cy) * 0.4) - S * 0.12;
     const at = (t) => {
       const u = 1 - t;
       return [u * u * a[0] + 2 * u * t * mx + t * t * b[0], u * u * a[1] + 2 * u * t * my + t * t * b[1]];
     };
-    const col = REGIONS[p.to].color;
+    const col = p.rgb || REGIONS[p.to].color;
     for (let s = 0; s < 8; s++) {
       const t = Math.min(1, p.t) - s * 0.035;
       if (t < 0) break;
@@ -1066,12 +1695,58 @@ function frame(now) {
   }
   g.globalCompositeOperation = "source-over";
 
+  return centers;
+}
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000) * (reducedMotion ? 0.3 : 1);
+  last = now;
+  const target = COLORS[state];
+  color = color.map((c, i) => c + (target[i] - c) * Math.min(1, dt * 4));
+  const lvl = audioLevel();
+  level += (lvl - level) * Math.min(1, dt * 12);
+  burst = Math.max(0, burst - dt * 2);
+  if (state !== "error") $("state").style.color = rgba(color, 1);
+
+  // Actividad de fondo según el estado (micro, pensando, hablando).
+  const think = state === "thinking" ? 0.3 + 0.15 * Math.sin(now / 160) : 0;
+  regionState.forEach((r, i) => {
+    let base = REGIONS[i].planned ? 0.05 : 0.15;
+    if (i === REGION.auditory && state === "listening") base = 0.35 + level * 0.8;
+    if (i === REGION.prefrontal) base = Math.max(base, think);
+    if ((i === REGION.cerebellum || i === REGION.language) && state === "speaking") base = 0.3 + level * 0.7;
+    if (r.pending) base = Math.max(base, 0.6 + 0.3 * Math.sin(now / 90));
+    r.act = Math.max(base, r.act - dt * 0.45);
+  });
+
+  const W = canvas.width;
+  const H = canvas.height;
+  let centers;
+  if (window.brain3d) {
+    // WebGL: el cerebro de verdad en 3D lo pinta brain3d.js en #gl; este lienzo solo recibe el dedo.
+    if (!canvas.dataset.clear) {
+      g.clearRect(0, 0, W, H);
+      canvas.dataset.clear = "1";
+      document.body.classList.add("gl");
+    }
+    centers = window.brain3d.render({ now, dt, color, level, burst, regionState, pulses, satellites, W, H });
+  } else {
+    centers = draw2d(now, dt, W, H);
+  }
+
   // etiquetas de región
   const dpr = W / canvas.getBoundingClientRect().width || 1;
+  // Etiquetas siempre dentro del escenario (en el móvil las de los bordes se salían).
+  const maxX = canvas.offsetLeft + canvas.clientWidth - 8;
+  const place = (el, x, y) => {
+    const left = Math.min(canvas.offsetLeft + x / dpr + 14, maxX - el.offsetWidth);
+    el.style.transform = `translate(${Math.max(canvas.offsetLeft + 4, left)}px, ${canvas.offsetTop + y / dpr - 12}px)`;
+  };
+  for (const sat of satellites.values()) place(sat.el, sat.proj[0], sat.proj[1]);
   labels.forEach(({ el, span, i }) => {
     const r = regionState[i];
     const [x, y] = centers[i];
-    el.style.transform = `translate(${canvas.offsetLeft + x / dpr + 12}px, ${canvas.offsetTop + y / dpr - 12}px)`;
+    place(el, x, y);
     el.classList.toggle("on", r.act > 0.35 || r.pending);
     el.classList.toggle("fail", r.fail);
     el.classList.toggle("back", centers[i][3] < 0.4); // región en la cara oculta del modelo
@@ -1132,19 +1807,24 @@ async function init() {
     pcApps = null;
   }
   noticesLoop();
+  activityLoop();
   loadModels();
+  loadAgents();
+  loadLeads();
+  loadInsights();
+  moveInk();
   if (mode === "server") {
     $("hint").textContent = matchMedia("(pointer: coarse)").matches
-      ? "MANTÉN PULSADO EL CEREBRO PARA HABLAR"
-      : "MANTÉN PULSADO EL CEREBRO O LA BARRA ESPACIADORA";
+      ? "Mantén pulsado el cerebro para hablar"
+      : "Mantén pulsado el cerebro o la barra espaciadora";
     if (!getToken()) askToken();
   } else {
     pollEvents(); // avisos del PC: temporizadores y "Hey Jarvis" (solo en modo local)
     if (wakeEnabled) {
-      const hint = "DI «HEY JARVIS», MANTÉN PULSADO EL CEREBRO O LA BARRA ESPACIADORA";
+      const hint = "Di «Hey Jarvis», o mantén pulsado el cerebro o la barra espaciadora";
       // El navegador no deja sonar nada hasta el primer clic o tecla en la página.
       if (ensureAudio().state === "suspended") {
-        $("hint").textContent = "HAZ CLIC EN LA PÁGINA UNA VEZ PARA ACTIVAR EL SONIDO";
+        $("hint").textContent = "Haz clic en la página una vez para activar el sonido";
         const unlock = () => {
           ensureAudio();
           $("hint").textContent = hint;

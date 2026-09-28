@@ -238,9 +238,19 @@ Ejemplos: *"Recuerda que mi perro se llama Toby"*, *"Prefiero que me llames Ori"
 
 ## Interfaz (HUD) en el PC
 
-Una interfaz web con un **cerebro 3D de neuronas** que gira sobre sí mismo y muestra el flujo de pensamiento en directo. Incluye
-subtítulos, historial, un panel de sesión (intercambios, latencia, pico, tiempo por etapa, modelo y tools usadas),
-el estado de cada región del córtex y la lista de recuerdos con botón para olvidar.
+Una interfaz web con un **cerebro 3D de neuronas** que gira sobre sí mismo y muestra el flujo de pensamiento en directo.
+Está hecho con WebGL (Three.js, incluido en `server/jarvis/web/vendor/`, sin CDN): un núcleo de corteza que brilla,
+racimos de neuronas de color por región y dendritas por las que viajan señales; con brillo (bloom) y giro continuo. Si el
+navegador no tiene WebGL, se dibuja la versión 2D de antes. El estilo es el de las páginas de producto de Apple en oscuro
+(el mismo de la presentación de CaliperWorks): escenario negro, baldosas de cristal gris carbón y el azul del sistema. Incluye
+subtítulos, historial y un panel lateral con tres pestañas:
+- **Agentes**: las tareas en marcha (agente, modelo que responde, pasos, tiempo) y el equipo con el modelo de cada uno.
+- **Traza**: línea de tiempo de todo lo que pasa (tu turno, herramientas, agentes, Claude, el auditor, avisos).
+- **Sesión**: intercambios, latencia, pico, tiempo por etapa, modelo, tools usadas, córtex y recuerdos.
+
+Arriba, en el centro, el **selector de CEREBRO** muestra el modelo activo y deja cambiarlo (también con el teclado).
+Cuando un agente trabaja aparece como **satélite** orbitando el cerebro 3D, unido a la corteza prefrontal por un haz; cada
+herramienta que usa lanza un impulso hacia su región y, al terminar, otro de vuelta. Claude y el auditor salen igual.
 
 **Flujo de pensamiento**: el servidor emite cada paso del turno según ocurre (`/api/chat/stream` y
 `/api/voice/stream`, una línea JSON por evento). Cada paso enciende su región y un impulso viaja desde la anterior:
@@ -359,10 +369,33 @@ terminar, el informe va a Obsidian y te avisa: en el HUD y, si tienes ntfy, en e
 | **Técnico del NAS** | revisa TrueNAS a fondo y propone soluciones (no cambia nada) | *"Que el técnico revise el servidor"* | `JARVIS/Servidor` |
 | **Organizador** | cruza agenda, recordatorios, tiempo, notas y recuerdos y propone un plan | *"Organízame la semana"* | `JARVIS/Planes` |
 | **Escritor** | redacta textos largos con tus notas y recuerdos | *"Escríbeme una reclamación para la compañía de la luz"* | `JARVIS/Textos` |
+| **Compras** | compara productos: características, precios, opiniones y una tabla comparativa | *"Compárame robots aspiradores de menos de 300 €"* | `JARVIS/Compras` |
+| **Captador de clientes** | busca negocios que podrían necesitar lo que ofreces, con su contacto público y un primer mensaje | *"Busca clientes para mi taller de impresión 3D en Sabadell"* | `JARVIS/Leads` |
 
+- **Modelo por agente**: `AGENT_<NOMBRE>_PROVIDERS` le da a un agente su propia cadena, por ejemplo
+  `AGENT_COMPRAS_PROVIDERS: "gemini,groq"` o `AGENT_ESCRITOR_PROVIDERS: "gemini,groq"`. Sin eso, usan
+  `AGENT_LLM_PROVIDERS` o, si tampoco está, los de siempre.
 - *"¿Cómo van los agentes?"* te da el estado. Puede haber 2 trabajando a la vez.
 - Solo aparecen los agentes que tienen sus herramientas: el técnico, por ejemplo, necesita TrueNAS configurado.
 - `AGENTS_ENABLED: "false"` los desactiva.
+
+### Leads: captar clientes
+
+El captador guarda cada posible cliente como un **lead** (en el NAS, `leads.json`) para hacerle seguimiento. Los ves
+en la pestaña **Leads** del HUD: por qué encaja, su web, su contacto (con botón de copiar), un primer mensaje ya
+escrito y el estado (*nuevo*, *contactado*, *interesado*, *descartado*), que cambias con un toque o por voz:
+*"Marca la Cafetería Luna como contactada"*, *"¿Qué leads tengo sin contactar?"*. Los repetidos no se duplican.
+
+- `LEADS_PROFILE` le dice qué ofreces, para no tener que explicarlo cada vez, por ejemplo
+  `LEADS_PROFILE: "Taller de impresión 3D en Badia del Vallès: piezas a medida, prototipos, figuras y repuestos"`.
+- Solo datos públicos de empresas (su web y el contacto que publican), nunca de particulares. JARVIS no envía nada:
+  el mensaje lo mandas tú.
+
+### Fichas de las respuestas
+
+Cuando JARVIS responde con datos (usó herramientas o la respuesta es larga), aparece junto al cerebro una **ficha**
+con los datos clave (*Máxima 22 °C · Cielo soleado · Lista: leche, pan, huevos*). La hace el mismo modelo en segundo
+plano, así que no retrasa la respuesta; gasta una petición más por turno. `INSIGHTS_ENABLED: "false"` las apaga.
 
 **Resumidor nocturno**: con `SUMMARY_AT: "23:30"` (y Obsidian), cada noche añade a tu nota del día un resumen de lo
 que hablaste con JARVIS: temas, lo que se hizo y lo que quedó pendiente. Para eso guarda las conversaciones del
@@ -389,9 +422,25 @@ Instalación, una sola vez en el PC:
 2. Abre una terminal, ejecuta `claude`, inicia sesión con tu cuenta y ciérralo.
 3. Al lanzar `py jarvis_hud.py` debe salir `Claude Code (membresia): disponible`.
 
+### Auditor de ciberseguridad (Claude con tu membresía)
+
+*"Haz una auditoría de seguridad del servidor"* o *"Audita el código de CaliperWorks"*. JARVIS pide confirmación,
+porque gasta cupo de la membresía. Claude Code trabaja en tu PC y el informe llega a Obsidian
+(`JARVIS/Seguridad`) con cada hallazgo clasificado (Crítico, Alto, Medio, Bajo), la evidencia y cómo corregirlo.
+
+- **Servidor**: el NAS recopila una foto de su seguridad: servicios en marcha, SSH, SMB, usuarios con sudo, 2FA,
+  certificados, apps con puertos publicados y actualizaciones pendientes, y alertas. No incluye secretos: de las
+  claves SSH solo dice si existen. Claude solo puede **buscar** en internet, para mirar vulnerabilidades
+  conocidas, pero **no abrir páginas**, porque lleva datos de tu servidor.
+- **Código**: Claude revisa un proyecto del PC **solo leyendo archivos y sin internet**. JARVIS está permitido
+  siempre; para añadir otros, copia `client/audit.example.json` a `client/audit.json` con sus rutas, por ejemplo
+  `{"caliperworks": "C:/Users/Ori/Claude/caliperworks"}`.
+
+Solo funciona hablando desde el HUD del PC y necesita Claude Code instalado y con la sesión iniciada.
+
 ### Modo Claude y selector de modelo
 
-En el panel derecho del HUD, **CEREBRO** elige quién piensa:
+En la barra superior del HUD, **CEREBRO** elige quién piensa:
 - **Automático (JARVIS)**: la cadena de `LLM_PROVIDERS` (por defecto Groq).
 - **Un proveedor concreto** (`groq`, `gemini`...): va primero y el resto queda de respaldo. En el PC y en el móvil.
 - **Claude Sonnet / Opus / Haiku · membresía** (solo en el HUD del PC, con Claude Code instalado): toda la
