@@ -464,6 +464,15 @@ que queda; de Gemini solo se sabe lo gastado y cuándo da límite.
 primero, con datos clave, precio, lo mejor, lo peor y la fuente). Se abren al terminar y luego desde **Agentes → Ver
 resultados**. El aviso hablado es corto: el resumen en una o dos frases; el informe completo queda en Obsidian.
 
+**Sin repetir investigaciones (0 tokens)**: cada informe del investigador y del de compras se apunta en el NAS
+(`agents_history.json`). Si pides algo parecido mientras siga vigente (compras: 30 días; investigador: 90), JARVIS te
+contesta con ese informe y sus tarjetas sin lanzar el agente. Di "actualízalo" o "búscalo de nuevo" para repetirlo. El
+técnico, el organizador, el escritor y el captador trabajan siempre de cero.
+
+**Quién contesta**: debajo de cada respuesta sale el proveedor y modelo (p. ej. "Cerebras · gpt-oss-120b"); en amarillo
+con "respaldo" si el que elegiste en CEREBRO no estaba disponible y ha contestado otro. Igual en la traza, en los
+satélites de los agentes y en sus tareas.
+
 ### Delegar en Claude con tu membresía (Pro/Max)
 
 Para lo más complejo, JARVIS puede encargarle la tarea a **Claude Code**, que viene incluido en Claude Pro/Max
