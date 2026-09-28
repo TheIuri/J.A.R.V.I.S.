@@ -127,7 +127,7 @@ def build_assistant(settings: Settings) -> Assistant:
         leads = LeadStore(data / "leads.json")
         team = AgentTeam(
             agent_llm, available, vault, assistant.board, settings.timezone, own, assistant.activity,
-            leads, settings.leads_profile,
+            leads, settings.leads_profile, settings.leads_profiles,
         )
         assistant.team = team
         assistant.leads = leads

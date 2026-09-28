@@ -82,6 +82,7 @@ services:
       # --- Agentes (Nivel 5), leads y fichas ---
       # AGENTS_ENABLED: "true"
       # LEADS_PROFILE: "Taller de impresion 3D en ...: piezas a medida, prototipos, figuras" # para el captador
+      # LEADS_PROFILE_CALIPERWORKS: "..." # otro producto: "busca clientes para CaliperWorks" usa este (ver README)
       # INSIGHTS_ENABLED: "true" # fichas con los datos clave de cada respuesta en el HUD (+1 peticion al LLM)
 
       # --- Memoria (Nivel 3): SQLite en el dataset (/data/memory.db) ---

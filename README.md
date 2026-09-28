@@ -411,8 +411,14 @@ en la pestaña **Leads** del HUD: por qué encaja, su web, su contacto (con bot�
 escrito y el estado (*nuevo*, *contactado*, *interesado*, *descartado*), que cambias con un toque o por voz:
 *"Marca la Cafetería Luna como contactada"*, *"¿Qué leads tengo sin contactar?"*. Los repetidos no se duplican.
 
-- `LEADS_PROFILE` le dice qué ofreces, para no tener que explicarlo cada vez, por ejemplo
-  `LEADS_PROFILE: "Taller de impresión 3D en Badia del Vallès: piezas a medida, prototipos, figuras y repuestos"`.
+- `LEADS_PROFILE` le dice qué ofreces, para no tener que explicarlo cada vez, y `LEADS_PROFILE_<NOMBRE>` añade más
+  productos o negocios: el captador usa el que nombres en el encargo (*"busca clientes para CaliperWorks"*). Describe
+  **qué es, a quién le sirve y qué señal tiene el cliente ideal**; con eso define el cliente ideal, busca solo ese tipo
+  y descarta lo que no encaje (mejor 3 buenos que 10 al azar). Por ejemplo:
+  ```yaml
+  LEADS_PROFILE: "Taller de impresión 3D en Badia del Vallès: piezas a medida, prototipos, figuras y repuestos"
+  LEADS_PROFILE_CALIPERWORKS: "CaliperWorks: software de gestión para talleres de impresión 3D (inventario de filamento, presupuestos y pedidos con factura, calculadora de costes desde Bambu Studio, estado de las impresoras y escaparate para encargos). Cliente ideal: talleres y granjas de impresión 3D pequeños o medianos y makers que venden impresiones (web propia, Etsy, Wallapop, Instagram), en España."
+  ```
 - Solo datos públicos de empresas (su web y el contacto que publican), nunca de particulares. JARVIS no envía nada:
   el mensaje lo mandas tú.
 

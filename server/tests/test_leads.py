@@ -62,7 +62,7 @@ def test_lead_hunter_saves_leads_and_traces_them(tmp_path):
                      leads=store, lead_profile="Taller de impresión 3D en Badia del Vallès")
     job = team.start("captador", "clientes para decoración impresa en Sabadell", background=False)
     assert job.state == "terminado"
-    assert "Negocio del usuario: Taller de impresión 3D" in script.requests[0]["messages"][1]["content"]
+    assert "Lo que ofrece el usuario: Taller de impresión 3D" in script.requests[0]["messages"][1]["content"]
     note = (tmp_path / job.note).read_text()
     assert job.note.startswith("JARVIS/Leads/") and "```leads" not in note and "Cafetería Luna" in note
     assert [lead["name"] for lead in store.leads] == ["Cafetería Luna", "Maquetas Pérez"]
@@ -130,3 +130,18 @@ def test_leads_and_insights_endpoints(tmp_path):
     done = client.post("/api/leads/update", json={"id": 1, "status": "interesado"}, headers=auth).json()
     assert done["lead"]["status"] == "interesado"
     assert client.post("/api/leads/update", json={"id": 1, "status": "x"}, headers=auth).status_code == 400
+
+
+def test_lead_hunter_uses_the_profile_the_task_names(monkeypatch):
+    from jarvis import config
+
+    team = AgentTeam(ScriptedLLM([]).llm(), {"web_search": fake_search()}, lead_profile="Taller de impresión 3D",
+                     lead_profiles={"caliperworks": "Software de gestión para talleres de impresión 3D"})
+    assert team.lead_profile_for("busca clientes para Caliper Works en Cataluña") == (
+        "caliperworks", "Software de gestión para talleres de impresión 3D")
+    assert team.lead_profile_for("clientes para mi taller") == ("", "Taller de impresión 3D")
+    assert "caliperworks" in __import__("jarvis.agents", fromlist=["agent_tools"]).agent_tools(team)[0].description
+    monkeypatch.setenv("API_TOKEN", "x")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setenv("LEADS_PROFILE_CALIPERWORKS", "Software para talleres")
+    assert config.load_settings().leads_profiles == {"caliperworks": "Software para talleres"}
