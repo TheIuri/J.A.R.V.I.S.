@@ -3,10 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#04060b">
+  <meta name="theme-color" content="#000000">
   <title>J.A.R.V.I.S.</title>
   <link rel="icon" href="data:,">
+  <link rel="preload" href="fonts/inter-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="hud.css">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three/three.module.min.js", "three/addons/": "./vendor/three/addons/" } }
+  </script>
 </head>
 <body>
   <!-- Iconos: un único trazo de 1.6 px, dibujados a mano -->
@@ -25,7 +29,7 @@
   <header class="topbar">
     <div class="brand" aria-label="J.A.R.V.I.S.">
       <span class="brand-mark" aria-hidden="true"></span>
-      <span class="brand-word">J.A.R.V.I.S.</span>
+      <span class="brand-word">JARVIS</span>
     </div>
 
     <div class="model-switch">
@@ -50,6 +54,7 @@
     <aside id="log" aria-label="Conversación"><p class="log-empty">Aquí aparecerá la conversación: lo que dices, lo que responde y los avisos.</p></aside>
 
     <section id="stage">
+      <canvas id="gl" aria-hidden="true"></canvas>
       <canvas id="orb" aria-label="Mantén pulsado para hablar"></canvas>
       <div id="flow" aria-hidden="true"></div>
       <video id="cam" muted playsinline hidden aria-label="Cámara activa"></video>
@@ -61,7 +66,7 @@
         <p id="trail" aria-label="Recorrido del último turno"></p>
         <p id="subtitle" aria-live="polite"></p>
         <p id="you"></p>
-        <p id="state">EN ESPERA</p>
+        <p id="state">En espera</p>
         <p id="hint" class="hint">Mantén pulsado el cerebro o la barra espaciadora</p>
         <form id="ask" autocomplete="off">
           <input id="text" placeholder="…o escribe aquí y pulsa Enter" aria-label="Mensaje">
@@ -78,17 +83,19 @@
       </nav>
 
       <section role="tabpanel" id="pane-agents" aria-labelledby="tab-agents">
-        <h2>Tareas</h2>
+        <h2>Tareas. <span class="gris">Lo que está en marcha.</span></h2>
         <ol id="jobs-list" class="jobs"></ol>
-        <h2>Equipo</h2>
+        <h2>Equipo. <span class="gris">Cada uno con su modelo.</span></h2>
         <ul id="agents-list" class="agents"></ul>
       </section>
 
       <section role="tabpanel" id="pane-trace" aria-labelledby="tab-trace" hidden>
+        <h2>Traza. <span class="gris">Todo lo que pasa, al momento.</span></h2>
         <ol id="trace" class="trace"></ol>
       </section>
 
       <section role="tabpanel" id="pane-session" aria-labelledby="tab-session" hidden>
+        <h2>Sesión. <span class="gris">Cómo va hoy.</span></h2>
         <dl class="metrics">
           <dt>Sesión</dt><dd id="s-time" class="num">00:00</dd>
           <dt>Intercambios</dt><dd id="s-count" class="num">0</dd>
@@ -98,7 +105,7 @@
           <dt>Modelo</dt><dd id="s-model" class="num">—</dd>
           <dt>Herramientas</dt><dd id="s-tools" class="num">—</dd>
         </dl>
-        <h2>Córtex</h2>
+        <h2>Córtex. <span class="gris">Qué región trabaja.</span></h2>
         <ul id="cortex"></ul>
         <div class="actions">
           <button id="camera" type="button" aria-pressed="false"><svg class="icon"><use href="#i-camera"/></svg><span>Cámara</span></button>
@@ -121,5 +128,6 @@
   </div>
 
   <script src="hud.js"></script>
+  <script type="module" src="brain3d.js"></script>
 </body>
 </html>

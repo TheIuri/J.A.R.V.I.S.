@@ -10,18 +10,18 @@ const TARGET_RATE = 16000; // lo que espera Whisper
 const MIN_RECORD_MS = 300;
 
 const COLORS = {
-  idle: [255, 181, 71],
-  listening: [76, 201, 240],
-  thinking: [179, 136, 255],
-  speaking: [255, 140, 66],
-  error: [255, 107, 107],
+  idle: [41, 151, 255],
+  listening: [100, 210, 255],
+  thinking: [191, 90, 242],
+  speaking: [255, 159, 10],
+  error: [255, 69, 58],
 };
 const STATE_LABEL = {
-  idle: "EN ESPERA",
-  listening: "ESCUCHANDO",
-  thinking: "PENSANDO",
-  speaking: "HABLANDO",
-  error: "ERROR",
+  idle: "En espera",
+  listening: "Escuchando",
+  thinking: "Pensando",
+  speaking: "Hablando",
+  error: "Error",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -232,7 +232,7 @@ $("camera").addEventListener("click", toggleCamera);
 
 // Color de cada proveedor en el selector y en el indicador.
 const MODEL_COLORS = {
-  "": [255, 181, 71],
+  "": [41, 151, 255],
   groq: [255, 122, 69],
   gemini: [122, 162, 255],
   openrouter: [179, 136, 255],
@@ -379,8 +379,8 @@ function moveInk() {
   const tab = document.querySelector('.tabs [aria-selected="true"]');
   const ink = document.querySelector(".tab-ink");
   if (!tab || !ink) return;
-  ink.style.width = `${tab.offsetWidth - 24}px`;
-  ink.style.transform = `translateX(${tab.offsetLeft + 12}px)`;
+  ink.style.width = `${tab.offsetWidth}px`;
+  ink.style.transform = `translateX(${tab.offsetLeft}px)`;
 }
 
 function setBadge(name, n) {
@@ -694,7 +694,7 @@ function flushNotices() {
     const n = queuedNotices.shift();
     $("subtitle").textContent = n.text;
     fire(REGION.thalamus, n.text);
-    trace(`Aviso · ${n.source}`, n.text, n.level === "critical" ? [255, 107, 107] : REGIONS[REGION.thalamus].color);
+    trace(`Aviso · ${n.source}`, n.text, n.level === "critical" ? [255, 69, 58] : REGIONS[REGION.thalamus].color);
     const turn = document.createElement("div");
     turn.className = `turn notice ${n.level}`;
     const a = document.createElement("div");
@@ -774,16 +774,17 @@ function chime() {
 // desde la región anterior: oído -> hipocampo (memoria) -> prefrontal (razona) -> tools -> lenguaje -> voz.
 
 const REGIONS = [
-  { id: "prefrontal", name: "PREFRONTAL", role: "razonamiento", pos: [0.8, 0.2, 0], color: [255, 77, 141] },
-  { id: "motor", name: "CÓRTEX MOTOR", role: "acciones", pos: [0.2, 0.66, 0], color: [255, 96, 96] },
-  { id: "association", name: "ASOCIACIÓN", role: "consultas", pos: [-0.42, 0.5, 0], color: [179, 136, 255] },
-  { id: "auditory", name: "AUDITIVO", role: "oído", pos: [0.05, -0.2, 0.5], color: [76, 201, 240] },
-  { id: "hippocampus", name: "HIPOCAMPO", role: "memoria", pos: [-0.2, -0.12, -0.25], color: [94, 227, 161] },
-  { id: "language", name: "LENGUAJE", role: "respuesta", pos: [0.52, -0.24, 0.3], color: [255, 181, 71] },
-  { id: "cerebellum", name: "CEREBELO", role: "voz", pos: [-0.6, -0.52, 0], color: [77, 124, 255] },
-  { id: "visual", name: "VISUAL", role: "cámara apagada", pos: [-0.92, 0.08, 0], color: [45, 212, 191], planned: true },
-  { id: "thalamus", name: "TÁLAMO", role: "avisos", pos: [-0.05, 0.12, 0], color: [210, 230, 255] },
+  { id: "prefrontal", name: "Prefrontal", role: "razonamiento", pos: [0.8, 0.2, 0], color: [255, 55, 95] },
+  { id: "motor", name: "Córtex motor", role: "acciones", pos: [0.2, 0.66, 0], color: [255, 159, 10] },
+  { id: "association", name: "Asociación", role: "consultas", pos: [-0.42, 0.5, 0], color: [191, 90, 242] },
+  { id: "auditory", name: "Auditivo", role: "oído", pos: [0.05, -0.2, 0.5], color: [100, 210, 255] },
+  { id: "hippocampus", name: "Hipocampo", role: "memoria", pos: [-0.2, -0.12, -0.25], color: [48, 209, 88] },
+  { id: "language", name: "Lenguaje", role: "respuesta", pos: [0.52, -0.24, 0.3], color: [255, 214, 10] },
+  { id: "cerebellum", name: "Cerebelo", role: "voz", pos: [-0.6, -0.52, 0], color: [10, 132, 255] },
+  { id: "visual", name: "Visual", role: "cámara apagada", pos: [-0.92, 0.08, 0], color: [102, 212, 207], planned: true },
+  { id: "thalamus", name: "Tálamo", role: "avisos", pos: [-0.05, 0.12, 0], color: [220, 235, 255] },
 ];
+window.JARVIS_REGIONS = REGIONS; // brain3d.js (WebGL) lee de aquí la forma y los colores
 const REGION = Object.fromEntries(REGIONS.map((r, i) => [r.id, i]));
 
 const TOOL_LABEL = {
@@ -1037,7 +1038,7 @@ function onFlow(ev) {
       const label = TOOL_LABEL[ev.name] || ev.name;
       Object.assign(regionState[idx], { pending: false, fail: !ev.ok });
       fire(idx, `${ev.ok ? "hecho" : "falló"} · ${label} · ${ev.ms} ms · ${ev.text}`);
-      trace(ev.ok ? `${label} · ${ev.ms} ms` : `${label} · falló`, ev.text, ev.ok ? REGIONS[idx].color : [255, 107, 107]);
+      trace(ev.ok ? `${label} · ${ev.ms} ms` : `${label} · falló`, ev.text, ev.ok ? REGIONS[idx].color : [255, 69, 58]);
       break;
     }
     case "cards":
@@ -1061,7 +1062,7 @@ function onFlow(ev) {
 const AGENT_COLORS = {
   investigador: [76, 201, 240],
   tecnico: [255, 110, 90],
-  organizador: [94, 227, 161],
+  organizador: [48, 209, 88],
   escritor: [255, 200, 90],
   compras: [190, 140, 255],
   claude: [217, 119, 87],
@@ -1123,7 +1124,7 @@ function onActivity(ev) {
       sat.span.textContent = ev.task || "trabajando";
       sat.small.textContent = ev.models || ev.model || "";
       pulses.push({ from: REGION.prefrontal, toSat: sat.key, t: 0, dur: reducedMotion ? 0.01 : 0.9, rgb });
-      fire(REGION.prefrontal, `encarga a ${label.toLowerCase()}`);
+      fire(REGION.prefrontal, `encarga ${/^el /i.test(label) ? "al " + label.slice(3) : "a " + label}`.toLowerCase());
       trace(label, `empieza: ${ev.task || ""}`, rgb);
       if (!ev.job) externalJobs.set(ev.agent, { agent: ev.agent, label, task: ev.task, state: "trabajando", steps: 0, model: "Claude", started: ev.ts });
       break;
@@ -1144,8 +1145,8 @@ function onActivity(ev) {
       sat.el.classList.add("done");
       sat.span.textContent = ev.summary || "terminado";
       if (ev.model) sat.small.textContent = ev.model;
-      pulses.push({ fromSat: sat.key, to: REGION.thalamus, t: 0, dur: reducedMotion ? 0.01 : 0.9, rgb: [94, 227, 161] });
-      trace(label, `terminado${ev.note ? ` · ${ev.note}` : ""}: ${ev.summary || ""}`, [94, 227, 161]);
+      pulses.push({ fromSat: sat.key, to: REGION.thalamus, t: 0, dur: reducedMotion ? 0.01 : 0.9, rgb: [48, 209, 88] });
+      trace(label, `terminado${ev.note ? ` · ${ev.note}` : ""}: ${ev.summary || ""}`, [48, 209, 88]);
       if (!ev.job && externalJobs.has(ev.agent)) Object.assign(externalJobs.get(ev.agent), { state: "terminado", summary: ev.summary, note: ev.note });
       retireSatellite(sat, 6000);
       break;
@@ -1153,7 +1154,7 @@ function onActivity(ev) {
       sat.state = "error";
       sat.el.classList.add("error");
       sat.span.textContent = ev.detail || ev.task || "error";
-      trace(label, `no ha podido terminar: ${ev.detail || ev.task || ""}`, [255, 107, 107]);
+      trace(label, `no ha podido terminar: ${ev.detail || ev.task || ""}`, [255, 69, 58]);
       if (!ev.job && externalJobs.has(ev.agent)) Object.assign(externalJobs.get(ev.agent), { state: "error", summary: ev.task });
       retireSatellite(sat, 6000);
       break;
@@ -1282,7 +1283,7 @@ const labels = REGIONS.map((r, i) => {
 function updateCortexPanel() {
   labels.forEach(({ row, status, i }) => {
     const r = regionState[i];
-    const text = REGIONS[i].planned ? "PLANIFICADO" : r.pending ? "EJECUTANDO" : r.act > 0.35 ? "ACTIVO" : "EN REPOSO";
+    const text = REGIONS[i].planned ? "Planificado" : r.pending ? "Ejecutando" : r.act > 0.35 ? "Activo" : "En reposo";
     status.textContent = text;
     row.className = REGIONS[i].planned ? "planned" : r.act > 0.35 || r.pending ? "live" : "";
   });
@@ -1309,29 +1310,9 @@ function rgba([r, gr, b], alpha) {
   return `rgba(${r | 0},${gr | 0},${b | 0},${Math.max(0, Math.min(1, alpha))})`;
 }
 
-function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000) * (reducedMotion ? 0.3 : 1);
-  last = now;
-  const target = COLORS[state];
-  color = color.map((c, i) => c + (target[i] - c) * Math.min(1, dt * 4));
-  const lvl = audioLevel();
-  level += (lvl - level) * Math.min(1, dt * 12);
-  burst = Math.max(0, burst - dt * 2);
-  if (state !== "error") $("state").style.color = rgba(color, 1);
-
-  // Actividad de fondo según el estado (micro, pensando, hablando).
-  const think = state === "thinking" ? 0.3 + 0.15 * Math.sin(now / 160) : 0;
-  regionState.forEach((r, i) => {
-    let base = REGIONS[i].planned ? 0.05 : 0.15;
-    if (i === REGION.auditory && state === "listening") base = 0.35 + level * 0.8;
-    if (i === REGION.prefrontal) base = Math.max(base, think);
-    if ((i === REGION.cerebellum || i === REGION.language) && state === "speaking") base = 0.3 + level * 0.7;
-    if (r.pending) base = Math.max(base, 0.6 + 0.3 * Math.sin(now / 90));
-    r.act = Math.max(base, r.act - dt * 0.45);
-  });
-
-  const W = canvas.width;
-  const H = canvas.height;
+// Respaldo sin WebGL: el cerebro de partículas en 2D.
+function draw2d(now, dt, W, H) {
+  let centers;
   const cx = W / 2;
   const cy = H * 0.5;
   const S = Math.min(W * (W < H * 1.6 ? 0.4 : 0.34), H * 0.46);
@@ -1414,14 +1395,14 @@ function frame(now) {
   }
 
   // agentes: satélites en órbita, unidos al prefrontal por un haz
-  const centers = REGIONS.map((r) => project(r.pos, [0, 0, 0, 0]));
+  centers = REGIONS.map((r) => project(r.pos, [0, 0, 0, 0]));
   const pf = centers[REGION.prefrontal];
   g.lineCap = "round";
   for (const sat of satellites.values()) {
     const bob = Math.sin(now / 900 + sat.slot) * 0.04;
     project([sat.pos[0], sat.pos[1] + bob, sat.pos[2]], sat.proj);
     const [x, y, f, depth] = sat.proj;
-    const rgb = sat.state === "done" ? [94, 227, 161] : sat.state === "error" ? [255, 107, 107] : sat.rgb;
+    const rgb = sat.state === "done" ? [48, 209, 88] : sat.state === "error" ? [255, 69, 58] : sat.rgb;
     const alpha = 0.35 + 0.65 * depth;
     const mx = (pf[0] + x) / 2 + ((pf[0] + x) / 2 - cx) * 0.35;
     const my = (pf[1] + y) / 2 + ((pf[1] + y) / 2 - cy) * 0.35 - S * 0.1;
@@ -1485,6 +1466,45 @@ function frame(now) {
     if (p.t >= 1.25) pulses.splice(k, 1);
   }
   g.globalCompositeOperation = "source-over";
+
+  return centers;
+}
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000) * (reducedMotion ? 0.3 : 1);
+  last = now;
+  const target = COLORS[state];
+  color = color.map((c, i) => c + (target[i] - c) * Math.min(1, dt * 4));
+  const lvl = audioLevel();
+  level += (lvl - level) * Math.min(1, dt * 12);
+  burst = Math.max(0, burst - dt * 2);
+  if (state !== "error") $("state").style.color = rgba(color, 1);
+
+  // Actividad de fondo según el estado (micro, pensando, hablando).
+  const think = state === "thinking" ? 0.3 + 0.15 * Math.sin(now / 160) : 0;
+  regionState.forEach((r, i) => {
+    let base = REGIONS[i].planned ? 0.05 : 0.15;
+    if (i === REGION.auditory && state === "listening") base = 0.35 + level * 0.8;
+    if (i === REGION.prefrontal) base = Math.max(base, think);
+    if ((i === REGION.cerebellum || i === REGION.language) && state === "speaking") base = 0.3 + level * 0.7;
+    if (r.pending) base = Math.max(base, 0.6 + 0.3 * Math.sin(now / 90));
+    r.act = Math.max(base, r.act - dt * 0.45);
+  });
+
+  const W = canvas.width;
+  const H = canvas.height;
+  let centers;
+  if (window.brain3d) {
+    // WebGL: el cerebro de verdad en 3D lo pinta brain3d.js en #gl; este lienzo solo recibe el dedo.
+    if (!canvas.dataset.clear) {
+      g.clearRect(0, 0, W, H);
+      canvas.dataset.clear = "1";
+      document.body.classList.add("gl");
+    }
+    centers = window.brain3d.render({ now, dt, color, level, burst, regionState, pulses, satellites, W, H });
+  } else {
+    centers = draw2d(now, dt, W, H);
+  }
 
   // etiquetas de región
   const dpr = W / canvas.getBoundingClientRect().width || 1;

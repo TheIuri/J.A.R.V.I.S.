@@ -38,7 +38,12 @@ from pc_actions import PCActions, load_apps
 
 # La interfaz vive en el servidor (tambien la sirve el NAS para el movil); aqui se usa la copia del repo.
 STATIC_DIR = Path(__file__).resolve().parent.parent / "server" / "jarvis" / "web"
-CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
+CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".woff2": "font/woff2",
+}
 
 # Rutas del servidor que el HUD puede usar (nada mas se reenvia).
 PROXY_POST = {"/api/chat", "/api/voice", "/api/reset", "/api/transcribe"}
@@ -268,8 +273,9 @@ def make_handler(hud: Hud, port: int):
             path = self.path.split("?")[0]
             if path in ("/", "/index.html"):
                 path = "/index.html"
-            static = STATIC_DIR / path.lstrip("/")
-            if static.suffix in CONTENT_TYPES and static.parent == STATIC_DIR and static.is_file():
+            static = (STATIC_DIR / path.lstrip("/")).resolve()
+            # Solo archivos de la carpeta de la web (y sus subcarpetas: vendor/, fonts/); nada fuera de ella.
+            if static.suffix in CONTENT_TYPES and STATIC_DIR.resolve() in static.parents and static.is_file():
                 return self._send(200, static.read_bytes(), CONTENT_TYPES[static.suffix])
             if path == "/hud/config":
                 claude = [{"id": k, "label": v[1]} for k, v in CLAUDE_MODELS.items()] if hud.claude.exe else []

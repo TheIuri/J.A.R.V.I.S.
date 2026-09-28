@@ -238,7 +238,11 @@ Ejemplos: *"Recuerda que mi perro se llama Toby"*, *"Prefiero que me llames Ori"
 
 ## Interfaz (HUD) en el PC
 
-Una interfaz web con un **cerebro 3D de neuronas** que gira sobre sí mismo y muestra el flujo de pensamiento en directo. Incluye
+Una interfaz web con un **cerebro 3D de neuronas** que gira sobre sí mismo y muestra el flujo de pensamiento en directo.
+Está hecho con WebGL (Three.js, incluido en `server/jarvis/web/vendor/`, sin CDN): un núcleo de corteza que brilla,
+racimos de neuronas de color por región y dendritas por las que viajan señales; con brillo (bloom) y giro continuo. Si el
+navegador no tiene WebGL, se dibuja la versión 2D de antes. El estilo es el de las páginas de producto de Apple en oscuro
+(el mismo de la presentación de CaliperWorks): escenario negro, baldosas de cristal gris carbón y el azul del sistema. Incluye
 subtítulos, historial y un panel lateral con tres pestañas:
 - **Agentes**: las tareas en marcha (agente, modelo que responde, pasos, tiempo) y el equipo con el modelo de cada uno.
 - **Traza**: línea de tiempo de todo lo que pasa (tu turno, herramientas, agentes, Claude, el auditor, avisos).
