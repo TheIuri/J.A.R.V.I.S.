@@ -811,6 +811,7 @@ const TOOL_LABEL = {
   news: "noticias",
   convert: "conversión",
   calendar_agenda: "agenda",
+  calendar_add: "agenda · nuevo evento",
   agent_run: "encargar a un agente",
   agent_status: "estado del agente",
   delegate_claude: "encargar a Claude",
@@ -828,7 +829,7 @@ const TOOL_LABEL = {
   spotify_now_playing: "Spotify · qué suena",
 };
 // Acciones (cambian algo fuera) -> córtex motor; el resto son consultas -> asociación.
-const MOTOR_TOOLS = new Set(["truenas_app_restart", "wake_on_lan", "home_control", "spotify_play", "spotify_control"]);
+const MOTOR_TOOLS = new Set(["calendar_add", "truenas_app_restart", "wake_on_lan", "home_control", "spotify_play", "spotify_control"]);
 
 function toolRegion(name) {
   if (name.startsWith("reminder_")) return REGION.thalamus;

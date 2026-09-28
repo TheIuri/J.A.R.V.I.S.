@@ -56,7 +56,7 @@ def test_vision_providers_config(monkeypatch):
         monkeypatch.delenv(var, raising=False)
     vision = config.load_settings().vision_providers
     assert [(p.name, p.model, p.reasoning_effort) for p in vision] == [
-        ("gemini", "gemini-2.5-flash", ""), ("groq", "meta-llama/llama-4-scout-17b-16e-instruct", "")]
+        ("gemini", "gemini-flash-latest", ""), ("groq", "meta-llama/llama-4-scout-17b-16e-instruct", "")]
     monkeypatch.setenv("VISION_PROVIDERS", "groq")
     monkeypatch.setenv("GROQ_VISION_MODEL", "otro-modelo")
     assert [(p.name, p.model) for p in config.load_settings().vision_providers] == [("groq", "otro-modelo")]

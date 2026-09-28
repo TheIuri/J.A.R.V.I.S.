@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from ..config import Settings
 from ..memory import MemoryStore
 from ..obsidian import Vault
 from .basic import datetime_tool, weather_tool
 from .calendar import Calendars, calendar_tool, parse_calendars
+from .calendar_write import GoogleCalendar, OutlookCalendar, calendar_add_tool
 from .delegate import delegate_tool
 from .homeassistant import HomeAssistant, ha_tools
 from .info import info_tools
@@ -54,6 +56,9 @@ def build_registry(
         calendars = Calendars(parse_calendars(settings.calendars), settings.timezone)
     if calendars:
         registry.register(calendar_tool(calendars))
+    writers = _calendar_writers(settings)
+    if writers:
+        registry.register(calendar_add_tool(writers, settings.timezone))
     for tool in reminder_tools(reminders) if reminders else []:
         registry.register(tool)
     if settings.ha_url and settings.ha_token:
@@ -84,6 +89,22 @@ def build_registry(
             registry.register(tool)
     log.info("Tools activas: %s", ", ".join(registry.names()))
     return registry
+
+
+def _calendar_writers(settings: Settings) -> dict:
+    """Calendarios donde JARVIS puede crear eventos (cada uno con su inicio de sesion)."""
+    writers: dict = {}
+    if settings.google_client_id and settings.google_client_secret and settings.google_refresh_token:
+        writers["google"] = GoogleCalendar(
+            settings.google_client_id, settings.google_client_secret, settings.google_refresh_token,
+            settings.google_calendar_id,
+        )
+    if settings.outlook_client_id and settings.outlook_refresh_token:
+        writers["outlook"] = OutlookCalendar(
+            settings.outlook_client_id, settings.outlook_refresh_token, settings.outlook_tenant,
+            Path(settings.data_dir) / "outlook_token.json",
+        )
+    return writers
 
 
 def _snapshot(settings: Settings):

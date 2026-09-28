@@ -27,7 +27,7 @@ services:
       # GEMINI_API_KEY: "" # https://aistudio.google.com/apikey
       # GROQ_MODEL: "openai/gpt-oss-120b" # si Groq lo retira, elige otro en console.groq.com/docs/models
       # GROQ_REASONING_EFFORT: "low" # pon "" si eliges un modelo que no razona
-      # GEMINI_MODEL: "gemini-2.5-flash"
+      # GEMINI_MODEL: "gemini-flash-latest" # alias de Google al Flash vigente
       # AGENT_LLM_PROVIDERS: "gemini,groq" # cadena de los agentes (leen mucho: mejor Gemini primero)
       # AGENT_COMPRAS_PROVIDERS: "gemini,groq" # un agente concreto con su propia cadena:
       # AGENT_CAPTADOR_PROVIDERS: "gemini,groq" #   AGENT_<INVESTIGADOR|TECNICO|ORGANIZADOR|COMPRAS|CAPTADOR|ESCRITOR>_PROVIDERS
@@ -46,6 +46,12 @@ services:
 
       # --- Agenda: enlaces secretos iCal de Google Calendar / Outlook (ver README) ---
       # CALENDARS: "personal=https://...basic.ics;trabajo=https://...calendar.ics"
+      # Crear eventos (py client/calendar_login.py google|outlook te da estos valores; ver README):
+      # GOOGLE_CLIENT_ID: ""
+      # GOOGLE_CLIENT_SECRET: ""
+      # GOOGLE_REFRESH_TOKEN: ""
+      # OUTLOOK_CLIENT_ID: ""
+      # OUTLOOK_REFRESH_TOKEN: ""
 
       # --- Camara (vision): por defecto Gemini si esta configurado, si no el modelo de vision de Groq ---
       # VISION_PROVIDERS: "gemini,groq"

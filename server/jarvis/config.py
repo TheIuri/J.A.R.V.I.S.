@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 # Modelo de vision por proveedor (camara). Se cambia con <NOMBRE>_VISION_MODEL.
 VISION_DEFAULTS = {
     "groq": "meta-llama/llama-4-scout-17b-16e-instruct",
-    "gemini": "gemini-2.5-flash",
+    "gemini": "gemini-flash-latest",
     "openrouter": "meta-llama/llama-4-scout:free",
     "ollama": "llava",
 }
@@ -28,7 +28,7 @@ LLM_PRESETS: dict[str, tuple[str, str | None, str]] = {
     "gemini": (
         "https://generativelanguage.googleapis.com/v1beta/openai",
         "GEMINI_API_KEY",
-        "gemini-2.5-flash",
+        "gemini-flash-latest",  # alias de Google al Flash vigente: no se rompe cuando retiran uno
     ),
     "openrouter": (
         "https://openrouter.ai/api/v1",
@@ -121,6 +121,14 @@ class Settings:
     brave_api_key: str = ""  # opcional: busqueda web con Brave en vez de DuckDuckGo
     wol_devices: str = ""  # "sobremesa=AA:BB:CC:DD:EE:FF;otro=..."
     calendars: str = ""  # "personal=https://...ics;trabajo=https://...ics" (enlaces secretos iCal)
+    # Crear eventos (client/calendar_login.py da los tokens)
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_refresh_token: str = ""
+    google_calendar_id: str = "primary"
+    outlook_client_id: str = ""
+    outlook_refresh_token: str = ""
+    outlook_tenant: str = "common"
     ha_url: str = ""  # Home Assistant, p. ej. http://192.168.1.50:8123
     ha_token: str = ""
     ha_entities: str = ""  # opcional: prefijos de entity_id permitidos ("light.,switch.salon")
@@ -251,6 +259,13 @@ def load_settings() -> Settings:
         brave_api_key=_env("BRAVE_API_KEY"),
         wol_devices=_env("WOL_DEVICES"),
         calendars=_env("CALENDARS"),
+        google_client_id=_env("GOOGLE_CLIENT_ID"),
+        google_client_secret=_env("GOOGLE_CLIENT_SECRET"),
+        google_refresh_token=_env("GOOGLE_REFRESH_TOKEN"),
+        google_calendar_id=_env("GOOGLE_CALENDAR_ID", "primary"),
+        outlook_client_id=_env("OUTLOOK_CLIENT_ID"),
+        outlook_refresh_token=_env("OUTLOOK_REFRESH_TOKEN"),
+        outlook_tenant=_env("OUTLOOK_TENANT", "common"),
         ha_url=_env("HA_URL"),
         ha_token=_env("HA_TOKEN"),
         ha_entities=_env("HA_ENTITIES"),

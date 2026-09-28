@@ -159,6 +159,31 @@ CALENDARS: "personal=https://calendar.google.com/calendar/ical/.../basic.ics;tra
 Esos enlaces dan acceso a tu agenda: trátalos como una contraseña (solo en las variables de la app, nunca en el
 repositorio). Ejemplos: *"¿Qué tengo mañana?"*, *"¿Qué tengo esta semana en el trabajo?"*.
 
+### Crear eventos (Google Calendar y Outlook)
+
+Leer la agenda va con los enlaces iCal de arriba. Para que JARVIS **cree** eventos (*"Apúntame el dentista el
+miércoles a las 10:30"*) hace falta dar permiso una vez, en el PC, con `client/calendar_login.py`. El permiso es solo
+para eventos del calendario y JARVIS **siempre pregunta antes de crear** ("¿Creo el evento…?" → "sí").
+
+**Google Calendar**
+1. En [console.cloud.google.com](https://console.cloud.google.com) crea un proyecto y activa la **Google Calendar
+   API** (*APIs y servicios → Biblioteca*).
+2. *Pantalla de consentimiento de OAuth*: tipo **Externo**, añade tu correo como usuario de prueba y luego pulsa
+   **Publicar app** (estado *En producción*). En *Prueba*, Google caduca el permiso a los 7 días. No hace falta que
+   Google la verifique: es para ti.
+3. *Credenciales → Crear credenciales → ID de cliente de OAuth*, tipo **Aplicación de escritorio**.
+4. En el PC: `py calendar_login.py google`, pega el Client ID y el Secret, acepta en el navegador (si avisa de "app
+   no verificada": *Configuración avanzada → Ir a…*) y copia las tres líneas que imprime al YAML de TrueNAS.
+   Opcional: `GOOGLE_CALENDAR_ID` para usar otro calendario que no sea el principal.
+
+**Outlook (Microsoft 365 / outlook.com)**
+1. En [entra.microsoft.com](https://entra.microsoft.com) → *App registrations → New registration*: nombre `JARVIS`,
+   cuentas **"Any organizational directory and personal Microsoft accounts"**, sin Redirect URI.
+2. En la app: *Authentication → Allow public client flows → **Yes*** y guarda. Copia el *Application (client) ID*.
+3. En el PC: `py calendar_login.py outlook`, pega el ID, abre la web que indica, escribe el código y acepta.
+   Copia las líneas que imprime al YAML de TrueNAS.
+   Microsoft renueva el permiso cada vez que se usa; JARVIS guarda el renovado en el dataset (`outlook_token.json`).
+
 ### Wake-on-LAN
 
 Enciende otro equipo de casa: *"Enciende el sobremesa"*.
@@ -319,7 +344,7 @@ sale con tus preguntas y no se guarda en ningún sitio.
 Con Home Assistant, también sus cámaras: *"¿Hay alguien en la puerta?"*.
 
 **Modelo de visión**: por defecto usa los proveedores que ya tienes, con Gemini primero si está configurado
-(`gemini-2.5-flash`), y si no, el modelo de visión de Groq (`meta-llama/llama-4-scout-17b-16e-instruct`).
+(`gemini-flash-latest`), y si no, el modelo de visión de Groq (`meta-llama/llama-4-scout-17b-16e-instruct`).
 Se cambia con `VISION_PROVIDERS: "gemini,groq"` y `GROQ_VISION_MODEL` / `GEMINI_VISION_MODEL` (si Groq retira el
 modelo, elige otro de visión en console.groq.com/docs/models). En modo Claude no se usa la cámara.
 
