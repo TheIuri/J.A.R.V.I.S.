@@ -309,6 +309,10 @@ function renderModelMenu() {
     const small = document.createElement("small");
     small.textContent = m.detail || "";
     text.append(name, small);
+    const meter = document.createElement("span");
+    meter.className = "mi-quota";
+    meter.dataset.provider = m.id;
+    text.append(meter);
     item.append(sw, text);
     item.insertAdjacentHTML("beforeend", '<svg class="icon"><use href="#i-check"/></svg>');
     item.addEventListener("click", () => {
@@ -339,6 +343,7 @@ function applyModel(id, announce) {
 
 function toggleModelMenu(open) {
   const menu = $("model-menu");
+  if (open) loadUsage();
   menu.hidden = !open;
   $("model-btn").setAttribute("aria-expanded", String(open));
   if (open) (menu.querySelector('[aria-checked="true"]') || menu.querySelector(".menu-item"))?.focus();
@@ -359,6 +364,140 @@ $("model-menu").addEventListener("keydown", (e) => {
 addEventListener("pointerdown", (e) => {
   if (!e.target.closest(".model-switch") && !$("model-menu").hidden) toggleModelMenu(false);
 });
+
+// --- cuota de los modelos: cuánto queda de cada uno (capas gratuitas con límite) --------------------
+
+const QUOTA_TEXT = { ok: "Con margen", low: "Queda poco", limit: "En su límite", error: "Con errores" };
+const QUOTA_RANK = { ok: 0, error: 1, low: 2, limit: 3 };
+let usage = null;
+
+function fmtNum(n) {
+  return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}k` : String(n);
+}
+
+function fmtWait(s) {
+  return s >= 3600 ? `${Math.round(s / 3600)} h` : s >= 60 ? `${Math.round(s / 60)} min` : `${s} s`;
+}
+
+// Lo que queda, en una línea: "1.2k tokens/min · 850 peticiones/día" o el aviso de límite.
+function quotaLine(m, short = false) {
+  if (m.state === "limit") return m.blocked_for ? `En su límite · vuelve en ${fmtWait(m.blocked_for)}` : "En su límite";
+  let meters = m.meters.filter((x) => x.limit);
+  if (short && meters.length > 1) {
+    // Solo el más apurado, para que quepa en una línea del menú.
+    meters = [meters.reduce((a, b) => ((b.remaining ?? b.limit) / b.limit < (a.remaining ?? a.limit) / a.limit ? b : a))];
+  }
+  const parts = meters.map((x) =>
+    `${fmtNum(x.remaining ?? x.limit)} ${x.kind === "tokens" ? "tokens" : "peticiones"}${x.window ? `/${x.window}` : ""}`);
+  return parts.length ? `Quedan ${parts.join(" · ")}` : `Hoy: ${m.requests} peticiones · ${fmtNum(m.tokens)} tokens`;
+}
+
+// Fracción que queda del contador más apurado (para la barra).
+function quotaLeft(m) {
+  if (m.state === "limit") return 0;
+  const fr = m.meters.filter((x) => x.limit).map((x) => (x.remaining ?? x.limit) / x.limit);
+  return fr.length ? Math.min(...fr) : null;
+}
+
+function quotaBar(left, state) {
+  const bar = document.createElement("span");
+  bar.className = `qbar ${state}`;
+  const fill = document.createElement("i");
+  fill.style.width = `${Math.round((left ?? 1) * 100)}%`;
+  bar.append(fill);
+  return bar;
+}
+
+// Estado del cerebro elegido: en automático manda el primero de la cadena que no esté en su límite.
+function activeQuota() {
+  if (!usage) return null;
+  const byName = new Map(usage.models.map((m) => [m.name, m]));
+  const chain = usage.chain.map((n) => byName.get(n)).filter(Boolean);
+  if (!chain.length) return null;
+  if (isClaude()) return null;
+  if (currentModel) {
+    const own = chain.filter((m) => m.provider === currentModel);
+    return own.sort((a, b) => QUOTA_RANK[b.state] - QUOTA_RANK[a.state])[0] || null;
+  }
+  const first = chain[0];
+  if (first.state !== "limit") return first;
+  const backup = chain.find((m) => m.state !== "limit");
+  return backup ? { ...backup, state: "low", note: `${first.name} en su límite; responde ${backup.name}` } : first;
+}
+
+function renderUsage() {
+  if (!usage) return;
+  const dot = $("quota-dot");
+  const active = activeQuota();
+  dot.hidden = !active;
+  if (active) {
+    dot.className = `quota-dot ${active.state}`;
+    dot.title = active.note || `${QUOTA_TEXT[active.state]} · ${quotaLine(active)}`;
+  }
+  // En el menú: la cuota de cada proveedor bajo su nombre.
+  document.querySelectorAll("#model-menu .mi-quota").forEach((el) => {
+    const models = usage.models.filter((m) => m.provider === el.dataset.provider && usage.chain.includes(m.name));
+    el.textContent = "";
+    if (!models.length) return;
+    const worst = models.reduce((a, b) => (QUOTA_RANK[b.state] > QUOTA_RANK[a.state] ? b : a));
+    el.className = `mi-quota ${worst.state}`;
+    el.append(quotaBar(quotaLeft(worst), worst.state), document.createTextNode(quotaLine(worst, true)));
+  });
+  // En la pestaña Sesión: todos, conversación y agentes.
+  const list = $("quota-list");
+  list.textContent = "";
+  for (const m of usage.models) {
+    const li = document.createElement("li");
+    li.className = m.state;
+    const head = document.createElement("div");
+    head.className = "q-head";
+    const name = document.createElement("span");
+    name.className = "q-name";
+    name.textContent = m.name;
+    const role = document.createElement("span");
+    role.className = "q-role";
+    role.textContent = usage.chain.includes(m.name) ? "conversación" : "agentes";
+    const st = document.createElement("span");
+    st.className = `q-state ${m.state}`;
+    st.textContent = QUOTA_TEXT[m.state];
+    head.append(name, role, st);
+    li.append(head);
+    for (const x of m.meters.filter((x) => x.limit)) {
+      const row = document.createElement("div");
+      row.className = "q-meter";
+      const label = document.createElement("span");
+      label.textContent = `${x.kind === "tokens" ? "Tokens" : "Peticiones"}${x.window ? ` / ${x.window}` : ""}`;
+      const num = document.createElement("span");
+      num.className = "num";
+      num.textContent = `${fmtNum(x.remaining ?? x.limit)} de ${fmtNum(x.limit)}${x.reset_in ? ` · ${fmtWait(x.reset_in)}` : ""}`;
+      row.append(label, quotaBar((x.remaining ?? x.limit) / x.limit, m.state), num);
+      li.append(row);
+    }
+    const foot = document.createElement("p");
+    foot.className = "q-foot";
+    foot.textContent = [
+      `Hoy ${m.requests} peticiones · ${fmtNum(m.tokens)} tokens`,
+      m.limited ? `${m.limited} veces en límite` : "",
+      m.state === "limit" && m.blocked_for ? `vuelve en ${fmtWait(m.blocked_for)}` : "",
+    ].filter(Boolean).join(" · ");
+    li.append(foot);
+    list.append(li);
+  }
+  if (!usage.models.length) list.innerHTML = '<p class="empty">Aún no se ha usado ningún modelo desde que arrancó el servidor.</p>';
+}
+
+async function loadUsage() {
+  if (mode === "server" && !getToken()) return;
+  try {
+    const resp = await api("/api/usage");
+    if (!resp.ok) return;
+    usage = await resp.json();
+    renderUsage();
+  } catch {
+    /* servidor antiguo o sin conexión */
+  }
+}
+setInterval(loadUsage, 20000);
 
 // --- pestañas del panel ---------------------------------------------------------------
 
@@ -811,6 +950,7 @@ const TOOL_LABEL = {
   news: "noticias",
   convert: "conversión",
   calendar_agenda: "agenda",
+  calendar_add: "agenda · nuevo evento",
   agent_run: "encargar a un agente",
   agent_status: "estado del agente",
   delegate_claude: "encargar a Claude",
@@ -828,7 +968,7 @@ const TOOL_LABEL = {
   spotify_now_playing: "Spotify · qué suena",
 };
 // Acciones (cambian algo fuera) -> córtex motor; el resto son consultas -> asociación.
-const MOTOR_TOOLS = new Set(["truenas_app_restart", "wake_on_lan", "home_control", "spotify_play", "spotify_control"]);
+const MOTOR_TOOLS = new Set(["calendar_add", "truenas_app_restart", "wake_on_lan", "home_control", "spotify_play", "spotify_control"]);
 
 function toolRegion(name) {
   if (name.startsWith("reminder_")) return REGION.thalamus;
@@ -985,6 +1125,70 @@ function showCards(cards) {
 
 $("cards-close").addEventListener("click", hideCards);
 
+// Resultados de un agente (investigador, compras...): una tarjeta por opción, la recomendada primero.
+function showOptions(label, cards, note, rgb) {
+  const list = $("cards-list");
+  list.textContent = "";
+  for (const c of cards) {
+    const el = document.createElement("article");
+    el.className = `card option${c.best ? " best" : ""}`;
+    if (rgb) el.style.setProperty("--c", `rgb(${rgb.join(",")})`);
+    const head = document.createElement("div");
+    head.className = "opt-head";
+    const title = document.createElement("div");
+    title.className = "t";
+    title.textContent = c.title;
+    head.append(title);
+    if (c.price) {
+      const price = document.createElement("span");
+      price.className = "price num";
+      price.textContent = c.price;
+      head.append(price);
+    }
+    if (c.best) {
+      const badge = document.createElement("span");
+      badge.className = "badge-best";
+      badge.textContent = "Recomendado";
+      el.append(badge);
+    }
+    el.append(head);
+    if (c.data) {
+      const d = document.createElement("div");
+      d.className = "d";
+      d.textContent = c.data;
+      el.append(d);
+    }
+    for (const [cls, text] of [["pro", c.pros], ["con", c.cons]]) {
+      if (!text) continue;
+      const line = document.createElement("div");
+      line.className = `pc ${cls}`;
+      line.textContent = text;
+      el.append(line);
+    }
+    if (/^https?:\/\//.test(c.url || "")) {
+      const a = document.createElement("a");
+      a.className = "pill-btn";
+      a.href = c.url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.insertAdjacentHTML("afterbegin", '<svg class="icon"><use href="#i-link"/></svg>');
+      const host = document.createElement("span");
+      host.textContent = new URL(c.url).hostname.replace(/^www\./, "");
+      a.append(host);
+      el.append(a);
+    }
+    list.append(el);
+  }
+  if (note) {
+    const foot = document.createElement("p");
+    foot.className = "cards-note";
+    foot.textContent = `Informe completo en Obsidian: ${note.split("/").pop().replace(/\.md$/, "")}`;
+    list.append(foot);
+  }
+  $("cards-title").textContent = `${label} · ${cards.length} ${cards.length === 1 ? "opción" : "opciones"}`;
+  $("cards").hidden = false;
+}
+
 function flowReset() {
   hideCards();
   regionState.forEach((r) => Object.assign(r, { pending: false, detail: "", fail: false }));
@@ -1049,6 +1253,7 @@ function onFlow(ev) {
       fire(REGION.language, ev.text);
       trace(`JARVIS${ev.provider ? ` · ${ev.provider}` : ""}`, ev.text, REGIONS[REGION.language].color);
       if (ev.provider) $("s-model").textContent = ev.provider;
+      setTimeout(loadUsage, 500);
       break;
     case "speaking":
       setState("thinking", "poniendo voz");
@@ -1148,8 +1353,9 @@ function onActivity(ev) {
       sat.span.textContent = ev.summary || "terminado";
       if (ev.model) sat.small.textContent = ev.model;
       pulses.push({ fromSat: sat.key, to: REGION.thalamus, t: 0, dur: reducedMotion ? 0.01 : 0.9, rgb: [48, 209, 88] });
-      trace(label, `terminado${ev.note ? ` · ${ev.note}` : ""}: ${ev.summary || ""}`, [48, 209, 88]);
-      if (!ev.job && externalJobs.has(ev.agent)) Object.assign(externalJobs.get(ev.agent), { state: "terminado", summary: ev.summary, note: ev.note });
+      trace(label, `terminado: ${ev.summary || ""}`, [48, 209, 88]);
+      if (!ev.job && externalJobs.has(ev.agent)) Object.assign(externalJobs.get(ev.agent), { state: "terminado", summary: ev.summary, note: ev.note, cards: ev.cards });
+      if (ev.cards?.length) showOptions(label, ev.cards, ev.note, rgb);
       retireSatellite(sat, 6000);
       break;
     case "leads":
@@ -1258,8 +1464,16 @@ async function loadAgents() {
     if (j.summary && j.state !== "trabajando") {
       const sum = document.createElement("p");
       sum.className = "summary";
-      sum.textContent = j.note ? `${j.summary} · ${j.note}` : j.summary;
+      sum.textContent = j.summary;
       li.append(sum);
+    }
+    if (j.cards?.length && j.state === "terminado") {
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "pill-btn";
+      open.textContent = `Ver resultados · ${j.cards.length}`;
+      open.addEventListener("click", () => showOptions(j.label, j.cards, j.note, agentRgb(j.agent)));
+      li.append(open);
     }
     list.append(li);
   }
@@ -1812,6 +2026,7 @@ async function init() {
   loadAgents();
   loadLeads();
   loadInsights();
+  loadUsage();
   moveInk();
   if (mode === "server") {
     $("hint").textContent = matchMedia("(pointer: coarse)").matches

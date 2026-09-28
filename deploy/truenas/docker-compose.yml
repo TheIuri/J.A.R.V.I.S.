@@ -25,14 +25,21 @@ services:
       LLM_PROVIDERS: "groq" # "groq,gemini" para tener reserva (necesita GEMINI_API_KEY)
       GROQ_API_KEY: "" # <<< https://console.groq.com/keys
       # GEMINI_API_KEY: "" # https://aistudio.google.com/apikey
+      # CEREBRAS_API_KEY: "" # https://cloud.cerebras.ai (mucho cupo gratis: ideal para los agentes)
+      # MISTRAL_API_KEY: "" # https://console.mistral.ai (plan Experiment, gratis)
+      # Cadenas con modelo concreto: "groq,groq:llama-3.3-70b-versatile,cerebras"
       # GROQ_MODEL: "openai/gpt-oss-120b" # si Groq lo retira, elige otro en console.groq.com/docs/models
       # GROQ_REASONING_EFFORT: "low" # pon "" si eliges un modelo que no razona
-      # GEMINI_MODEL: "gemini-2.5-flash"
-      # AGENT_LLM_PROVIDERS: "gemini,groq" # el agente investigador con otra cadena (mas limite de tokens)
+      # GEMINI_MODEL: "gemini-flash-latest" # alias de Google al Flash vigente
+      # AGENT_LLM_PROVIDERS: "gemini,groq" # cadena de los agentes (leen mucho: mejor Gemini primero)
+      # AGENT_COMPRAS_PROVIDERS: "gemini,groq" # un agente concreto con su propia cadena:
+      # AGENT_CAPTADOR_PROVIDERS: "gemini,groq" #   AGENT_<INVESTIGADOR|TECNICO|ORGANIZADOR|COMPRAS|CAPTADOR|ESCRITOR>_PROVIDERS
 
       # --- Voz (TTS): Piper local en CPU ---
       TTS_PROVIDER: "piper" # "edge" = voces de Microsoft (mas naturales), con Piper de respaldo
-      # EDGE_VOICE: "es-ES-AlvaroNeural"
+      # EDGE_VOICE: "es-ES-AlvaroNeural" # o es-ES-ElviraNeural, es-ES-XimenaNeural...
+      # EDGE_RATE: "+0%" # velocidad, p. ej. "+10%"
+      # EDGE_PITCH: "+0Hz"
       PIPER_VOICE: "es_ES-davefx-medium" # otras: es_ES-sharvard-medium, es_MX-claude-high, es_AR-daniela-high
       # PIPER_SPEAKER: "0" # solo voces con varios locutores (sharvard: 0 hombre, 1 mujer)
       # PIPER_SPEED: "1.0" # 1.2 = un 20% mas rapido
@@ -42,6 +49,12 @@ services:
 
       # --- Agenda: enlaces secretos iCal de Google Calendar / Outlook (ver README) ---
       # CALENDARS: "personal=https://...basic.ics;trabajo=https://...calendar.ics"
+      # Crear eventos (py client/calendar_login.py google|outlook te da estos valores; ver README):
+      # GOOGLE_CLIENT_ID: ""
+      # GOOGLE_CLIENT_SECRET: ""
+      # GOOGLE_REFRESH_TOKEN: ""
+      # OUTLOOK_CLIENT_ID: ""
+      # OUTLOOK_REFRESH_TOKEN: ""
 
       # --- Camara (vision): por defecto Gemini si esta configurado, si no el modelo de vision de Groq ---
       # VISION_PROVIDERS: "gemini,groq"
@@ -56,6 +69,7 @@ services:
       # --- Home Assistant (opcional) ---
       # HA_URL: "http://192.168.1.X:8123"
       # HA_TOKEN: ""
+      # HA_ENTITIES: "light.,switch.,climate." # opcional: solo lo que empiece asi
 
       # --- Spotify (opcional; ver README: client/spotify_login.py) ---
       # SPOTIFY_CLIENT_ID: ""
@@ -64,6 +78,11 @@ services:
 
       # --- Wake-on-LAN: equipos que JARVIS puede encender ---
       # WOL_DEVICES: "sobremesa=AA:BB:CC:DD:EE:FF"
+
+      # --- Agentes (Nivel 5), leads y fichas ---
+      # AGENTS_ENABLED: "true"
+      # LEADS_PROFILE: "Taller de impresion 3D en ...: piezas a medida, prototipos, figuras" # para el captador
+      # INSIGHTS_ENABLED: "true" # fichas con los datos clave de cada respuesta en el HUD (+1 peticion al LLM)
 
       # --- Memoria (Nivel 3): SQLite en el dataset (/data/memory.db) ---
       MEMORY_ENABLED: "true" # "false" = sin memoria (no lee ni guarda recuerdos)

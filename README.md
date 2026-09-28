@@ -159,6 +159,31 @@ CALENDARS: "personal=https://calendar.google.com/calendar/ical/.../basic.ics;tra
 Esos enlaces dan acceso a tu agenda: trátalos como una contraseña (solo en las variables de la app, nunca en el
 repositorio). Ejemplos: *"¿Qué tengo mañana?"*, *"¿Qué tengo esta semana en el trabajo?"*.
 
+### Crear eventos (Google Calendar y Outlook)
+
+Leer la agenda va con los enlaces iCal de arriba. Para que JARVIS **cree** eventos (*"Apúntame el dentista el
+miércoles a las 10:30"*) hace falta dar permiso una vez, en el PC, con `client/calendar_login.py`. El permiso es solo
+para eventos del calendario y JARVIS **siempre pregunta antes de crear** ("¿Creo el evento…?" → "sí").
+
+**Google Calendar**
+1. En [console.cloud.google.com](https://console.cloud.google.com) crea un proyecto y activa la **Google Calendar
+   API** (*APIs y servicios → Biblioteca*).
+2. *Pantalla de consentimiento de OAuth*: tipo **Externo**, añade tu correo como usuario de prueba y luego pulsa
+   **Publicar app** (estado *En producción*). En *Prueba*, Google caduca el permiso a los 7 días. No hace falta que
+   Google la verifique: es para ti.
+3. *Credenciales → Crear credenciales → ID de cliente de OAuth*, tipo **Aplicación de escritorio**.
+4. En el PC: `py calendar_login.py google`, pega el Client ID y el Secret, acepta en el navegador (si avisa de "app
+   no verificada": *Configuración avanzada → Ir a…*) y copia las tres líneas que imprime al YAML de TrueNAS.
+   Opcional: `GOOGLE_CALENDAR_ID` para usar otro calendario que no sea el principal.
+
+**Outlook (Microsoft 365 / outlook.com)**
+1. En [entra.microsoft.com](https://entra.microsoft.com) → *App registrations → New registration*: nombre `JARVIS`,
+   cuentas **"Any organizational directory and personal Microsoft accounts"**, sin Redirect URI.
+2. En la app: *Authentication → Allow public client flows → **Yes*** y guarda. Copia el *Application (client) ID*.
+3. En el PC: `py calendar_login.py outlook`, pega el ID, abre la web que indica, escribe el código y acepta.
+   Copia las líneas que imprime al YAML de TrueNAS.
+   Microsoft renueva el permiso cada vez que se usa; JARVIS guarda el renovado en el dataset (`outlook_token.json`).
+
 ### Wake-on-LAN
 
 Enciende otro equipo de casa: *"Enciende el sobremesa"*.
@@ -319,7 +344,7 @@ sale con tus preguntas y no se guarda en ningún sitio.
 Con Home Assistant, también sus cámaras: *"¿Hay alguien en la puerta?"*.
 
 **Modelo de visión**: por defecto usa los proveedores que ya tienes, con Gemini primero si está configurado
-(`gemini-2.5-flash`), y si no, el modelo de visión de Groq (`meta-llama/llama-4-scout-17b-16e-instruct`).
+(`gemini-flash-latest`), y si no, el modelo de visión de Groq (`meta-llama/llama-4-scout-17b-16e-instruct`).
 Se cambia con `VISION_PROVIDERS: "gemini,groq"` y `GROQ_VISION_MODEL` / `GEMINI_VISION_MODEL` (si Groq retira el
 modelo, elige otro de visión en console.groq.com/docs/models). En modo Claude no se usa la cámara.
 
@@ -401,14 +426,34 @@ plano, así que no retrasa la respuesta; gasta una petición más por turno. `IN
 que hablaste con JARVIS: temas, lo que se hizo y lo que quedó pendiente. Para eso guarda las conversaciones del
 día en el NAS (`turns.db`), las borra a los 7 días y omite las líneas que parezcan contraseñas o claves.
 
-**Modelo del agente**: lee páginas largas y el plan gratuito de Groq tiene un límite bajo de tokens por minuto.
-Si ves que las investigaciones fallan, dale al agente otra cadena de modelos, por ejemplo Gemini primero (clave
-gratis en [aistudio.google.com](https://aistudio.google.com/apikey)):
+**Modelos gratis y sus límites**: las capas gratuitas tienen tope por minuto y por día, y los agentes gastan mucho
+porque leen páginas enteras. Conviene repartir:
+
+| Proveedor | Clave gratis | Nota |
+|---|---|---|
+| `groq` | [console.groq.com](https://console.groq.com/keys) | Muy rápido; ~8.000 tokens/min con `gpt-oss-120b`. Cada modelo tiene su propio cupo |
+| `cerebras` | [cloud.cerebras.ai](https://cloud.cerebras.ai) | Mucho más margen por minuto y por día: el mejor para los agentes |
+| `mistral` | [console.mistral.ai](https://console.mistral.ai) (plan *Experiment*) | Buena reserva, buen español y ve imágenes |
+| `gemini` | [aistudio.google.com](https://aistudio.google.com/apikey) | Cupo diario pequeño en los Flash; `GEMINI_MODEL: "gemini-flash-lite-latest"` da más |
+| `openrouter` | [openrouter.ai](https://openrouter.ai) | Modelos `:free`, pocas peticiones al día |
+
+En las cadenas se puede elegir el modelo con `proveedor:modelo`, y así encadenar varios del mismo proveedor:
 
 ```yaml
-GEMINI_API_KEY: "..."
-AGENT_LLM_PROVIDERS: "gemini,groq"   # el asistente sigue con LLM_PROVIDERS
+CEREBRAS_API_KEY: "..."
+LLM_PROVIDERS: "groq,groq:llama-3.3-70b-versatile,cerebras"   # conversación: rápido primero
+AGENT_LLM_PROVIDERS: "cerebras,groq:llama-3.3-70b-versatile"   # agentes: donde hay margen
 ```
+
+Si todos los modelos están en su límite **por minuto**, los agentes esperan lo que diga el proveedor (hasta 45 s) y
+reintentan; la conversación no espera y pasa al siguiente. El **widget de cuota** lo enseña: un punto junto a
+*Cerebro* (verde, ámbar si queda poco, rojo en su límite), una barra por modelo al abrir el selector y el detalle en
+**Sesión → Cuota** (lo que queda del minuto y del día según el proveedor, y lo gastado hoy). Groq y Cerebras dicen lo
+que queda; de Gemini solo se sabe lo gastado y cuándo da límite.
+
+**Resultados en tarjetas**: el investigador y el de compras terminan con sus opciones como tarjetas (la recomendada
+primero, con datos clave, precio, lo mejor, lo peor y la fuente). Se abren al terminar y luego desde **Agentes → Ver
+resultados**. El aviso hablado es corto: el resumen en una o dos frases; el informe completo queda en Obsidian.
 
 ### Delegar en Claude con tu membresía (Pro/Max)
 
