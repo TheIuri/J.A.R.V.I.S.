@@ -485,6 +485,20 @@ Instalación, una sola vez en el PC:
 2. Abre una terminal, ejecuta `claude`, inicia sesión con tu cuenta y ciérralo.
 3. Al lanzar `py jarvis_hud.py` debe salir `Claude Code (membresia): disponible`.
 
+#### Claude con tu membresía desde el NAS (también en el móvil)
+
+El modo Claude del selector **CEREBRO** también puede funcionar en el NAS, sin el PC encendido. La imagen ya trae
+Claude Code; solo falta tu token de la membresía (no es una API de pago):
+1. En el PC, con Claude Code instalado, ejecuta `claude setup-token`. Se abre el navegador, inicias sesión con tu
+   cuenta Pro/Max y te muestra un token de larga duración. **No lo pegues en ningún chat.**
+2. En TrueNAS, **Apps → jarvis-ai → Edit**, añade `CLAUDE_CODE_OAUTH_TOKEN: "el-token"` y guarda.
+3. En el log debe salir `Claude (membresia) en el NAS: disponible`, y en CEREBRO aparecen **Claude Sonnet / Opus /
+   Haiku · membresía** también en el móvil.
+
+Las mismas protecciones que en el PC: solo busca y lee en internet (sin comandos ni archivos), en una carpeta vacía,
+y el proceso de Claude no recibe tu `API_TOKEN` ni las claves de los otros proveedores. Gasta cupo de tu membresía.
+Los encargos largos y el auditor con Claude siguen siendo del HUD del PC.
+
 ### Auditor de ciberseguridad (Claude con tu membresía)
 
 *"Haz una auditoría de seguridad del servidor"* o *"Audita el código de CaliperWorks"*. JARVIS pide confirmación,

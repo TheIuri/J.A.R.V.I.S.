@@ -28,6 +28,7 @@ services:
       # CEREBRAS_API_KEY: "" # https://cloud.cerebras.ai (mucho cupo gratis: ideal para los agentes)
       # MISTRAL_API_KEY: "" # https://console.mistral.ai (plan Experiment, gratis)
       # OPENCODE_API_KEY: "" # https://opencode.ai/auth (OpenCode Zen); modelo con OPENCODE_MODEL u "opencode:<modelo>"
+      # CLAUDE_CODE_OAUTH_TOKEN: "" # modo Claude con tu membresia Pro/Max tambien en el movil: en el PC, `claude setup-token`
       # Cadenas con modelo concreto: "groq,groq:llama-3.3-70b-versatile,cerebras"
       # GROQ_MODEL: "openai/gpt-oss-120b" # si Groq lo retira, elige otro en console.groq.com/docs/models
       # GROQ_REASONING_EFFORT: "low" # pon "" si eliges un modelo que no razona
