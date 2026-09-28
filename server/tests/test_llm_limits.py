@@ -154,3 +154,27 @@ def test_rotation_anticipates_the_per_minute_token_budget():
     calls.clear()
     chain.chat([{"role": "user", "content": "x"}])  # peticion pequena: cabe
     assert calls == ["first"]
+
+
+def test_hud_can_pick_any_model_of_a_provider_catalog():
+    seen = []
+
+    def handler(request):
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "big-pickle"}, {"id": "deepseek-v4-flash-free"},
+                                                      {"id": "whisper-large"}, {"id": "text-embedding-3"}]})
+        seen.append(__import__("json").loads(request.content)["model"])
+        return httpx.Response(200, json=OK)
+
+    zen = llm("opencode", handler, "big-pickle")
+    backup = llm("groq", lambda r: httpx.Response(200, json=OK), "backup")
+    chain = FallbackLLM([zen, backup])
+    models = chain.models(catalog=True)
+    assert [m["id"] for m in models] == ["opencode:big-pickle", "groq:backup", "opencode:deepseek-v4-flash-free"]
+    assert [m["chain"] for m in models] == [True, True, False]  # sin whisper ni embeddings
+    reply = chain.chat([{"role": "user", "content": "x"}], prefer="opencode:deepseek-v4-flash-free")
+    assert reply.provider == "opencode:deepseek-v4-flash-free" and seen == ["deepseek-v4-flash-free"]
+    assert chain.chat([{"role": "user", "content": "x"}], prefer="groq:backup").provider == "groq:backup"
+    assert chain.chat([{"role": "user", "content": "x"}], prefer="groq").provider == "groq:backup"  # como antes
+    # Un modelo que no esta en el catalogo no se inventa: se usa la cadena normal.
+    assert chain.chat([{"role": "user", "content": "x"}], prefer="opencode:gpt-9").provider == "opencode:big-pickle"

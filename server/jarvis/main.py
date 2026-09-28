@@ -459,7 +459,8 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
 
     @app.get("/api/models", dependencies=[Depends(require_token)])
     def models() -> dict:
-        return {"models": state["assistant"].llm.models()}
+        """Modelos para el selector: los de la cadena y el resto del catalogo de cada proveedor."""
+        return {"models": state["assistant"].llm.models(catalog=True)}
 
     @app.post("/api/transcribe", dependencies=[Depends(require_token)])
     def transcribe(audio: UploadFile = File(...)) -> dict:

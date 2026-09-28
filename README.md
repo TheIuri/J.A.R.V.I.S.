@@ -494,7 +494,9 @@ Solo funciona hablando desde el HUD del PC y necesita Claude Code instalado y co
 
 ### Modo Claude y selector de modelo
 
-En la barra superior del HUD, **CEREBRO** elige quién piensa:
+En la barra superior del HUD, **CEREBRO** elige quién piensa. Lista, por proveedor, los modelos de tu cadena y el
+resto de los que ofrece cada uno (p. ej. todos los de OpenCode o Groq, sin los de voz ni embeddings): el elegido va
+primero, con tu misma clave, y la cadena queda de respaldo.
 - **Automático (JARVIS)**: la cadena de `LLM_PROVIDERS` (por defecto Groq).
 - **Un proveedor concreto** (`groq`, `gemini`...): va primero y el resto queda de respaldo. En el PC y en el móvil.
 - **Claude Sonnet / Opus / Haiku · membresía** (solo en el HUD del PC, con Claude Code instalado): toda la

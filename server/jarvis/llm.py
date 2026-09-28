@@ -229,6 +229,12 @@ def usage_report(names: list[str] | None = None) -> list[dict[str, Any]]:
 # --- proveedores -----------------------------------------------------------------------------
 
 
+CATALOG_TTL_S = 600
+MAX_CATALOG = 40
+# Modelos que no son de conversacion (voz, embeddings, imagen, moderacion...).
+_NOT_CHAT = re.compile(r"whisper|tts|embed|guard|moderation|image|dall-e|playai|orpheus|audio|rerank|transcri", re.I)
+
+
 class OpenAICompatLLM:
     def __init__(self, cfg: LLMProviderConfig, timeout_s: int, max_tokens: int, client: httpx.Client | None = None):
         self.name = f"{cfg.name}:{cfg.model}"
@@ -237,8 +243,35 @@ class OpenAICompatLLM:
         self.max_tokens = max_tokens
         self.reasoning_effort = cfg.reasoning_effort
         self.usage = usage_for(self.name, self.provider)
+        self.cfg = cfg
         headers = {"Authorization": f"Bearer {cfg.api_key}"} if cfg.api_key else {}
         self._client = client or httpx.Client(base_url=cfg.base_url, headers=headers, timeout=timeout_s)
+        self._catalog: tuple[float, list[str]] | None = None
+
+    def with_model(self, model: str) -> OpenAICompatLLM:
+        """El mismo proveedor (misma clave y conexion) con otro modelo de su catalogo."""
+        effort = self.cfg.reasoning_effort if "gpt-oss" in model and "gpt-oss" in self.model else (
+            "low" if "gpt-oss" in model and self.provider in ("groq", "cerebras") else "")
+        cfg = LLMProviderConfig(self.cfg.name, self.cfg.base_url, self.cfg.api_key, model, effort)
+        return OpenAICompatLLM(cfg, 0, self.max_tokens, client=self._client)
+
+    def list_models(self) -> list[str]:
+        """Modelos de chat que ofrece el proveedor (GET /models), cacheados 10 minutos. [] si no responde."""
+        now = time.monotonic()
+        if self._catalog and now - self._catalog[0] < CATALOG_TTL_S:
+            return self._catalog[1]
+        try:
+            resp = self._client.get("/models", timeout=8)
+            resp.raise_for_status()
+            ids = [str(m.get("id") or "") for m in resp.json().get("data") or [] if isinstance(m, dict)]
+        except (httpx.HTTPError, ValueError, AttributeError):
+            ids = []
+        ids = [i.removeprefix("models/") for i in ids if i and not _NOT_CHAT.search(i)]
+        if self.provider == "openrouter":  # cientos de modelos: solo los gratis
+            ids = [i for i in ids if i.endswith(":free")]
+        ids = sorted(set(ids))[:MAX_CATALOG]
+        self._catalog = (now, ids)
+        return ids
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None) -> LLMMessage:
         try:
@@ -286,17 +319,46 @@ class FallbackLLM:
             raise ValueError("Se necesita al menos un proveedor LLM")
         self.providers = providers
         self._sleep = sleep
+        self._extra: dict[str, OpenAICompatLLM] = {}  # modelos elegidos en el HUD fuera de la cadena
 
     @property
     def name(self) -> str:
         return " -> ".join(p.name for p in self.providers)
 
-    def models(self) -> list[dict[str, str]]:
-        """Para el selector del HUD: id = nombre del proveedor (groq, gemini...)."""
-        seen: dict[str, dict[str, str]] = {}
-        for p in self.providers:  # con varios modelos del mismo proveedor, el primero lo representa
-            seen.setdefault(p.provider, {"id": p.provider, "label": p.name})
-        return list(seen.values())
+    def models(self, catalog: bool = False) -> list[dict[str, Any]]:
+        """Para el selector del HUD: los modelos de la cadena y, con catalog, el resto de los que ofrece
+        cada proveedor. id = "proveedor:modelo" (lo que se manda como prefer)."""
+        out = [{"id": p.name, "provider": p.provider, "model": p.model, "chain": True} for p in self.providers]
+        if catalog:
+            seen = {p.name for p in self.providers}
+            done: set[str] = set()
+            for p in self.providers:
+                if p.provider in done:
+                    continue
+                done.add(p.provider)
+                for model in p.list_models():
+                    name = f"{p.provider}:{model}"
+                    if name not in seen:
+                        seen.add(name)
+                        out.append({"id": name, "provider": p.provider, "model": model, "chain": False})
+        return out
+
+    def _preferred(self, prefer: str | None) -> list[OpenAICompatLLM]:
+        """El modelo elegido primero y el resto de la cadena de respaldo. prefer puede ser un proveedor
+        ("groq", como antes) o un modelo ("opencode:big-pickle"), este de la cadena o de su catalogo."""
+        if not prefer:
+            return self.providers
+        exact = [p for p in self.providers if p.name == prefer]
+        if exact:
+            return exact + [p for p in self.providers if p is not exact[0]]
+        provider, _, model = prefer.partition(":")
+        if model:
+            base = next((p for p in self.providers if p.provider == provider), None)
+            if base is not None and model in base.list_models():
+                if prefer not in self._extra:
+                    self._extra[prefer] = base.with_model(model)
+                return [self._extra[prefer], *self.providers]
+        return sorted(self.providers, key=lambda p: p.provider != provider)
 
     def chat(
         self, messages: list[dict], tools: list[dict] | None = None, prefer: str | None = None, patient: bool = False
@@ -304,7 +366,7 @@ class FallbackLLM:
         """prefer: proveedor elegido en el HUD; va primero y el resto quedan de respaldo.
         patient: si todos estan en su limite por minuto, espera lo que digan (hasta MAX_PATIENCE_S) y
         reintenta. Solo para trabajos en segundo plano (agentes); la conversacion no puede esperar."""
-        preferred = sorted(self.providers, key=lambda p: p.provider != prefer) if prefer else self.providers
+        preferred = self._preferred(prefer)
         # Tokens que pedira: ~4 caracteres por token de entrada, mas lo maximo que puede responder.
         prompt_tokens = sum(len(str(m.get("content") or "")) for m in messages) // 4 + len(str(tools or "")) // 4
         errors: list[str] = []
