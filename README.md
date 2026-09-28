@@ -441,6 +441,7 @@ porque leen páginas enteras. Conviene repartir:
 | `cerebras` | [cloud.cerebras.ai](https://cloud.cerebras.ai) | Mucho más margen por minuto y por día: el mejor para los agentes |
 | `mistral` | [console.mistral.ai](https://console.mistral.ai) (plan *Experiment*) | Buena reserva, buen español y ve imágenes |
 | `gemini` | [aistudio.google.com](https://aistudio.google.com/apikey) | Cupo diario pequeño en los Flash; `GEMINI_MODEL: "gemini-flash-lite-latest"` da más |
+| `opencode` | [opencode.ai/auth](https://opencode.ai/auth) | OpenCode Zen: muchos modelos, algunos gratis (por defecto `big-pickle`); de pago por uso o con la suscripción Go. Lista: `curl -H "Authorization: Bearer CLAVE" https://opencode.ai/zen/v1/models` |
 | `openrouter` | [openrouter.ai](https://openrouter.ai) | Modelos `:free`, pocas peticiones al día |
 
 En las cadenas se puede elegir el modelo con `proveedor:modelo`, y así encadenar varios del mismo proveedor:

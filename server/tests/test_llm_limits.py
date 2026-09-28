@@ -90,6 +90,10 @@ def test_provider_specs(monkeypatch):
     assert cerebras.base_url == "https://api.cerebras.ai/v1" and cerebras.reasoning_effort == "low"
     assert config._llm_provider("openrouter:meta-llama/llama-3.3-70b-instruct:free").model == (
         "meta-llama/llama-3.3-70b-instruct:free")
+    monkeypatch.setenv("OPENCODE_API_KEY", "o")
+    zen = config._llm_provider("opencode:deepseek-v4-flash-free")
+    assert (zen.base_url, zen.api_key, zen.model) == ("https://opencode.ai/zen/v1", "o", "deepseek-v4-flash-free")
+    assert config._llm_provider("opencode").model == "big-pickle"
     with pytest.raises(ValueError, match="desconocido"):
         config._llm_provider("chatgpt")
 

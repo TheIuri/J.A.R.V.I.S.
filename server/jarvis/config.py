@@ -34,6 +34,9 @@ LLM_PRESETS: dict[str, tuple[str, str | None, str]] = {
     # Capas gratuitas generosas (clave gratis en cloud.cerebras.ai y console.mistral.ai)
     "cerebras": ("https://api.cerebras.ai/v1", "CEREBRAS_API_KEY", "gpt-oss-120b"),
     "mistral": ("https://api.mistral.ai/v1", "MISTRAL_API_KEY", "mistral-small-latest"),
+    # OpenCode Zen (opencode.ai/auth): pasarela a muchos modelos, algunos gratis; OPENCODE_MODEL elige cual
+    # (lista: GET https://opencode.ai/zen/v1/models). Con la suscripcion Go, OPENCODE_BASE_URL si es otra.
+    "opencode": ("https://opencode.ai/zen/v1", "OPENCODE_API_KEY", "big-pickle"),
     "openrouter": (
         "https://openrouter.ai/api/v1",
         "OPENROUTER_API_KEY",
