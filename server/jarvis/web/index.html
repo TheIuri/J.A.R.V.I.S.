@@ -3,66 +3,120 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#05070d">
+  <meta name="theme-color" content="#04060b">
   <title>J.A.R.V.I.S.</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="hud.css">
 </head>
 <body>
-  <header>
-    <span class="brand">J.A.R.V.I.S.</span>
-    <span id="clock" class="mono"></span>
+  <!-- Iconos: un único trazo de 1.6 px, dibujados a mano -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-agents" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="4.5" cy="6" r="2"/><circle cx="19.5" cy="6" r="2"/><circle cx="12" cy="20.5" r="2"/><path d="M6.2 7.1l3.3 3M17.8 7.1l-3.3 3M12 15v3.5"/></symbol>
+    <symbol id="i-trace" viewBox="0 0 24 24"><path d="M4 5h3M4 12h3M4 19h3"/><circle cx="11" cy="5" r="1.6"/><circle cx="11" cy="12" r="1.6"/><circle cx="11" cy="19" r="1.6"/><path d="M11 6.6v3.8M11 13.6v3.8M15 5h5M15 12h5M15 19h5"/></symbol>
+    <symbol id="i-session" viewBox="0 0 24 24"><path d="M4 19V11M10 19V5M16 19v-6M22 19H2"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2.3l1.6-2.2h7.2L17.2 7h2.3A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/><circle cx="12" cy="13" r="3.6"/></symbol>
+    <symbol id="i-memory" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7" ry="2.5"/><path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></symbol>
+    <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4 4v4.5h4.5"/></symbol>
+  </svg>
+
+  <header class="topbar">
+    <div class="brand" aria-label="J.A.R.V.I.S.">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-word">J.A.R.V.I.S.</span>
+    </div>
+
+    <div class="model-switch">
+      <button id="model-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="model-menu">
+        <span class="swatch" id="model-swatch"></span>
+        <span class="model-text">
+          <span class="model-caption">Cerebro</span>
+          <span id="model-label">Automático</span>
+        </span>
+        <svg class="icon chevron"><use href="#i-chevron"/></svg>
+      </button>
+      <div id="model-menu" role="menu" aria-label="Elegir modelo" hidden></div>
+    </div>
+
+    <div class="topbar-end">
+      <span class="live" id="live"><span class="live-dot"></span><span id="live-text">En espera</span></span>
+      <span id="clock" class="num"></span>
+    </div>
   </header>
 
   <main>
-    <aside id="log" aria-label="Conversación"></aside>
+    <aside id="log" aria-label="Conversación"><p class="log-empty">Aquí aparecerá la conversación: lo que dices, lo que responde y los avisos.</p></aside>
 
     <section id="stage">
       <canvas id="orb" aria-label="Mantén pulsado para hablar"></canvas>
       <div id="flow" aria-hidden="true"></div>
       <video id="cam" muted playsinline hidden aria-label="Cámara activa"></video>
       <section id="cards" hidden aria-label="Resultados">
-        <header><span class="mono" id="cards-title">RESULTADOS</span><button id="cards-close" type="button" aria-label="Cerrar">×</button></header>
+        <header><span id="cards-title">Resultados</span><button id="cards-close" type="button" aria-label="Cerrar resultados"><svg class="icon"><use href="#i-close"/></svg></button></header>
         <div id="cards-list"></div>
       </section>
-      <p id="trail" class="mono" aria-label="Recorrido del último turno"></p>
-      <p id="subtitle" aria-live="polite"></p>
-      <p id="you" class="dim"></p>
-      <p id="state" class="mono">EN ESPERA</p>
-      <p id="hint" class="hint mono">MANTÉN PULSADO EL CEREBRO O LA BARRA ESPACIADORA</p>
-      <form id="ask" autocomplete="off">
-        <input id="text" placeholder="…o escribe aquí y pulsa Enter" aria-label="Mensaje">
-      </form>
+      <div class="stage-foot">
+        <p id="trail" aria-label="Recorrido del último turno"></p>
+        <p id="subtitle" aria-live="polite"></p>
+        <p id="you"></p>
+        <p id="state">EN ESPERA</p>
+        <p id="hint" class="hint">Mantén pulsado el cerebro o la barra espaciadora</p>
+        <form id="ask" autocomplete="off">
+          <input id="text" placeholder="…o escribe aquí y pulsa Enter" aria-label="Mensaje">
+        </form>
+      </div>
     </section>
 
-    <aside id="panel" class="mono">
-      <dl>
-        <dt>SESIÓN</dt><dd id="s-time">00:00</dd>
-        <dt>INTERCAMBIOS</dt><dd id="s-count">0</dd>
-        <dt>LATENCIA</dt><dd id="s-latency">—</dd>
-        <dt>PICO</dt><dd id="s-peak">—</dd>
-        <dt>ETAPAS</dt><dd id="s-stages">—</dd>
-        <dt>MODELO</dt><dd id="s-model">—</dd>
-        <dt>TOOLS</dt><dd id="s-tools">—</dd>
-      </dl>
-      <label class="panel-title" for="model">CEREBRO</label>
-      <select id="model" aria-label="Modelo"></select>
-      <p class="panel-title">CÓRTEX · ESTADO</p>
-      <ul id="cortex"></ul>
-      <button id="camera" type="button" aria-pressed="false">CÁMARA</button>
-      <button id="memories" type="button">MEMORIA</button>
-      <button id="reset" type="button">NUEVA CONVERSACIÓN</button>
-      <div id="memory-list"></div>
+    <aside id="panel">
+      <nav class="tabs" role="tablist" aria-label="Panel">
+        <button role="tab" id="tab-agents" aria-controls="pane-agents" aria-selected="true"><svg class="icon"><use href="#i-agents"/></svg>Agentes<span class="badge" id="badge-agents" hidden></span></button>
+        <button role="tab" id="tab-trace" aria-controls="pane-trace" aria-selected="false" tabindex="-1"><svg class="icon"><use href="#i-trace"/></svg>Traza<span class="badge" id="badge-trace" hidden></span></button>
+        <button role="tab" id="tab-session" aria-controls="pane-session" aria-selected="false" tabindex="-1"><svg class="icon"><use href="#i-session"/></svg>Sesión</button>
+        <span class="tab-ink" aria-hidden="true"></span>
+      </nav>
+
+      <section role="tabpanel" id="pane-agents" aria-labelledby="tab-agents">
+        <h2>Tareas</h2>
+        <ol id="jobs-list" class="jobs"></ol>
+        <h2>Equipo</h2>
+        <ul id="agents-list" class="agents"></ul>
+      </section>
+
+      <section role="tabpanel" id="pane-trace" aria-labelledby="tab-trace" hidden>
+        <ol id="trace" class="trace"></ol>
+      </section>
+
+      <section role="tabpanel" id="pane-session" aria-labelledby="tab-session" hidden>
+        <dl class="metrics">
+          <dt>Sesión</dt><dd id="s-time" class="num">00:00</dd>
+          <dt>Intercambios</dt><dd id="s-count" class="num">0</dd>
+          <dt>Latencia</dt><dd id="s-latency" class="num">—</dd>
+          <dt>Pico</dt><dd id="s-peak" class="num">—</dd>
+          <dt>Etapas</dt><dd id="s-stages" class="num">—</dd>
+          <dt>Modelo</dt><dd id="s-model" class="num">—</dd>
+          <dt>Herramientas</dt><dd id="s-tools" class="num">—</dd>
+        </dl>
+        <h2>Córtex</h2>
+        <ul id="cortex"></ul>
+        <div class="actions">
+          <button id="camera" type="button" aria-pressed="false"><svg class="icon"><use href="#i-camera"/></svg><span>Cámara</span></button>
+          <button id="memories" type="button"><svg class="icon"><use href="#i-memory"/></svg><span>Memoria</span></button>
+          <button id="reset" type="button"><svg class="icon"><use href="#i-reset"/></svg><span>Nueva conversación</span></button>
+        </div>
+        <div id="memory-list"></div>
+      </section>
     </aside>
   </main>
 
   <div id="login" hidden>
     <form id="login-form" autocomplete="off">
-      <p class="mono">ACCESO</p>
+      <h2>Acceso</h2>
       <p class="dim">Introduce el token de JARVIS (API_TOKEN). Se guardará solo en este dispositivo.</p>
       <input id="token" type="password" placeholder="Token" aria-label="Token">
       <p id="login-msg" class="error-msg"></p>
-      <button type="submit">ENTRAR</button>
+      <button type="submit">Entrar</button>
     </form>
   </div>
 

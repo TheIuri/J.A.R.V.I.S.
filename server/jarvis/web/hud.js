@@ -96,6 +96,7 @@ $("login-form").addEventListener("submit", async (e) => {
   if (resp.ok) {
     $("login").hidden = true;
     loadModels(); // con token ya se pueden pedir los modelos
+    loadAgents();
   }
 });
 
@@ -113,6 +114,11 @@ function setState(next, detail) {
   el.textContent = detail ? `${STATE_LABEL[next]} · ${detail}` : STATE_LABEL[next];
   el.classList.toggle("error", next === "error");
   if (next === "error") el.style.color = "";
+  // Indicador de la barra superior.
+  const live = $("live");
+  live.style.setProperty("--live", `rgb(${COLORS[next].join(",")})`);
+  live.classList.toggle("busy", busy);
+  $("live-text").textContent = { idle: "En espera", listening: "Escuchando", thinking: "Pensando", speaking: "Hablando", error: "Error" }[next];
 }
 
 // --- audio ------------------------------------------------------------------
@@ -224,47 +230,202 @@ $("camera").addEventListener("click", toggleCamera);
 
 // --- modelo -----------------------------------------------------------------------
 
+// Color de cada proveedor en el selector y en el indicador.
+const MODEL_COLORS = {
+  "": [255, 181, 71],
+  groq: [255, 122, 69],
+  gemini: [122, 162, 255],
+  openrouter: [179, 136, 255],
+  ollama: [120, 220, 170],
+  anthropic: [217, 119, 87],
+  "claude-sonnet": [217, 119, 87],
+  "claude-opus": [236, 146, 110],
+  "claude-haiku": [244, 180, 140],
+};
+let currentModel = "";
+let modelOptions = [];
+
 function selectedModel() {
-  return $("model").value || "";
+  return currentModel;
 }
 
 function isClaude() {
   return selectedModel().startsWith("claude-");
 }
 
+function modelRgb(id) {
+  return MODEL_COLORS[id] || MODEL_COLORS[String(id).split(":")[0]] || [141, 151, 173];
+}
+
 async function loadModels() {
-  const select = $("model");
-  const options = [{ id: "", label: "Automático (JARVIS)" }];
+  const options = [{ id: "", label: "Automático", detail: "La cadena de JARVIS, con respaldo", group: "JARVIS · servidor" }];
   try {
     const resp = await api("/api/models");
-    if (resp.ok) (await resp.json()).models.forEach((m) => options.push(m));
+    if (resp.ok) {
+      for (const m of (await resp.json()).models) {
+        const [provider, ...rest] = m.label.split(":");
+        options.push({ id: m.id, label: provider.charAt(0).toUpperCase() + provider.slice(1), detail: rest.join(":"), group: "JARVIS · servidor" });
+      }
+    }
   } catch {
     /* servidor antiguo: solo automático */
   }
-  claudeModels.forEach((m) => options.push({ id: m.id, label: `${m.label} · membresía` }));
-  select.textContent = "";
-  for (const m of options) {
-    const opt = document.createElement("option");
-    opt.value = m.id;
-    opt.textContent = m.label;
-    select.append(opt);
-  }
+  claudeModels.forEach((m) => options.push({ id: m.id, label: m.label, detail: "Tu membresía, desde este PC", group: "Claude · membresía" }));
+  modelOptions = options;
   let saved = "";
   try {
     saved = localStorage.getItem(MODEL_KEY) || "";
   } catch {
     /* sin almacenamiento */
   }
-  select.value = options.some((m) => m.id === saved) ? saved : "";
+  renderModelMenu();
+  applyModel(options.some((m) => m.id === saved) ? saved : "", false);
 }
 
-$("model").addEventListener("change", () => {
+function renderModelMenu() {
+  const menu = $("model-menu");
+  menu.textContent = "";
+  let group = null;
+  for (const m of modelOptions) {
+    if (m.group !== group) {
+      group = m.group;
+      const h = document.createElement("div");
+      h.className = "menu-group";
+      h.textContent = group;
+      menu.append(h);
+    }
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "menu-item";
+    item.setAttribute("role", "menuitemradio");
+    item.dataset.id = m.id;
+    const sw = document.createElement("span");
+    sw.className = "swatch";
+    sw.style.setProperty("--swatch", `rgb(${modelRgb(m.id).join(",")})`);
+    const text = document.createElement("span");
+    text.className = "mi-text";
+    const name = document.createElement("span");
+    name.textContent = m.label;
+    const small = document.createElement("small");
+    small.textContent = m.detail || "";
+    text.append(name, small);
+    item.append(sw, text);
+    item.insertAdjacentHTML("beforeend", '<svg class="icon"><use href="#i-check"/></svg>');
+    item.addEventListener("click", () => {
+      applyModel(m.id, true);
+      toggleModelMenu(false);
+      $("model-btn").focus();
+    });
+    menu.append(item);
+  }
+}
+
+function applyModel(id, announce) {
+  const m = modelOptions.find((o) => o.id === id) || modelOptions[0];
+  if (!m) return;
+  currentModel = m.id;
+  const rgb = `rgb(${modelRgb(m.id).join(",")})`;
+  $("model-btn").style.setProperty("--swatch", rgb);
+  $("model-swatch").style.setProperty("--swatch", rgb);
+  $("model-label").textContent = m.detail && m.id ? `${m.label} · ${m.detail.split(",")[0]}` : m.label;
+  $("model-menu").querySelectorAll(".menu-item").forEach((el) => el.setAttribute("aria-checked", String(el.dataset.id === m.id)));
   try {
-    localStorage.setItem(MODEL_KEY, selectedModel());
+    localStorage.setItem(MODEL_KEY, m.id);
   } catch {
     /* sin almacenamiento */
   }
+  if (announce) trace("Cerebro", `ahora piensa con ${m.label}`, modelRgb(m.id));
+}
+
+function toggleModelMenu(open) {
+  const menu = $("model-menu");
+  menu.hidden = !open;
+  $("model-btn").setAttribute("aria-expanded", String(open));
+  if (open) (menu.querySelector('[aria-checked="true"]') || menu.querySelector(".menu-item"))?.focus();
+}
+
+$("model-btn").addEventListener("click", () => toggleModelMenu($("model-menu").hidden));
+$("model-menu").addEventListener("keydown", (e) => {
+  const items = [...$("model-menu").querySelectorAll(".menu-item")];
+  const i = items.indexOf(document.activeElement);
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+  } else if (e.key === "Escape") {
+    toggleModelMenu(false);
+    $("model-btn").focus();
+  }
 });
+addEventListener("pointerdown", (e) => {
+  if (!e.target.closest(".model-switch") && !$("model-menu").hidden) toggleModelMenu(false);
+});
+
+// --- pestañas del panel ---------------------------------------------------------------
+
+const TABS = ["agents", "trace", "session"];
+
+function selectTab(name) {
+  for (const t of TABS) {
+    const on = t === name;
+    $(`tab-${t}`).setAttribute("aria-selected", String(on));
+    $(`tab-${t}`).tabIndex = on ? 0 : -1;
+    $(`pane-${t}`).hidden = !on;
+  }
+  if (name === "trace") setBadge("trace", (unseenTrace = 0));
+  moveInk();
+}
+
+function moveInk() {
+  const tab = document.querySelector('.tabs [aria-selected="true"]');
+  const ink = document.querySelector(".tab-ink");
+  if (!tab || !ink) return;
+  ink.style.width = `${tab.offsetWidth - 24}px`;
+  ink.style.transform = `translateX(${tab.offsetLeft + 12}px)`;
+}
+
+function setBadge(name, n) {
+  const b = $(`badge-${name}`);
+  b.hidden = !n;
+  b.textContent = n > 99 ? "99+" : String(n);
+}
+
+TABS.forEach((t, i) => {
+  $(`tab-${t}`).addEventListener("click", () => selectTab(t));
+  $(`tab-${t}`).addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    const next = TABS[(i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length];
+    selectTab(next);
+    $(`tab-${next}`).focus();
+  });
+});
+addEventListener("resize", moveInk);
+
+// --- traza: todo lo que pasa, en una línea de tiempo --------------------------------------
+
+const MAX_TRACE = 150;
+let unseenTrace = 0;
+
+function trace(actor, what, rgb) {
+  const li = document.createElement("li");
+  if (rgb) li.style.setProperty("--c", `rgb(${rgb.join(",")})`);
+  const time = document.createElement("time");
+  time.textContent = new Date().toLocaleTimeString("es-ES");
+  const ev = document.createElement("div");
+  ev.className = "ev";
+  const a = document.createElement("span");
+  a.className = "actor";
+  a.textContent = actor;
+  const w = document.createElement("span");
+  w.className = "what";
+  w.textContent = what ? ` ${what}` : "";
+  ev.append(a, w);
+  li.append(time, ev);
+  const list = $("trace");
+  list.prepend(li);
+  while (list.children.length > MAX_TRACE) list.lastChild.remove();
+  if ($("pane-trace").hidden) setBadge("trace", ++unseenTrace);
+  else unseenTrace = 0;
+}
 
 // Voz: normal (el NAS transcribe y piensa) o modo Claude (el NAS transcribe y Claude piensa en el PC).
 async function askVoice(wav) {
@@ -533,6 +694,7 @@ function flushNotices() {
     const n = queuedNotices.shift();
     $("subtitle").textContent = n.text;
     fire(REGION.thalamus, n.text);
+    trace(`Aviso · ${n.source}`, n.text, n.level === "critical" ? [255, 107, 107] : REGIONS[REGION.thalamus].color);
     const turn = document.createElement("div");
     turn.className = `turn notice ${n.level}`;
     const a = document.createElement("div");
@@ -540,7 +702,7 @@ function flushNotices() {
     a.textContent = n.text;
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = `AVISO · ${n.source} · ${n.created.slice(11, 16)}`;
+    meta.textContent = `Aviso · ${n.source} · ${n.created.slice(11, 16)}`;
     turn.append(a, meta);
     $("log").append(turn);
     $("log").scrollTop = $("log").scrollHeight;
@@ -651,6 +813,7 @@ const TOOL_LABEL = {
   agent_run: "encargar a un agente",
   agent_status: "estado del agente",
   delegate_claude: "encargar a Claude",
+  security_audit: "auditoría de seguridad",
   camera_look: "mirar por la cámara",
   home_camera: "cámara de casa",
   reminder_set: "nuevo recordatorio",
@@ -669,7 +832,7 @@ const MOTOR_TOOLS = new Set(["truenas_app_restart", "wake_on_lan", "home_control
 function toolRegion(name) {
   if (name.startsWith("reminder_")) return REGION.thalamus;
   if (name === "camera_look" || name === "home_camera") return REGION.visual;
-  if (name.startsWith("agent_") || name.startsWith("delegate_")) return REGION.prefrontal; // planificar y delegar
+  if (name.startsWith("agent_") || name.startsWith("delegate_") || name === "security_audit") return REGION.prefrontal; // delegar
   if (name.startsWith("memory_")) return REGION.hippocampus;
   if (name.startsWith("pc_") || /^obsidian_(create|append|daily)/.test(name) || MOTOR_TOOLS.has(name)) return REGION.motor;
   return REGION.association;
@@ -762,7 +925,7 @@ function fire(idx, detail) {
 
 // --- ventana de resultados ------------------------------------------------------------
 
-const CARD_LABEL = { web: "WEB", wiki: "WIKIPEDIA", news: "NOTICIAS" };
+const CARD_LABEL = { web: "Web", wiki: "Wikipedia", news: "Noticias" };
 
 function hideCards() {
   $("cards").hidden = true;
@@ -815,7 +978,7 @@ function showCards(cards) {
     list.append(el);
   }
   const n = list.children.length;
-  $("cards-title").textContent = `RESULTADOS · ${n}`;
+  $("cards-title").textContent = `Resultados · ${n}`;
   $("cards").hidden = n === 0;
 }
 
@@ -847,10 +1010,13 @@ function onFlow(ev) {
       if (!ev.text) break;
       $("you").textContent = ev.text;
       fire(REGION.auditory, ev.text);
+      trace("Tú", ev.text, REGIONS[REGION.auditory].color);
       break;
     case "memory": {
       const items = ev.items || [];
-      fire(REGION.hippocampus, items.length ? `${items.length} recuerdo${items.length > 1 ? "s" : ""} · ${items[0].text}` : "sin recuerdos relevantes");
+      const what = items.length ? `${items.length} recuerdo${items.length > 1 ? "s" : ""} · ${items[0].text}` : "sin recuerdos relevantes";
+      fire(REGION.hippocampus, what);
+      trace("Memoria", what, REGIONS[REGION.hippocampus].color);
       break;
     }
     case "thinking":
@@ -863,13 +1029,15 @@ function onFlow(ev) {
       Object.assign(regionState[idx], { pending: true, fail: false });
       fire(idx, [label, argsSummary(ev.args)].filter(Boolean).join(" · "));
       setState("thinking", label);
+      trace(label.charAt(0).toUpperCase() + label.slice(1), argsSummary(ev.args), REGIONS[idx].color);
       break;
     }
     case "tool_result": {
       const idx = toolRegion(ev.name);
       const label = TOOL_LABEL[ev.name] || ev.name;
       Object.assign(regionState[idx], { pending: false, fail: !ev.ok });
-      fire(idx, `${ev.ok ? "✓" : "✗"} ${label} · ${ev.ms} ms · ${ev.text}`);
+      fire(idx, `${ev.ok ? "hecho" : "falló"} · ${label} · ${ev.ms} ms · ${ev.text}`);
+      trace(ev.ok ? `${label} · ${ev.ms} ms` : `${label} · falló`, ev.text, ev.ok ? REGIONS[idx].color : [255, 107, 107]);
       break;
     }
     case "cards":
@@ -878,6 +1046,8 @@ function onFlow(ev) {
     case "reply":
       $("subtitle").textContent = ev.text;
       fire(REGION.language, ev.text);
+      trace(`JARVIS${ev.provider ? ` · ${ev.provider}` : ""}`, ev.text, REGIONS[REGION.language].color);
+      if (ev.provider) $("s-model").textContent = ev.provider;
       break;
     case "speaking":
       setState("thinking", "poniendo voz");
@@ -885,6 +1055,209 @@ function onFlow(ev) {
       break;
   }
 }
+
+// --- agentes: panel, trazabilidad en directo y satélites en el cerebro ------------------------
+
+const AGENT_COLORS = {
+  investigador: [76, 201, 240],
+  tecnico: [255, 110, 90],
+  organizador: [94, 227, 161],
+  escritor: [255, 200, 90],
+  compras: [190, 140, 255],
+  claude: [217, 119, 87],
+  auditor: [255, 77, 120],
+};
+const agentRgb = (id) => AGENT_COLORS[id] || [210, 230, 255];
+const satellites = new Map(); // clave -> satélite dibujado alrededor del cerebro
+const externalJobs = new Map(); // tareas de Claude Code en el PC (no están en /api/agents)
+let agentsTimer = null;
+
+function satKey(ev) {
+  return ev.job ? `${ev.agent}:${ev.job}` : ev.agent;
+}
+
+function satellite(ev) {
+  const key = satKey(ev);
+  let sat = satellites.get(key);
+  if (!sat) {
+    const used = new Set([...satellites.values()].map((x) => x.slot));
+    let slot = 0;
+    while (used.has(slot)) slot++;
+    const el = document.createElement("div");
+    el.className = "sat";
+    const rgb = agentRgb(ev.agent);
+    el.style.setProperty("--c", `rgb(${rgb.join(",")})`);
+    const b = document.createElement("b");
+    const span = document.createElement("span");
+    const small = document.createElement("small");
+    const text = document.createElement("div");
+    text.append(b, span, small);
+    el.append(text);
+    $("flow").append(el);
+    const ang = slot * 1.15 + 0.4;
+    sat = {
+      key, slot, rgb, el, b, span, small, state: "working", born: performance.now(),
+      pos: [Math.cos(ang) * 1.55, 0.5 + 0.22 * Math.sin(ang * 2), Math.sin(ang) * 1.05], proj: [0, 0, 1, 1],
+    };
+    satellites.set(key, sat);
+  }
+  return sat;
+}
+
+function retireSatellite(sat, ms) {
+  setTimeout(() => sat.el.classList.add("leaving"), ms);
+  setTimeout(() => {
+    sat.el.remove();
+    satellites.delete(sat.key);
+  }, ms + 1300);
+}
+
+function onActivity(ev) {
+  const rgb = agentRgb(ev.agent);
+  const label = ev.label || ev.agent;
+  const sat = satellite(ev);
+  sat.b.textContent = label;
+  switch (ev.type) {
+    case "agent_start":
+      sat.state = "working";
+      sat.span.textContent = ev.task || "trabajando";
+      sat.small.textContent = ev.models || ev.model || "";
+      pulses.push({ from: REGION.prefrontal, toSat: sat.key, t: 0, dur: reducedMotion ? 0.01 : 0.9, rgb });
+      fire(REGION.prefrontal, `encarga a ${label.toLowerCase()}`);
+      trace(label, `empieza: ${ev.task || ""}`, rgb);
+      if (!ev.job) externalJobs.set(ev.agent, { agent: ev.agent, label, task: ev.task, state: "trabajando", steps: 0, model: "Claude", started: ev.ts });
+      break;
+    case "agent_tool": {
+      const idx = toolRegion(ev.tool || "");
+      const tl = TOOL_LABEL[ev.tool] || ev.tool;
+      sat.span.textContent = tl;
+      if (ev.model) sat.small.textContent = ev.model;
+      pulses.push({ fromSat: sat.key, to: idx, t: 0, dur: reducedMotion ? 0.01 : 0.7, rgb });
+      regionState[idx].act = Math.max(regionState[idx].act, 0.8);
+      trace(label, tl, rgb);
+      const ext = externalJobs.get(ev.agent);
+      if (!ev.job && ext) ext.steps++;
+      break;
+    }
+    case "agent_done":
+      sat.state = "done";
+      sat.el.classList.add("done");
+      sat.span.textContent = ev.summary || "terminado";
+      if (ev.model) sat.small.textContent = ev.model;
+      pulses.push({ fromSat: sat.key, to: REGION.thalamus, t: 0, dur: reducedMotion ? 0.01 : 0.9, rgb: [94, 227, 161] });
+      trace(label, `terminado${ev.note ? ` · ${ev.note}` : ""}: ${ev.summary || ""}`, [94, 227, 161]);
+      if (!ev.job && externalJobs.has(ev.agent)) Object.assign(externalJobs.get(ev.agent), { state: "terminado", summary: ev.summary, note: ev.note });
+      retireSatellite(sat, 6000);
+      break;
+    case "agent_error":
+      sat.state = "error";
+      sat.el.classList.add("error");
+      sat.span.textContent = ev.detail || ev.task || "error";
+      trace(label, `no ha podido terminar: ${ev.detail || ev.task || ""}`, [255, 107, 107]);
+      if (!ev.job && externalJobs.has(ev.agent)) Object.assign(externalJobs.get(ev.agent), { state: "error", summary: ev.task });
+      retireSatellite(sat, 6000);
+      break;
+  }
+  clearTimeout(agentsTimer);
+  agentsTimer = setTimeout(loadAgents, 400);
+}
+
+async function activityLoop(after = -1) {
+  let next = after;
+  let delay = 0;
+  if (mode === "server" && !getToken()) return setTimeout(() => activityLoop(after), 3000);
+  try {
+    const resp = await api(`/api/activity?after=${after}&wait=${after < 0 ? 0 : 25}`);
+    if (resp.status === 404) return; // servidor antiguo
+    if (!resp.ok) throw new Error(resp.status);
+    const body = await resp.json();
+    if (after >= 0) body.events.forEach(onActivity);
+    next = body.last;
+  } catch {
+    delay = 5000;
+  }
+  setTimeout(() => activityLoop(next), delay);
+}
+
+function elapsed(iso) {
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min`;
+}
+
+async function loadAgents() {
+  if (mode === "server" && !getToken()) return;
+  let data = { agents: [], jobs: [] };
+  try {
+    const resp = await api("/api/agents");
+    if (resp.ok) data = await resp.json();
+  } catch {
+    /* sin conexión: se deja lo que había */
+  }
+  const agents = $("agents-list");
+  agents.textContent = "";
+  for (const a of data.agents) {
+    const li = document.createElement("li");
+    li.style.setProperty("--c", `rgb(${agentRgb(a.id).join(",")})`);
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    const body = document.createElement("div");
+    const strong = document.createElement("strong");
+    strong.textContent = a.label.replace(/^(El|La) /, "").replace(/^./, (c) => c.toUpperCase());
+    const p = document.createElement("p");
+    p.textContent = a.description;
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = a.models;
+    body.append(strong, p, chip);
+    li.append(dot, body);
+    agents.append(li);
+  }
+  if (claudeModels.length) {
+    for (const [id, label, desc] of [["claude", "Claude", "tareas complejas con tu membresía"], ["auditor", "Auditor de seguridad", "revisa el servidor o el código con Claude"]]) {
+      const li = document.createElement("li");
+      li.style.setProperty("--c", `rgb(${agentRgb(id).join(",")})`);
+      li.innerHTML = '<span class="dot"></span><div><strong></strong><p></p><span class="chip">Claude · membresía</span></div>';
+      li.querySelector("strong").textContent = label;
+      li.querySelector("p").textContent = desc;
+      agents.append(li);
+    }
+  }
+  if (!agents.children.length) agents.innerHTML = '<p class="empty">Sin agentes disponibles en este servidor.</p>';
+
+  const jobs = [...data.jobs.map((j) => ({ ...j, label: (data.agents.find((a) => a.id === j.agent) || {}).label || j.agent })),
+    ...externalJobs.values()].sort((x, y) => (y.started || "").localeCompare(x.started || ""));
+  const list = $("jobs-list");
+  list.textContent = "";
+  for (const j of jobs.slice(0, 8)) {
+    const li = document.createElement("li");
+    li.className = j.state === "trabajando" ? "working" : j.state === "terminado" ? "done" : "error";
+    li.style.setProperty("--c", `rgb(${agentRgb(j.agent).join(",")})`);
+    const who = document.createElement("div");
+    who.className = "who";
+    who.textContent = `${j.label} · ${j.state}`;
+    const task = document.createElement("p");
+    task.className = "task";
+    task.textContent = j.task;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    for (const part of [j.model, j.steps ? `${j.steps} pasos` : "", j.started ? `hace ${elapsed(j.started)}` : ""].filter(Boolean)) {
+      const m = document.createElement("span");
+      m.textContent = part;
+      meta.append(m);
+    }
+    li.append(who, task, meta);
+    if (j.summary && j.state !== "trabajando") {
+      const sum = document.createElement("p");
+      sum.className = "summary";
+      sum.textContent = j.note ? `${j.summary} · ${j.note}` : j.summary;
+      li.append(sum);
+    }
+    list.append(li);
+  }
+  if (!jobs.length) list.innerHTML = '<p class="empty">Nadie trabajando ahora. Pídele algo largo a un agente: «investiga…», «compárame…», «audita…».</p>';
+  setBadge("agents", jobs.filter((j) => j.state === "trabajando").length);
+}
+setInterval(loadAgents, 30000);
 
 // Etiquetas de región (HTML sobre el lienzo) y panel de estado del córtex.
 const labels = REGIONS.map((r, i) => {
@@ -1040,19 +1413,66 @@ function frame(now) {
     }
   }
 
-  // impulsos entre regiones
+  // agentes: satélites en órbita, unidos al prefrontal por un haz
   const centers = REGIONS.map((r) => project(r.pos, [0, 0, 0, 0]));
+  const pf = centers[REGION.prefrontal];
+  g.lineCap = "round";
+  for (const sat of satellites.values()) {
+    const bob = Math.sin(now / 900 + sat.slot) * 0.04;
+    project([sat.pos[0], sat.pos[1] + bob, sat.pos[2]], sat.proj);
+    const [x, y, f, depth] = sat.proj;
+    const rgb = sat.state === "done" ? [94, 227, 161] : sat.state === "error" ? [255, 107, 107] : sat.rgb;
+    const alpha = 0.35 + 0.65 * depth;
+    const mx = (pf[0] + x) / 2 + ((pf[0] + x) / 2 - cx) * 0.35;
+    const my = (pf[1] + y) / 2 + ((pf[1] + y) / 2 - cy) * 0.35 - S * 0.1;
+    g.setLineDash([px * 5, px * 7]);
+    g.lineDashOffset = -now / 25;
+    g.strokeStyle = rgba(rgb, 0.45 * alpha);
+    g.lineWidth = Math.max(1, px * 1.3);
+    g.beginPath();
+    g.moveTo(pf[0], pf[1]);
+    g.quadraticCurveTo(mx, my, x, y);
+    g.stroke();
+    g.setLineDash([]);
+    const pulse = sat.state === "working" ? 0.5 + 0.5 * Math.sin(now / 260) : 0.6;
+    const r = px * (7 + pulse * 3) * f;
+    const glow = g.createRadialGradient(x, y, 0, x, y, r * 3);
+    glow.addColorStop(0, rgba(rgb, 0.55 * alpha));
+    glow.addColorStop(1, rgba(rgb, 0));
+    g.fillStyle = glow;
+    g.beginPath();
+    g.arc(x, y, r * 3, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = rgba([255, 255, 255], 0.9 * alpha);
+    g.beginPath();
+    g.arc(x, y, r * 0.45, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = rgba(rgb, 0.9 * alpha);
+    g.lineWidth = Math.max(1, px * 1.5);
+    g.beginPath();
+    g.arc(x, y, r, 0, Math.PI * 2);
+    g.stroke();
+  }
+
+  // impulsos entre regiones y agentes
   for (let k = pulses.length - 1; k >= 0; k--) {
     const p = pulses[k];
     p.t += dt / p.dur;
-    const a = centers[p.from], b = centers[p.to];
+    const fromSat = p.fromSat && satellites.get(p.fromSat);
+    const toSat = p.toSat && satellites.get(p.toSat);
+    if ((p.fromSat && !fromSat) || (p.toSat && !toSat)) {
+      pulses.splice(k, 1);
+      continue;
+    }
+    const a = fromSat ? fromSat.proj : centers[p.from];
+    const b = toSat ? toSat.proj : centers[p.to];
     const mx = (a[0] + b[0]) / 2 + (((a[0] + b[0]) / 2 - cx) * 0.4);
     const my = (a[1] + b[1]) / 2 + (((a[1] + b[1]) / 2 - cy) * 0.4) - S * 0.12;
     const at = (t) => {
       const u = 1 - t;
       return [u * u * a[0] + 2 * u * t * mx + t * t * b[0], u * u * a[1] + 2 * u * t * my + t * t * b[1]];
     };
-    const col = REGIONS[p.to].color;
+    const col = p.rgb || REGIONS[p.to].color;
     for (let s = 0; s < 8; s++) {
       const t = Math.min(1, p.t) - s * 0.035;
       if (t < 0) break;
@@ -1068,10 +1488,17 @@ function frame(now) {
 
   // etiquetas de región
   const dpr = W / canvas.getBoundingClientRect().width || 1;
+  // Etiquetas siempre dentro del escenario (en el móvil las de los bordes se salían).
+  const maxX = canvas.offsetLeft + canvas.clientWidth - 8;
+  const place = (el, x, y) => {
+    const left = Math.min(canvas.offsetLeft + x / dpr + 14, maxX - el.offsetWidth);
+    el.style.transform = `translate(${Math.max(canvas.offsetLeft + 4, left)}px, ${canvas.offsetTop + y / dpr - 12}px)`;
+  };
+  for (const sat of satellites.values()) place(sat.el, sat.proj[0], sat.proj[1]);
   labels.forEach(({ el, span, i }) => {
     const r = regionState[i];
     const [x, y] = centers[i];
-    el.style.transform = `translate(${canvas.offsetLeft + x / dpr + 12}px, ${canvas.offsetTop + y / dpr - 12}px)`;
+    place(el, x, y);
     el.classList.toggle("on", r.act > 0.35 || r.pending);
     el.classList.toggle("fail", r.fail);
     el.classList.toggle("back", centers[i][3] < 0.4); // región en la cara oculta del modelo
@@ -1132,19 +1559,22 @@ async function init() {
     pcApps = null;
   }
   noticesLoop();
+  activityLoop();
   loadModels();
+  loadAgents();
+  moveInk();
   if (mode === "server") {
     $("hint").textContent = matchMedia("(pointer: coarse)").matches
-      ? "MANTÉN PULSADO EL CEREBRO PARA HABLAR"
-      : "MANTÉN PULSADO EL CEREBRO O LA BARRA ESPACIADORA";
+      ? "Mantén pulsado el cerebro para hablar"
+      : "Mantén pulsado el cerebro o la barra espaciadora";
     if (!getToken()) askToken();
   } else {
     pollEvents(); // avisos del PC: temporizadores y "Hey Jarvis" (solo en modo local)
     if (wakeEnabled) {
-      const hint = "DI «HEY JARVIS», MANTÉN PULSADO EL CEREBRO O LA BARRA ESPACIADORA";
+      const hint = "Di «Hey Jarvis», o mantén pulsado el cerebro o la barra espaciadora";
       // El navegador no deja sonar nada hasta el primer clic o tecla en la página.
       if (ensureAudio().state === "suspended") {
-        $("hint").textContent = "HAZ CLIC EN LA PÁGINA UNA VEZ PARA ACTIVAR EL SONIDO";
+        $("hint").textContent = "Haz clic en la página una vez para activar el sonido";
         const unlock = () => {
           ensureAudio();
           $("hint").textContent = hint;

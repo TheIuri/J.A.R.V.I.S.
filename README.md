@@ -239,8 +239,14 @@ Ejemplos: *"Recuerda que mi perro se llama Toby"*, *"Prefiero que me llames Ori"
 ## Interfaz (HUD) en el PC
 
 Una interfaz web con un **cerebro 3D de neuronas** que gira sobre sí mismo y muestra el flujo de pensamiento en directo. Incluye
-subtítulos, historial, un panel de sesión (intercambios, latencia, pico, tiempo por etapa, modelo y tools usadas),
-el estado de cada región del córtex y la lista de recuerdos con botón para olvidar.
+subtítulos, historial y un panel lateral con tres pestañas:
+- **Agentes**: las tareas en marcha (agente, modelo que responde, pasos, tiempo) y el equipo con el modelo de cada uno.
+- **Traza**: línea de tiempo de todo lo que pasa (tu turno, herramientas, agentes, Claude, el auditor, avisos).
+- **Sesión**: intercambios, latencia, pico, tiempo por etapa, modelo, tools usadas, córtex y recuerdos.
+
+Arriba, en el centro, el **selector de CEREBRO** muestra el modelo activo y deja cambiarlo (también con el teclado).
+Cuando un agente trabaja aparece como **satélite** orbitando el cerebro 3D, unido a la corteza prefrontal por un haz; cada
+herramienta que usa lanza un impulso hacia su región y, al terminar, otro de vuelta. Claude y el auditor salen igual.
 
 **Flujo de pensamiento**: el servidor emite cada paso del turno según ocurre (`/api/chat/stream` y
 `/api/voice/stream`, una línea JSON por evento). Cada paso enciende su región y un impulso viaja desde la anterior:
@@ -411,7 +417,7 @@ Solo funciona hablando desde el HUD del PC y necesita Claude Code instalado y co
 
 ### Modo Claude y selector de modelo
 
-En el panel derecho del HUD, **CEREBRO** elige quién piensa:
+En la barra superior del HUD, **CEREBRO** elige quién piensa:
 - **Automático (JARVIS)**: la cadena de `LLM_PROVIDERS` (por defecto Groq).
 - **Un proveedor concreto** (`groq`, `gemini`...): va primero y el resto queda de respaldo. En el PC y en el móvil.
 - **Claude Sonnet / Opus / Haiku · membresía** (solo en el HUD del PC, con Claude Code instalado): toda la
