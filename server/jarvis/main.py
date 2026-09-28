@@ -6,14 +6,16 @@ import base64
 import json
 import logging
 import queue
+import os
 import secrets
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -21,7 +23,8 @@ from pydantic import BaseModel
 
 from .activity import ActivityLog
 from .agent_history import AgentHistory
-from .agents import REPORT_FOLDER, SPECS, AgentTeam, agent_tools, extract_options, short_summary, split_report
+from .auditor import Auditor, audit_tool, parse_projects
+from .agents import CLAUDE_AGENTS, REPORT_FOLDER, SPECS, AgentTeam, agent_tools, extract_options, short_summary, split_report
 from .claude_code import DEFAULT_MODELS as CLAUDE_DEFAULTS
 from .claude_code import ClaudeCode, label
 from .config import Settings, load_settings
@@ -31,13 +34,13 @@ from .llm import FallbackLLM, LLMError, OpenAICompatLLM, usage_report
 from .memory import MemoryRejected, MemoryStore, RuleRetriever
 from .notify import NoticeBoard, NtfyPush, parse_quiet
 from .obsidian import Vault
-from .pipeline import Assistant, TurnResult
+from .pipeline import PENDING_TTL_S, Assistant, TurnResult, is_affirmative
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
-from .tools import build_registry
+from .tools import build_registry, spotify_configured, truenas_snapshot
 from .tools.info import research_tools
 from .tools.calendar import Calendars, parse_calendars
-from .tools.registry import ToolError
+from .tools.registry import ToolContext, ToolError
 from .tools.reminders import ReminderStore
 from .tools.truenas import _default_connect
 from .tools.vision import Vision, check_image
@@ -102,7 +105,8 @@ def build_assistant(settings: Settings) -> Assistant:
         stt,
         llm,
         tts,
-        system_prompt(settings.assistant_name, settings.home_city, memory=store is not None),
+        system_prompt(settings.assistant_name, settings.home_city, memory=store is not None,
+                      spotify=spotify_configured(settings)),
         settings.history_turns,
         tools,
         retriever,
@@ -151,7 +155,18 @@ def build_assistant(settings: Settings) -> Assistant:
                  "falta el programa claude en la imagen")
         if getattr(assistant, "team", None) is not None:
             assistant.team.claude = assistant.claude  # investigador, compras y captador pueden ir con Claude
+        if assistant.claude.available and tools is not None:
+            # El auditor de seguridad, aqui en el NAS con Claude (sustituye al del PC).
+            assistant.auditor = Auditor(assistant.claude, truenas_snapshot(settings),
+                                        parse_projects(settings.audit_projects), vault, assistant.board,
+                                        assistant.activity, settings.timezone)
+            tools.replace(audit_tool(assistant.auditor))
+            log.info("Auditor en el NAS: proyectos %s", ", ".join(assistant.auditor.available_projects()))
     assistant.only_claude = settings.hud_models == "claude"
+    assistant.default_model = settings.default_model
+    if getattr(assistant, "claude", None) is not None:
+        assistant.claude.full = settings.claude_tools != "web" and tools is not None
+        assistant.claude.system = assistant.system_prompt
     return assistant
 
 
@@ -229,6 +244,11 @@ EXTERNAL_AGENTS = {
 class LeadProfileRequest(BaseModel):
     name: str
     text: str = ""  # "" = borrar lo guardado desde el HUD
+
+
+class ToolCallRequest(BaseModel):
+    name: str
+    arguments: dict = {}
 
 
 class AgentRunRequest(BaseModel):
@@ -330,8 +350,36 @@ def _read_audio(audio: UploadFile) -> bytes:
     return data
 
 
+INTERNAL_HOSTS = {"127.0.0.1", "::1"}
+CLAUDE_EXCLUDED = {"web_read"}  # con tus datos a mano, Claude no lee webs (para eso, los agentes)  # la API interna (herramientas de Claude) solo desde dentro del contenedor
+
+
+def wire_claude_tools(assistant: Assistant, internal_token: str) -> None:
+    """Config MCP para que Claude (en la conversacion) pueda encargar trabajo a los agentes web de JARVIS."""
+    claude = getattr(assistant, "claude", None)
+    if claude is None or not claude.available:
+        return
+    if not claude.full and getattr(assistant, "team", None) is None:
+        return  # modo web: solo sirve para lanzar agentes
+    claude.home.mkdir(parents=True, exist_ok=True)
+    path = claude.home / "mcp.json"
+    port = os.environ.get("JARVIS_PORT", "8765")
+    config = {"mcpServers": {"jarvis": {
+        "command": sys.executable, "args": ["-m", "jarvis.mcp_agents"],
+        "env": {"JARVIS_INTERNAL_URL": f"http://127.0.0.1:{port}", "JARVIS_INTERNAL_TOKEN": internal_token,
+                "JARVIS_MCP_MODE": "full" if claude.full else "agents",
+                "PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
+    }}}
+    path.write_text(json.dumps(config), encoding="utf-8")
+    path.chmod(0o600)
+    claude.mcp_config = path
+
+
 def create_app(assistant: Assistant | None = None, api_token: str | None = None) -> FastAPI:
-    state: dict = {"assistant": assistant, "token": api_token}
+    state: dict = {"assistant": assistant, "token": api_token, "internal": secrets.token_urlsafe(32),
+                   "claude_session": "default", "claude_cards": [], "claude_lock": threading.Lock()}
+    if assistant is not None:
+        wire_claude_tools(assistant, state["internal"])
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -339,6 +387,7 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             settings = load_settings()
             state["token"] = settings.api_token
             state["assistant"] = build_assistant(settings)
+            wire_claude_tools(state["assistant"], state["internal"])
         watcher = getattr(state["assistant"], "watcher", None)
         if watcher:
             watcher.start()
@@ -352,6 +401,67 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
     def require_token(creds: HTTPAuthorizationCredentials | None = Depends(bearer)) -> None:
         if creds is None or not secrets.compare_digest(creds.credentials, state["token"] or ""):
             raise HTTPException(status_code=401, detail="Token invalido")
+
+    def require_internal(request: Request) -> None:
+        """Solo el servidor MCP de Claude, desde dentro del contenedor, con el token de este arranque."""
+        given = request.headers.get("X-Jarvis-Internal", "")
+        host = request.client.host if request.client else ""
+        if host not in INTERNAL_HOSTS or not secrets.compare_digest(given, state["internal"]):
+            raise HTTPException(status_code=403, detail="Solo para uso interno")
+
+    def web_team() -> AgentTeam:
+        team: AgentTeam | None = getattr(state["assistant"], "team", None)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Agentes desactivados")
+        return team
+
+    @app.get("/internal/agents", dependencies=[Depends(require_internal)], include_in_schema=False)
+    def internal_agents() -> dict:
+        team = web_team()
+        return {"agents": [{"id": k, "description": SPECS[k].description} for k in CLAUDE_AGENTS if k in team.available]}
+
+    @app.post("/internal/agents/run", dependencies=[Depends(require_internal)], include_in_schema=False)
+    def internal_agent_run(req: AgentRunRequest) -> dict:
+        team = web_team()
+        if req.agent not in CLAUDE_AGENTS:  # nunca los agentes con datos privados
+            raise HTTPException(status_code=400, detail=f"agente no disponible: {req.agent}")
+        try:
+            job, message = team.request(req.agent, req.task, req.refresh)
+        except ToolError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"job": job.id if job else None, "message": message}
+
+    @app.get("/internal/tools", dependencies=[Depends(require_internal)], include_in_schema=False)
+    def internal_tools() -> dict:
+        """Cerebro completo: las herramientas de JARVIS para Claude (sin las del PC ni leer webs)."""
+        registry = state["assistant"].tools
+        if registry is None:
+            return {"tools": []}
+        return {"tools": [
+            {"name": f["function"]["name"], "description": f["function"]["description"],
+             "inputSchema": f["function"]["parameters"]}
+            for f in (spec for spec in registry.specs(ToolContext())) if f["function"]["name"] not in CLAUDE_EXCLUDED
+        ]}
+
+    @app.post("/internal/tools/call", dependencies=[Depends(require_internal)], include_in_schema=False)
+    def internal_tool_call(req: ToolCallRequest) -> dict:
+        a: Assistant = state["assistant"]
+        if a.tools is None or req.name in CLAUDE_EXCLUDED:
+            raise HTTPException(status_code=400, detail=f"herramienta no disponible: {req.name}")
+        ctx = ToolContext()
+        result = a.tools.execute(req.name, json.dumps(req.arguments), ctx)
+        session = state["claude_session"]
+        if ctx.pending:  # lo confirma el usuario en su siguiente mensaje, como con Groq
+            a._pending[session] = (ctx.pending, time.monotonic() + PENDING_TTL_S)
+        state["claude_cards"].extend(ctx.cards)
+        return {"result": result}
+
+    @app.get("/internal/agents/status", dependencies=[Depends(require_internal)], include_in_schema=False)
+    def internal_agent_status() -> dict:
+        jobs = [j for j in web_team().jobs.values() if j.agent in CLAUDE_AGENTS][-5:]
+        lines = [f"[{j.id}] {SPECS[j.agent].label} · {j.topic}: {j.state}"
+                 + (f": {j.summary}" if j.summary and j.state != "trabajando" else "") for j in jobs]
+        return {"status": "\n".join(lines) or "No hay encargos a estos agentes."}
 
     def run(fn, *args) -> dict:
         try:
@@ -634,6 +744,8 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
     @app.get("/hud/config", include_in_schema=False)
     def hud_config() -> dict:
         out: dict = {"mode": "server", "pc_apps": None}
+        if getattr(state["assistant"], "default_model", ""):
+            out["default_model"] = state["assistant"].default_model
         if claude():
             out["claude_models"] = claude().models()
             if getattr(state["assistant"], "only_claude", False):
@@ -655,16 +767,36 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         events: queue.Queue = queue.Queue()
 
         def work() -> None:
+            session = req.session[:40]
+            waiting = a._pending.pop(session, None)
+            if waiting and a.tools and time.monotonic() < waiting[1] and is_affirmative(text):
+                # "Si" a una accion que propuso Claude: se hace tal cual, sin volver a preguntar a nadie.
+                events.put({"type": "heard", "text": text, "ms": 0})
+                with a._lock:
+                    result = a._confirm(text, session, req.speak, {}, ToolContext(), events.put, waiting[0])
+                events.put({"type": "done", **_to_json(result)})
+                return
             events.put({"type": "heard", "text": text, "ms": 0})
             events.put({"type": "thinking", "round": 1})
             start = time.perf_counter()
             try:
-                reply, used = c.ask(text, req.model, req.session[:40], events.put)
+                with state["claude_lock"]:  # las herramientas saben a que conversacion responder
+                    state["claude_session"], state["claude_cards"] = session, []
+                    reply, used = c.ask(text, req.model, session, events.put)
+                    cards = list(state["claude_cards"])
             except (RuntimeError, ValueError, OSError) as exc:
-                events.put({"type": "error", "detail": str(exc)})
+                # Sin cupo o caido: contesta la cadena de JARVIS (Groq...) para no quedarte sin respuesta.
+                log.warning("Claude no ha podido (%s); contesta %s", exc, a.llm.name)
+                try:
+                    result = a.handle_text(text, session, req.speak, on_event=events.put)
+                    events.put({"type": "done", **_to_json(result)})
+                except LLMError as exc2:
+                    events.put({"type": "error", "detail": f"{exc} · respaldo: {exc2}"})
                 return
             ms = round((time.perf_counter() - start) * 1000)
             name = label(req.model)
+            if cards:
+                events.put({"type": "cards", "cards": cards})
             events.put({"type": "reply", "text": reply, "provider": name, "ms": ms})
             audio, ms_tts = None, 0
             if req.speak:
@@ -678,7 +810,7 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             events.put({
                 "type": "done", "transcript": text, "reply": reply, "provider": name,
                 "timings_ms": {"claude": ms, "tts": ms_tts, "total": ms + ms_tts}, "tools_used": used,
-                "pc_actions": [], "cards": [], "audio_wav_b64": _b64(audio),
+                "pc_actions": [], "cards": cards, "audio_wav_b64": _b64(audio),
             })
 
         def lines():

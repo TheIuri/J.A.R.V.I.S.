@@ -32,6 +32,7 @@ let mode = "local";
 let pcApps = null;
 let claudeModels = []; // modo Claude (membresía): en el HUD del PC o en el NAS
 let onlyClaude = false; // HUD_MODELS=claude: en CEREBRO solo los de Claude
+let defaultModel = ""; // DEFAULT_MODEL: el cerebro por defecto si este navegador no eligió otro
 const MODEL_KEY = "jarvis_model";
 let wakeEnabled = false; // "Hey Jarvis" en el PC (modo local con openwakeword)
 let wakeActive = false; // se oyó "Hey Jarvis" y se espera la frase
@@ -258,7 +259,9 @@ function providerLabel(spec) {
 
 // Si ha contestado otro modelo que el elegido (limite, caida...), es un respaldo.
 function isBackup(spec) {
-  if (!spec || !currentModel || currentModel.startsWith("claude-")) return false; // Claude no tiene respaldo
+  if (!spec || !currentModel) return false;
+  // Con Claude elegido, si contesta otro (Groq...) es el respaldo por falta de cupo.
+  if (currentModel.startsWith("claude-")) return !/^Claude /.test(spec);
   return spec !== currentModel && !spec.startsWith(`${currentModel}:`);
 }
 
@@ -315,14 +318,15 @@ async function loadModels() {
   }
   claudeModels.forEach((m) => options.push({ id: m.id, label: m.label, detail: mode === "server" ? "Tu membresía, desde el NAS" : "Tu membresía, desde este PC", group: "Claude · membresía" }));
   modelOptions = options;
-  let saved = "";
+  let saved = null; // null = este navegador nunca eligió ("" es Automático elegido a propósito)
   try {
-    saved = localStorage.getItem(MODEL_KEY) || "";
+    saved = localStorage.getItem(MODEL_KEY);
   } catch {
     /* sin almacenamiento */
   }
   renderModelMenu();
-  applyModel(options.some((m) => m.id === saved) ? saved : "", false);
+  const known = (id) => id !== null && options.some((m) => m.id === id);
+  applyModel(known(saved) ? saved : known(defaultModel) ? defaultModel : "", false);
 }
 
 function renderModelMenu() {
@@ -2298,13 +2302,19 @@ function frame(now) {
 
 // --- entradas ----------------------------------------------------------------
 
+// La barra espaciadora habla solo si no estás escribiendo ni sobre un control (en ellos, el espacio es suyo).
+function spaceIsForTyping(e) {
+  const el = e.target instanceof Element ? e.target : document.activeElement;
+  return Boolean(el?.closest?.("input, textarea, select, button, summary, [contenteditable], [role='menuitemradio'], [role='tab']"));
+}
+
 addEventListener("keydown", (e) => {
-  if (e.code !== "Space" || e.repeat || document.activeElement === $("text")) return;
+  if (e.code !== "Space" || e.repeat || spaceIsForTyping(e)) return;
   e.preventDefault();
   startRecording();
 });
 addEventListener("keyup", (e) => {
-  if (e.code !== "Space" || document.activeElement === $("text")) return;
+  if (e.code !== "Space" || spaceIsForTyping(e)) return;
   e.preventDefault();
   stopRecording();
 });
@@ -2340,7 +2350,7 @@ async function init() {
   tick();
   requestAnimationFrame(frame);
   try {
-    ({ mode, pc_apps: pcApps, wake: wakeEnabled = false, claude_models: claudeModels = [], only_claude: onlyClaude = false } = await (
+    ({ mode, pc_apps: pcApps, wake: wakeEnabled = false, claude_models: claudeModels = [], only_claude: onlyClaude = false, default_model: defaultModel = "" } = await (
       await fetch("/hud/config")
     ).json());
   } catch {

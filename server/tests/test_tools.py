@@ -447,3 +447,19 @@ def test_cards_are_streamed_and_returned():
     result = assistant.handle_text("busca", on_event=events.append)
     assert {"type": "cards", "cards": [{"kind": "web", "title": "r1"}]} in events
     assert result.cards == [{"kind": "web", "title": "r1"}]
+
+
+def test_music_always_goes_to_spotify_when_it_is_configured(monkeypatch):
+    from jarvis import config
+    from jarvis.prompts import system_prompt
+    from jarvis.tools import build_registry
+
+    assert "SIEMPRE con Spotify" in system_prompt("Jarvis", spotify=True)
+    assert "teclas multimedia" in system_prompt("Jarvis") and "Spotify" not in system_prompt("Jarvis")
+    monkeypatch.setenv("API_TOKEN", "x")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    assert "pc_media" in build_registry(config.load_settings()).names()
+    for var in ("SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", "SPOTIFY_REFRESH_TOKEN"):
+        monkeypatch.setenv(var, "v")
+    names = build_registry(config.load_settings()).names()
+    assert "spotify_control" in names and "pc_media" not in names

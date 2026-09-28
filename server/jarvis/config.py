@@ -160,6 +160,9 @@ class Settings:
     wol_broadcast: str = "255.255.255.255"
     claude_token: str = ""  # CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`): modo Claude con la membresia en el NAS
     claude_models: list[str] = field(default_factory=list)  # CLAUDE_MODELS: versiones en el selector (vacio = las de serie)
+    audit_projects: str = ""  # AUDIT_PROJECTS: "caliperworks=/code/caliperworks" (carpetas montadas en el contenedor)
+    claude_tools: str = "full"  # CLAUDE_TOOLS: "full" = todas las herramientas de JARVIS | "web" = leer webs y agentes web
+    default_model: str = ""  # DEFAULT_MODEL: cerebro que el HUD elige por defecto (p. ej. "claude-sonnet-5")
     hud_models: str = "all"  # HUD_MODELS: "claude" = en CEREBRO solo los modelos de Claude
 
     @property
@@ -310,4 +313,7 @@ def load_settings() -> Settings:
         claude_token=_env("CLAUDE_CODE_OAUTH_TOKEN"),
         claude_models=[m.strip() for m in _env("CLAUDE_MODELS").split(",") if m.strip()],
         hud_models=_env("HUD_MODELS", "all").lower(),
+        claude_tools=_env("CLAUDE_TOOLS", "full").lower(),
+        default_model=_env("DEFAULT_MODEL"),
+        audit_projects=_env("AUDIT_PROJECTS"),
     )

@@ -11,6 +11,7 @@ services:
     volumes:
       - /mnt/TU_POOL/apps/jarvis:/data # <<< dataset para modelos y voces
       # - /mnt/TU_POOL/obsidian:/vault # Obsidian (opcional): dataset de la boveda; ver README
+      # - /mnt/TU_POOL/code/caliperworks:/code/caliperworks:ro # codigo para el auditor (AUDIT_PROJECTS), solo lectura
     environment:
       API_TOKEN: "cambia-esto-por-un-token-largo" # <<< genera uno: openssl rand -hex 32
       ASSISTANT_NAME: "Jarvis"
@@ -29,7 +30,10 @@ services:
       # MISTRAL_API_KEY: "" # https://console.mistral.ai (plan Experiment, gratis)
       # OPENCODE_API_KEY: "" # https://opencode.ai/auth (OpenCode Zen); modelo con OPENCODE_MODEL u "opencode:<modelo>"
       # CLAUDE_CODE_OAUTH_TOKEN: "" # modo Claude con tu membresia Pro/Max tambien en el movil: en el PC, `claude setup-token`
+      # DEFAULT_MODEL: "claude-sonnet-5" # cerebro por defecto en el HUD (Claude con todas las acciones; Groq de respaldo)
+      # CLAUDE_TOOLS: "full" # "full" = Claude usa todas las herramientas de JARVIS | "web" = lee webs y lanza agentes web
       # CLAUDE_MODELS: "claude-sonnet-5,claude-opus-5-5,claude-fable-5-1,claude-haiku-4-5" # versiones en CEREBRO (la 1a, por defecto)
+      # AUDIT_PROJECTS: "caliperworks=/code/caliperworks" # proyectos que el auditor puede revisar (JARVIS siempre)
       # HUD_MODELS: "claude" # en CEREBRO solo los de Claude (sin Automatico: las acciones de PC, casa y musica no estan)
       # Cadenas con modelo concreto: "groq,groq:llama-3.3-70b-versatile,cerebras"
       # GROQ_MODEL: "openai/gpt-oss-120b" # si Groq lo retira, elige otro en console.groq.com/docs/models

@@ -14,7 +14,7 @@ import unicodedata
 
 import httpx
 
-from .registry import Tool, ToolContext, ToolError
+from .registry import Tool, ToolError
 
 API = "https://api.spotify.com/v1"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
