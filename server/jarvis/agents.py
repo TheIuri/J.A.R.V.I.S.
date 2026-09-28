@@ -191,6 +191,8 @@ class Job:
 
 
 MAX_SUMMARY = 220
+GENERAL_PROFILE = "general"  # el perfil por defecto del captador (LEADS_PROFILE)
+MAX_PROFILE = 2000
 _OPTIONS = re.compile(r"```opciones\s*(\[.*?\])\s*```", re.S)
 
 
@@ -256,6 +258,7 @@ class AgentTeam:
         lead_profiles: dict[str, str] | None = None,
         history: AgentHistory | None = None,
         prefs: Path | None = None,
+        profiles_path: Path | None = None,
     ):
         self.llm = llm  # por defecto
         self.history = history  # lo ya investigado, para no repetirlo
@@ -271,8 +274,19 @@ class AgentTeam:
         self.llms = llms or {}  # cadena propia de algun agente
         self.activity = activity
         self.leads = leads  # donde guarda el captador sus leads
-        self.lead_profile = lead_profile  # LEADS_PROFILE: que ofrece el usuario (por defecto)
-        self.lead_profiles = lead_profiles or {}  # LEADS_PROFILE_<NOMBRE>: uno por producto o negocio
+        # Lo que ofrece el usuario, para el captador: de la configuracion (LEADS_PROFILE y LEADS_PROFILE_<NOMBRE>)
+        # y, por encima, lo guardado desde el HUD en el NAS (lead_profiles.json).
+        self.env_profile = lead_profile
+        self.env_profiles = dict(lead_profiles or {})
+        self.profiles_path = Path(profiles_path) if profiles_path else None
+        self.saved_profiles: dict[str, str] = {}
+        if self.profiles_path:
+            try:
+                raw = json.loads(self.profiles_path.read_text(encoding="utf-8"))
+                self.saved_profiles = {k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)}
+            except (OSError, ValueError, AttributeError):
+                self.saved_profiles = {}
+        self._merge_profiles()
         self.vault = vault
         self.board = board
         self.tz = ZoneInfo(timezone)
@@ -293,6 +307,37 @@ class AgentTeam:
     @property
     def available(self) -> list[str]:
         return list(self.registries)
+
+    def _merge_profiles(self) -> None:
+        saved = dict(self.saved_profiles)
+        self.lead_profile = saved.pop(GENERAL_PROFILE, self.env_profile)  # el de por defecto
+        self.lead_profiles = {**self.env_profiles, **saved}  # uno por producto o negocio
+
+    def profiles(self) -> list[dict]:
+        """Para el HUD: cada perfil, su texto y de donde sale (config de TrueNAS o guardado en el NAS)."""
+        out = [{"name": GENERAL_PROFILE, "text": self.lead_profile,
+                "source": "nas" if GENERAL_PROFILE in self.saved_profiles else "config"}] if self.lead_profile else []
+        out += [{"name": k, "text": v, "source": "nas" if k in self.saved_profiles else "config"}
+                for k, v in self.lead_profiles.items()]
+        return out
+
+    def save_profile(self, name: str, text: str) -> str:
+        """Crea o cambia un perfil ("" = borrar lo guardado; si venia de la configuracion, vuelve a ese)."""
+        key = re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", name.lower()).encode("ascii", "ignore").decode())
+        if not 2 <= len(key) <= 30:
+            raise ToolError("el nombre del perfil debe tener entre 2 y 30 letras o números")
+        text = " ".join(text.split())
+        if len(text) > MAX_PROFILE:
+            raise ToolError(f"el perfil es demasiado largo (máximo {MAX_PROFILE} caracteres)")
+        if text:
+            self.saved_profiles[key] = text
+        else:
+            self.saved_profiles.pop(key, None)
+        self._merge_profiles()
+        if self.profiles_path:
+            self.profiles_path.parent.mkdir(parents=True, exist_ok=True)
+            self.profiles_path.write_text(json.dumps(self.saved_profiles, ensure_ascii=False, indent=1), encoding="utf-8")
+        return key
 
     def lead_profile_for(self, task: str) -> tuple[str, str]:
         """(nombre, texto) del perfil que nombra el encargo ("clientes para CaliperWorks"), o el de por defecto."""
@@ -356,6 +401,17 @@ class AgentTeam:
         else:
             self._run(job)
         return job
+
+    def request(self, agent: str, task: str, refresh: bool = False) -> tuple[Job | None, str]:
+        """Un encargo (de la conversacion o del boton del HUD): reutiliza un informe parecido si lo hay
+        y no se pide actualizar; si no, lanza el agente. Devuelve (tarea o None si se reutilizo, mensaje)."""
+        if agent in SPECS and self.history is not None and not refresh:
+            done = self.history.find(agent, task)
+            if done:
+                return None, self.reuse(agent, task, done)
+        job = self.start(agent, task)
+        where = " y lo guardará en Obsidian" if self.vault else ""
+        return job, f"{SPECS[agent].label} se ha puesto con ello (tarea {job.id}). Avisará al terminar{where}."
 
     def reuse(self, agent: str, task: str, done: dict) -> str:
         """Contesta con un trabajo anterior parecido: el agente no se lanza y no gasta tokens."""
@@ -480,13 +536,7 @@ class AgentTeam:
 
 def agent_tools(team: AgentTeam) -> list[Tool]:
     def run(_ctx: ToolContext, agent: str, task: str, refresh: bool = False) -> str:
-        if agent in SPECS and team.history is not None and not refresh:
-            done = team.history.find(agent, task)
-            if done:
-                return team.reuse(agent, task, done)
-        job = team.start(agent, task)
-        where = " y lo guardará en Obsidian" if team.vault else ""
-        return f"{SPECS[agent].label} se ha puesto con ello (tarea {job.id}). Avisará al terminar{where}."
+        return team.request(agent, task, refresh)[1]
 
     def status(_ctx: ToolContext) -> str:
         if not team.jobs:

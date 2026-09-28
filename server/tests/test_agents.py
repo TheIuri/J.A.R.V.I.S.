@@ -327,3 +327,23 @@ def test_hud_can_choose_the_model_of_each_agent(tmp_path):
     assert client.post("/api/agents/model", json={"agent": "compras", "model": "x:y"}, headers=auth).status_code == 400
     assert client.post("/api/agents/model", json={"agent": "compras", "model": ""}, headers=auth).json()["prefer"] == ""
     assert "compras" not in team.prefer
+
+
+def test_hud_can_start_an_agent_without_the_chat_llm(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from jarvis.agent_history import AgentHistory
+    from jarvis.agents import AgentTeam
+    from jarvis.main import create_app
+    from tests.test_core import make_assistant
+    from tests.test_tools import ScriptedLLM
+
+    assistant = make_assistant()
+    assistant.team = AgentTeam(ScriptedLLM(["RESUMEN: listo.\n# x"]).llm(), {"web_search": fake_search()},
+                               history=AgentHistory(tmp_path / "h.json"))
+    client = TestClient(create_app(assistant, api_token="s"))
+    auth = {"Authorization": "Bearer s"}
+    assert client.post("/api/agents/run", json={"agent": "compras", "task": "monitor 4k"}).status_code == 401
+    assert client.post("/api/agents/run", json={"agent": "nadie", "task": "x"}, headers=auth).status_code == 400
+    out = client.post("/api/agents/run", json={"agent": "compras", "task": "monitor 4k"}, headers=auth).json()
+    assert out["job"] == 1 and not out["reused"] and "se ha puesto con ello" in out["message"]
