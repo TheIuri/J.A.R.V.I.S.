@@ -451,7 +451,9 @@ LLM_PROVIDERS: "groq,groq:llama-3.3-70b-versatile,cerebras"   # conversación: r
 AGENT_LLM_PROVIDERS: "cerebras,groq:llama-3.3-70b-versatile"   # agentes: donde hay margen
 ```
 
-Si todos los modelos están en su límite **por minuto**, los agentes esperan lo que diga el proveedor (hasta 45 s) y
+**Rotación**: si un modelo acaba de dar límite, o el proveedor dice que este minuto no le quedan tokens para la
+petición, JARVIS pasa directamente al siguiente de la cadena (queda al final como último recurso) y vuelve a él
+cuando se libera. Si todos los modelos están en su límite **por minuto**, los agentes esperan lo que diga el proveedor (hasta 45 s) y
 reintentan; la conversación no espera y pasa al siguiente. El **widget de cuota** lo enseña: un punto junto a
 *Cerebro* (verde, ámbar si queda poco, rojo en su límite), una barra por modelo al abrir el selector y el detalle en
 **Sesión → Cuota** (lo que queda del minuto y del día según el proveedor, y lo gastado hoy). Groq y Cerebras dicen lo
