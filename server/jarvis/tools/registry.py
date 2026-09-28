@@ -49,6 +49,7 @@ class Tool:
     destructive: bool = False  # borrar, enviar, pagar... nunca se ofrece al LLM
     confirm: bool = False  # se ofrece, pero solo se ejecuta si el usuario dice "si" en el turno siguiente
     describe: Callable[[dict[str, Any]], str] | None = None  # texto de la pregunta de confirmacion
+    live_description: Callable[[], str] | None = None  # si cambia en marcha (p. ej. perfiles del captador)
     needs_image: bool = False  # solo se ofrece si el turno trae foto de la camara
     timeout_s: float = 10.0
 
@@ -86,6 +87,10 @@ class ToolRegistry:
             raise ValueError(f"tool duplicada: {tool.name}")
         self._tools[tool.name] = tool
 
+    def replace(self, tool: Tool) -> None:
+        """Cambia una tool ya registrada por otra con el mismo nombre (o la anade)."""
+        self._tools[tool.name] = tool
+
     def get(self, name: str) -> Tool | None:
         """La tool registrada (si no esta desactivada), p. ej. para darsela a un agente."""
         return self._tools.get(name) if name not in self._disabled else None
@@ -113,7 +118,8 @@ class ToolRegistry:
             if t.name == "pc_open_app":
                 params = json.loads(json.dumps(params))
                 params["properties"]["app"]["enum"] = ctx.pc_apps
-            specs.append({"type": "function", "function": {"name": t.name, "description": t.description, "parameters": params}})
+            desc = t.live_description() if t.live_description else t.description
+            specs.append({"type": "function", "function": {"name": t.name, "description": desc, "parameters": params}})
         return specs
 
     def execute(self, name: str, raw_args: str, ctx: ToolContext) -> str:

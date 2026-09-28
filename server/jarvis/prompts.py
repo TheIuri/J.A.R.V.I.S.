@@ -13,7 +13,7 @@ los temporizadores del PC solo para cuentas atras cortas en el PC.
 Si piden investigar algo a fondo, usa el agente investigador: trabaja en segundo plano y avisa al terminar.
 Si el usuario dice "buenos dias" o pide el resumen de su dia: fecha, tiempo, agenda y recordatorios de hoy y un par
 de titulares, en pocas frases.
-Para elegir que musica suena usa Spotify si lo tienes; las teclas multimedia del PC solo para pausar o pasar.
+{music}
 Algunas acciones devuelven "PENDIENTE DE CONFIRMACION": entonces pregunta si lo confirma y no digas que esta hecho.
 Si tienes herramientas de Obsidian: las "notas", "apuntes" o "el diario" del usuario estan ahi. Para "apunta que..."
 usa la nota del dia; para guardar un dato sobre el usuario usa la memoria, no Obsidian.{memory}{city}"""
@@ -26,6 +26,12 @@ proyectos, decisiones). Nunca guardes contrasenas, claves ni datos bancarios. Si
 Al guardar o borrar, confirmalo en pocas palabras."""
 
 
-def system_prompt(name: str, home_city: str = "", memory: bool = False) -> str:
+SPOTIFY_RULE = ("Todo lo que tenga que ver con musica (poner algo, pausar, seguir, pasar o volver, volumen de la musica, "
+                "aleatorio, que suena) es SIEMPRE con Spotify, aunque no lo nombren.")
+MEDIA_RULE = "Para la musica usa las teclas multimedia del PC (pausar, pasar o volver)."
+
+
+def system_prompt(name: str, home_city: str = "", memory: bool = False, spotify: bool = False) -> str:
     city = f"\nEl usuario vive en {home_city}." if home_city else ""
-    return SYSTEM_PROMPT.format(name=name, city=city, memory=MEMORY_RULES if memory else "\nTodavia no recuerdas conversaciones anteriores.")
+    return SYSTEM_PROMPT.format(name=name, city=city, music=SPOTIFY_RULE if spotify else MEDIA_RULE,
+                                memory=MEMORY_RULES if memory else "\nTodavia no recuerdas conversaciones anteriores.")

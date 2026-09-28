@@ -6,14 +6,16 @@ import base64
 import json
 import logging
 import queue
+import os
 import secrets
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -21,7 +23,8 @@ from pydantic import BaseModel
 
 from .activity import ActivityLog
 from .agent_history import AgentHistory
-from .agents import REPORT_FOLDER, SPECS, AgentTeam, agent_tools, extract_options, short_summary, split_report
+from .auditor import Auditor, audit_tool, parse_projects
+from .agents import CLAUDE_AGENTS, REPORT_FOLDER, SPECS, AgentTeam, agent_tools, extract_options, short_summary, split_report
 from .claude_code import DEFAULT_MODELS as CLAUDE_DEFAULTS
 from .claude_code import ClaudeCode, label
 from .config import Settings, load_settings
@@ -34,7 +37,7 @@ from .obsidian import Vault
 from .pipeline import Assistant, TurnResult
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
-from .tools import build_registry
+from .tools import build_registry, spotify_configured, truenas_snapshot
 from .tools.info import research_tools
 from .tools.calendar import Calendars, parse_calendars
 from .tools.registry import ToolError
@@ -102,7 +105,8 @@ def build_assistant(settings: Settings) -> Assistant:
         stt,
         llm,
         tts,
-        system_prompt(settings.assistant_name, settings.home_city, memory=store is not None),
+        system_prompt(settings.assistant_name, settings.home_city, memory=store is not None,
+                      spotify=spotify_configured(settings)),
         settings.history_turns,
         tools,
         retriever,
@@ -151,6 +155,13 @@ def build_assistant(settings: Settings) -> Assistant:
                  "falta el programa claude en la imagen")
         if getattr(assistant, "team", None) is not None:
             assistant.team.claude = assistant.claude  # investigador, compras y captador pueden ir con Claude
+        if assistant.claude.available and tools is not None:
+            # El auditor de seguridad, aqui en el NAS con Claude (sustituye al del PC).
+            assistant.auditor = Auditor(assistant.claude, truenas_snapshot(settings),
+                                        parse_projects(settings.audit_projects), vault, assistant.board,
+                                        assistant.activity, settings.timezone)
+            tools.replace(audit_tool(assistant.auditor))
+            log.info("Auditor en el NAS: proyectos %s", ", ".join(assistant.auditor.available_projects()))
     assistant.only_claude = settings.hud_models == "claude"
     return assistant
 
@@ -330,8 +341,31 @@ def _read_audio(audio: UploadFile) -> bytes:
     return data
 
 
+INTERNAL_HOSTS = {"127.0.0.1", "::1"}  # la API interna (herramientas de Claude) solo desde dentro del contenedor
+
+
+def wire_claude_tools(assistant: Assistant, internal_token: str) -> None:
+    """Config MCP para que Claude (en la conversacion) pueda encargar trabajo a los agentes web de JARVIS."""
+    claude = getattr(assistant, "claude", None)
+    if claude is None or not claude.available or getattr(assistant, "team", None) is None:
+        return
+    claude.home.mkdir(parents=True, exist_ok=True)
+    path = claude.home / "mcp.json"
+    port = os.environ.get("JARVIS_PORT", "8765")
+    config = {"mcpServers": {"jarvis": {
+        "command": sys.executable, "args": ["-m", "jarvis.mcp_agents"],
+        "env": {"JARVIS_INTERNAL_URL": f"http://127.0.0.1:{port}", "JARVIS_INTERNAL_TOKEN": internal_token,
+                "PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
+    }}}
+    path.write_text(json.dumps(config), encoding="utf-8")
+    path.chmod(0o600)
+    claude.mcp_config = path
+
+
 def create_app(assistant: Assistant | None = None, api_token: str | None = None) -> FastAPI:
-    state: dict = {"assistant": assistant, "token": api_token}
+    state: dict = {"assistant": assistant, "token": api_token, "internal": secrets.token_urlsafe(32)}
+    if assistant is not None:
+        wire_claude_tools(assistant, state["internal"])
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -339,6 +373,7 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             settings = load_settings()
             state["token"] = settings.api_token
             state["assistant"] = build_assistant(settings)
+            wire_claude_tools(state["assistant"], state["internal"])
         watcher = getattr(state["assistant"], "watcher", None)
         if watcher:
             watcher.start()
@@ -352,6 +387,42 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
     def require_token(creds: HTTPAuthorizationCredentials | None = Depends(bearer)) -> None:
         if creds is None or not secrets.compare_digest(creds.credentials, state["token"] or ""):
             raise HTTPException(status_code=401, detail="Token invalido")
+
+    def require_internal(request: Request) -> None:
+        """Solo el servidor MCP de Claude, desde dentro del contenedor, con el token de este arranque."""
+        given = request.headers.get("X-Jarvis-Internal", "")
+        host = request.client.host if request.client else ""
+        if host not in INTERNAL_HOSTS or not secrets.compare_digest(given, state["internal"]):
+            raise HTTPException(status_code=403, detail="Solo para uso interno")
+
+    def web_team() -> AgentTeam:
+        team: AgentTeam | None = getattr(state["assistant"], "team", None)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Agentes desactivados")
+        return team
+
+    @app.get("/internal/agents", dependencies=[Depends(require_internal)], include_in_schema=False)
+    def internal_agents() -> dict:
+        team = web_team()
+        return {"agents": [{"id": k, "description": SPECS[k].description} for k in CLAUDE_AGENTS if k in team.available]}
+
+    @app.post("/internal/agents/run", dependencies=[Depends(require_internal)], include_in_schema=False)
+    def internal_agent_run(req: AgentRunRequest) -> dict:
+        team = web_team()
+        if req.agent not in CLAUDE_AGENTS:  # nunca los agentes con datos privados
+            raise HTTPException(status_code=400, detail=f"agente no disponible: {req.agent}")
+        try:
+            job, message = team.request(req.agent, req.task, req.refresh)
+        except ToolError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"job": job.id if job else None, "message": message}
+
+    @app.get("/internal/agents/status", dependencies=[Depends(require_internal)], include_in_schema=False)
+    def internal_agent_status() -> dict:
+        jobs = [j for j in web_team().jobs.values() if j.agent in CLAUDE_AGENTS][-5:]
+        lines = [f"[{j.id}] {SPECS[j.agent].label} · {j.topic}: {j.state}"
+                 + (f": {j.summary}" if j.summary and j.state != "trabajando" else "") for j in jobs]
+        return {"status": "\n".join(lines) or "No hay encargos a estos agentes."}
 
     def run(fn, *args) -> dict:
         try:

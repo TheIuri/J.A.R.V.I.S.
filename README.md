@@ -217,6 +217,8 @@ quedan fuera** a propósito.
 Elige qué suena: *"Pon Viva la vida de Coldplay"*, *"Pon música de Rosalía"*, *"Pon mi playlist de
 entrenar"*, *"¿Qué canción es esta?"*, *"Sube el volumen de Spotify al 60"*. Controlar la reproducción exige
 **Spotify Premium** y tener Spotify abierto en algún dispositivo (PC, móvil, altavoz...).
+Con Spotify configurado, **todo lo de música va por Spotify** aunque no lo nombres (*"pausa"*, *"siguiente"*, *"baja
+la música"*); las teclas multimedia del PC ya no se ofrecen.
 
 1. En [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), crea una app (marca *Web API*)
    con Redirect URI `http://127.0.0.1:8888/callback`.
@@ -512,6 +514,11 @@ Claude Code; solo falta tu token de la membresía (no es una API de pago):
 Cámbialas con `CLAUDE_MODELS` (nombres de modelo de Claude separados por comas). Si tu plan no incluye alguna, al
 elegirla Claude dará un error: quítala de la lista.
 
+**Claude lanza agentes**: en la conversación con Claude puedes pedir *"busca clientes para caliperworks"* o
+*"investiga a fondo…"*: Claude se lo encarga al captador, al investigador o al de compras (con su modelo elegido en
+**Agentes**) y te avisan al terminar. Solo esos tres, los que trabajan con internet: los agentes con tus datos
+privados (organizador, escritor, técnico) nunca se lanzan desde Claude, porque el chat de Claude lee webs.
+
 **Solo Claude**: con `HUD_MODELS: "claude"` el selector solo ofrece los modelos de Claude. Ojo: en modo Claude JARVIS
 solo busca y lee en internet; controlar el PC, la casa, la música o los recordatorios necesita el modo Automático.
 
@@ -526,18 +533,26 @@ Los encargos largos y el auditor con Claude siguen siendo del HUD del PC.
 ### Auditor de ciberseguridad (Claude con tu membresía)
 
 *"Haz una auditoría de seguridad del servidor"* o *"Audita el código de CaliperWorks"*. JARVIS pide confirmación,
-porque gasta cupo de la membresía. Claude Code trabaja en tu PC y el informe llega a Obsidian
-(`JARVIS/Seguridad`) con cada hallazgo clasificado (Crítico, Alto, Medio, Bajo), la evidencia y cómo corregirlo.
+porque gasta cupo de la membresía. Con `CLAUDE_CODE_OAUTH_TOKEN` puesto, **Claude trabaja en el NAS** (sin el PC) y
+el informe llega a Obsidian (`JARVIS/Seguridad`) con cada hallazgo clasificado (Crítico, Alto, Medio, Bajo), la
+evidencia y cómo corregirlo. Lo verás en la traza del HUD como "El auditor" y te avisa al terminar.
 
 - **Servidor**: el NAS recopila una foto de su seguridad: servicios en marcha, SSH, SMB, usuarios con sudo, 2FA,
   certificados, apps con puertos publicados y actualizaciones pendientes, y alertas. No incluye secretos: de las
   claves SSH solo dice si existen. Claude solo puede **buscar** en internet, para mirar vulnerabilidades
   conocidas, pero **no abrir páginas**, porque lleva datos de tu servidor.
-- **Código**: Claude revisa un proyecto del PC **solo leyendo archivos y sin internet**. JARVIS está permitido
-  siempre; para añadir otros, copia `client/audit.example.json` a `client/audit.json` con sus rutas, por ejemplo
-  `{"caliperworks": "C:/Users/Ori/Claude/caliperworks"}`.
+- **Código**: Claude revisa un proyecto **solo leyendo archivos y sin internet**. JARVIS se puede auditar siempre.
+  Para otro proyecto, ponlo en una carpeta del NAS (p. ej. `git clone` en un dataset), móntala **en solo lectura** y
+  nómbrala en `AUDIT_PROJECTS`:
+  ```yaml
+  volumes:
+    - /mnt/TU_POOL/code/caliperworks:/code/caliperworks:ro
+  environment:
+    AUDIT_PROJECTS: "caliperworks=/code/caliperworks"
+  ```
+  Si encuentra un secreto en el código no lo copia en el informe: dice dónde está.
 
-Solo funciona hablando desde el HUD del PC y necesita Claude Code instalado y con la sesión iniciada.
+Sin `CLAUDE_CODE_OAUTH_TOKEN`, el auditor sigue funcionando como antes, desde el HUD del PC con Claude Code instalado.
 
 ### Modo Claude y selector de modelo
 

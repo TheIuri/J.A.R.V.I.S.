@@ -554,18 +554,22 @@ def agent_tools(team: AgentTeam) -> list[Tool]:
             lines.append(f"[{job.id}] {label} · {job.topic}: {job.state}{model}{extra}")
         return "\n".join(lines)
 
-    agents = "; ".join(f"{k}: {SPECS[k].description}" for k in team.available)
-    if team.lead_profiles and "captador" in team.available:
-        agents += f" (el captador conoce estos productos o negocios: {', '.join(team.lead_profiles)})"
+    def run_description() -> str:
+        agents = "; ".join(f"{k}: {SPECS[k].description}" for k in team.available)
+        if team.lead_profiles and "captador" in team.available:
+            agents += f" (el captador conoce estos productos o negocios: {', '.join(team.lead_profiles)})"
+        return (
+            "Encarga una tarea larga a un agente que trabaja en segundo plano, la guarda en Obsidian y avisa al "
+            f"terminar. Agentes: {agents}. Para preguntas rápidas responde tú o usa las herramientas normales. "
+            "Si ya se investigó algo parecido hace poco, devuelve ese informe sin gastar tokens; usa refresh=true "
+            "solo si el usuario pide actualizarlo o buscarlo de nuevo."
+        )
+
     return [
         Tool(
             name="agent_run",
-            description=(
-                "Encarga una tarea larga a un agente que trabaja en segundo plano, la guarda en Obsidian y avisa al "
-                f"terminar. Agentes: {agents}. Para preguntas rápidas responde tú o usa las herramientas normales. "
-                "Si ya se investigó algo parecido hace poco, devuelve ese informe sin gastar tokens; usa refresh=true "
-                "solo si el usuario pide actualizarlo o buscarlo de nuevo."
-            ),
+            description=run_description(),
+            live_description=run_description,  # los perfiles del captador cambian desde el HUD
             parameters={
                 "type": "object",
                 "properties": {

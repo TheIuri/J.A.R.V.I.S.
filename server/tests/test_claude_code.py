@@ -12,7 +12,7 @@ FAKE = """#!{python}
 import json, os, sys
 prompt = sys.stdin.read()
 with open(os.path.join(os.environ["HOME"], "call.json"), "w") as f:
-    json.dump({{"argv": sys.argv[1:], "env": sorted(os.environ), "prompt": prompt,
+    json.dump({{"argv": sys.argv[1:], "env": sorted(os.environ), "prompt": prompt, "cwd": os.getcwd(),
                "token": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")}}, f)
 print(json.dumps({{"type": "system", "session_id": "abc12345-session"}}))
 print(json.dumps({{"type": "assistant", "message": {{"content": [
@@ -153,3 +153,102 @@ else:
     claude = ClaudeCode("tok", tmp_path / "home", exe=str(exe))
     assert claude.task("busca clientes", "claude-sonnet-5", lambda e: None) == "RESUMEN: tres talleres encajan."
     assert claude.usage()["models"][0]["turns"] == 2 and claude.usage()["models"][0]["errors"] == 1
+
+
+def test_nas_auditor_reviews_code_offline_and_the_server_with_search_only(tmp_path):
+    import os
+
+    import pytest
+
+    from jarvis.activity import ActivityLog
+    from jarvis.auditor import Auditor, audit_tool, parse_projects
+    from jarvis.obsidian import Vault
+    from jarvis.tools import ToolContext
+    from jarvis.tools.registry import ToolError
+
+    home = tmp_path / "home"
+    claude = ClaudeCode("tok", home, exe=fake_claude(tmp_path))
+    project = tmp_path / "caliperworks"
+    project.mkdir()
+    projects = parse_projects(f"caliperworks={project},falta=/no/existe")
+    assert set(projects) == {"jarvis", "caliperworks", "falta"}
+    activity = ActivityLog()
+    (tmp_path / "vault").mkdir()
+    auditor = Auditor(claude, lambda: "## SSH\npuerto 22", projects, Vault(tmp_path / "vault"), activity=activity)
+    assert auditor.available_projects() == ["jarvis", "caliperworks"]
+    with pytest.raises(ToolError, match="se pueden auditar"):
+        auditor.start("codigo", "falta")
+
+    auditor.start("codigo", "CaliperWorks", background=False)
+    call = json.loads((home / "call.json").read_text())
+    argv = call["argv"]
+    assert argv[argv.index("--allowedTools") + 1] == "Read,Glob,Grep"  # sin internet
+    assert "WebFetch" in argv[argv.index("--disallowedTools") + 1]
+    assert 'proyecto "caliperworks"' in call["prompt"]
+    assert os.path.samefile(call["cwd"], project)
+    kinds = [e["type"] for e in activity.since(0)]
+    assert kinds[0] == "agent_start" and kinds[-1] == "agent_done"
+    assert list((tmp_path / "vault" / "JARVIS" / "Seguridad").glob("*.md"))
+
+    auditor.start("servidor", background=False)
+    call = json.loads((home / "call.json").read_text())
+    assert call["argv"][call["argv"].index("--allowedTools") + 1] == "WebSearch"  # buscar, sin abrir paginas
+    assert "puerto 22" in call["prompt"]
+    tool = audit_tool(auditor)
+    assert tool.confirm and not tool.pc and "caliperworks" in tool.description
+    assert "Avisará" in tool.fn(ToolContext(), scope="codigo", project="jarvis")
+
+
+def test_claude_chat_can_start_only_web_agents_through_jarvis(tmp_path, monkeypatch):
+    from jarvis import main as jmain
+    from jarvis import mcp_agents
+    from jarvis.agents import AgentTeam
+    from tests.test_agents import fake_search
+    from tests.test_tools import ScriptedLLM
+
+    assistant = make_assistant()
+    assistant.team = AgentTeam(ScriptedLLM(["RESUMEN: listo.\n# x"]).llm(), {"web_search": fake_search()})
+    assistant.claude = ClaudeCode("tok", tmp_path / "home", exe=fake_claude(tmp_path))
+    app = create_app(assistant, api_token="s")
+    config = json.loads((tmp_path / "home" / "mcp.json").read_text())["mcpServers"]["jarvis"]
+    assert config["args"] == ["-m", "jarvis.mcp_agents"] and config["env"]["JARVIS_INTERNAL_TOKEN"]
+    assert oct((tmp_path / "home" / "mcp.json").stat().st_mode)[-3:] == "600"
+
+    # En el chat, Claude recibe la config y puede usar agent_run; en los encargos de agentes, no.
+    assistant.claude.ask("hola", "claude-sonnet-5", "s", lambda e: None)
+    argv = json.loads((tmp_path / "home" / "call.json").read_text())["argv"]
+    assert "--mcp-config" in argv and "mcp__jarvis__agent_run" in argv[argv.index("--allowedTools") + 1]
+    assistant.claude.task("x", "claude-sonnet-5", lambda e: None)
+    assert "--mcp-config" not in json.loads((tmp_path / "home" / "call.json").read_text())["argv"]
+
+    client = TestClient(app)
+    internal = {"X-Jarvis-Internal": config["env"]["JARVIS_INTERNAL_TOKEN"]}
+    assert client.get("/internal/agents", headers=internal).status_code == 403  # no viene de localhost
+    monkeypatch.setattr(jmain, "INTERNAL_HOSTS", {"testclient"})
+    assert client.get("/internal/agents", headers={"X-Jarvis-Internal": "otro"}).status_code == 403
+    agents = [a["id"] for a in client.get("/internal/agents", headers=internal).json()["agents"]]
+    assert agents == ["investigador", "compras", "captador"]  # nunca organizador ni escritor (datos privados)
+    assert client.post("/internal/agents/run", json={"agent": "organizador", "task": "mi agenda"},
+                       headers=internal).status_code == 400
+    out = client.post("/internal/agents/run", json={"agent": "compras", "task": "monitor"}, headers=internal).json()
+    assert "se ha puesto con ello" in out["message"]
+
+    # El servidor MCP: protocolo y llamada a JARVIS (aqui con la API simulada).
+    calls = []
+
+    def fake_call(method, path, body=None):
+        calls.append((method, path, body))
+        return {"agents": [{"id": "compras", "description": "compara"}]} if path == "/internal/agents" else {
+            "message": "El asesor de compras se ha puesto con ello."}
+
+    monkeypatch.setattr(mcp_agents, "_call", fake_call)
+    init = mcp_agents.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "x"}})
+    assert init["result"]["protocolVersion"] == "x" and "tools" in init["result"]["capabilities"]
+    assert mcp_agents.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
+    tools = mcp_agents.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
+    assert tools[0]["inputSchema"]["properties"]["agent"]["enum"] == ["compras"]
+    res = mcp_agents.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                             "params": {"name": "agent_run", "arguments": {"agent": "compras", "task": "monitor"}}})
+    assert res["result"]["content"][0]["text"].startswith("El asesor") and not res["result"]["isError"]
+    assert calls[-1] == ("POST", "/internal/agents/run", {"agent": "compras", "task": "monitor", "refresh": False})
+    assert mcp_agents.handle({"jsonrpc": "2.0", "id": 4, "method": "nada"})["error"]["code"] == -32601

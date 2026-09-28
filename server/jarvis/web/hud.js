@@ -2298,13 +2298,19 @@ function frame(now) {
 
 // --- entradas ----------------------------------------------------------------
 
+// La barra espaciadora habla solo si no estás escribiendo ni sobre un control (en ellos, el espacio es suyo).
+function spaceIsForTyping(e) {
+  const el = e.target instanceof Element ? e.target : document.activeElement;
+  return Boolean(el?.closest?.("input, textarea, select, button, summary, [contenteditable], [role='menuitemradio'], [role='tab']"));
+}
+
 addEventListener("keydown", (e) => {
-  if (e.code !== "Space" || e.repeat || document.activeElement === $("text")) return;
+  if (e.code !== "Space" || e.repeat || spaceIsForTyping(e)) return;
   e.preventDefault();
   startRecording();
 });
 addEventListener("keyup", (e) => {
-  if (e.code !== "Space" || document.activeElement === $("text")) return;
+  if (e.code !== "Space" || spaceIsForTyping(e)) return;
   e.preventDefault();
   stopRecording();
 });

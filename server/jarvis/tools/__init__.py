@@ -47,6 +47,8 @@ def build_registry(
     for tool in info_tools(settings.brave_api_key, settings.timezone):
         registry.register(tool)
     for tool in pc_tools():
+        if tool.name == "pc_media" and spotify_configured(settings):
+            continue  # con Spotify, la musica va siempre por Spotify (no por las teclas del PC)
         registry.register(tool)
     registry.register(delegate_tool())  # solo se ofrece con el HUD del PC
     registry.register(audit_tool(_snapshot(settings)))  # Claude en el PC; siempre con confirmacion
@@ -64,7 +66,7 @@ def build_registry(
     if settings.ha_url and settings.ha_token:
         for tool in ha_tools(HomeAssistant(settings.ha_url, settings.ha_token, settings.ha_entities), vision):
             registry.register(tool)
-    if settings.spotify_client_id and settings.spotify_client_secret and settings.spotify_refresh_token:
+    if spotify_configured(settings):
         spotify = Spotify(
             settings.spotify_client_id,
             settings.spotify_client_secret,
@@ -105,6 +107,15 @@ def _calendar_writers(settings: Settings) -> dict:
             Path(settings.data_dir) / "outlook_token.json",
         )
     return writers
+
+
+def spotify_configured(settings: Settings) -> bool:
+    return bool(settings.spotify_client_id and settings.spotify_client_secret and settings.spotify_refresh_token)
+
+
+def truenas_snapshot(settings: Settings):
+    """Foto de seguridad de TrueNAS (para el auditor del NAS); None si TrueNAS no esta configurado."""
+    return _snapshot(settings)
 
 
 def _snapshot(settings: Settings):

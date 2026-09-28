@@ -196,3 +196,21 @@ def test_hunter_profiles_can_be_edited_from_the_hud_and_persist(tmp_path):
     names = [p["name"] for p in client.get("/api/leads/profiles", headers=auth).json()["profiles"]]
     assert names == ["general", "tienda", "caliperworks", "impresoras"]
     assert client.post("/api/leads/profiles", json={"name": "a", "text": "x"}, headers=auth).status_code == 400
+
+
+def test_new_hunter_profiles_reach_the_chat_without_restarting(tmp_path):
+    from jarvis.agents import agent_tools
+    from jarvis.tools.registry import ToolRegistry
+
+    team = AgentTeam(ScriptedLLM([]).llm(), {"web_search": fake_search()}, lead_profile="Taller",
+                     profiles_path=tmp_path / "p.json")
+    registry = ToolRegistry()
+    for tool in agent_tools(team):
+        registry.register(tool)
+
+    def desc():
+        return next(s for s in registry.specs(ToolContext()) if s["function"]["name"] == "agent_run")["function"]["description"]
+
+    assert "caliperworks" not in desc()
+    team.save_profile("caliperworks", "Software para talleres de impresión 3D")
+    assert "caliperworks" in desc()
