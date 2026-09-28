@@ -18,7 +18,8 @@ from .pc import pc_tools
 from .registry import Tool, ToolContext, ToolError, ToolRegistry
 from .reminders import ReminderStore, reminder_tools
 from .spotify import Spotify, spotify_tools
-from .truenas import truenas_tools
+from .security import audit_tool, security_snapshot
+from .truenas import _default_connect, truenas_tools
 from .vision import Vision, camera_tool
 from .wol import parse_devices, wol_tool
 
@@ -46,6 +47,7 @@ def build_registry(
     for tool in pc_tools():
         registry.register(tool)
     registry.register(delegate_tool())  # solo se ofrece con el HUD del PC
+    registry.register(audit_tool(_snapshot(settings)))  # Claude en el PC; siempre con confirmacion
     if vision:
         registry.register(camera_tool(vision))  # solo se ofrece si el HUD manda foto
     if calendars is None and settings.calendars:
@@ -82,3 +84,20 @@ def build_registry(
             registry.register(tool)
     log.info("Tools activas: %s", ", ".join(registry.names()))
     return registry
+
+
+def _snapshot(settings: Settings):
+    """Foto de seguridad de TrueNAS para el auditor (None si TrueNAS no esta configurado)."""
+    if not (settings.truenas_url and settings.truenas_api_key):
+        return None
+
+    def snapshot() -> str:
+        client = _default_connect(
+            settings.truenas_url, settings.truenas_user, settings.truenas_api_key, settings.truenas_verify_ssl
+        )
+        try:
+            return security_snapshot(client.call)
+        finally:
+            client.close()
+
+    return snapshot

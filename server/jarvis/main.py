@@ -191,6 +191,21 @@ class AgentResult(BaseModel):
     source: str = "claude"
 
 
+# Agentes externos (Claude Code en el PC): donde va su informe y como se llaman en el HUD.
+EXTERNAL_AGENTS = {
+    "claude": ("Claude", REPORT_FOLDER),
+    "auditor": ("El auditor de seguridad", "JARVIS/Seguridad"),
+}
+
+
+class AgentEvent(BaseModel):
+    type: str
+    agent: str
+    task: str = ""
+    tool: str = ""
+    model: str = ""
+
+
 class SessionRequest(BaseModel):
     session: str = "default"
 
@@ -347,6 +362,17 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             model=req.model, image=_image(req.image),
         )
 
+    @app.post("/api/agent_event", dependencies=[Depends(require_token)])
+    def agent_event(ev: AgentEvent) -> dict:
+        """El PC cuenta en directo lo que hace Claude Code (inicio y herramientas) para el cerebro del HUD."""
+        if ev.agent not in EXTERNAL_AGENTS or ev.type not in ("agent_start", "agent_tool", "agent_error"):
+            raise HTTPException(status_code=400, detail="Evento no admitido")
+        log_: ActivityLog | None = getattr(state["assistant"], "activity", None)
+        if log_:
+            log_.emit(ev.type, agent=ev.agent, label=EXTERNAL_AGENTS[ev.agent][0], task=ev.task[:200],
+                      tool=ev.tool[:40], model=ev.model[:40] or "Claude")
+        return {"ok": True}
+
     @app.get("/api/activity", dependencies=[Depends(require_token)])
     def activity(after: int = -1, wait: float = 0) -> dict:
         """Lo que hacen los agentes, en directo (after=-1: solo el ultimo id; wait: espera larga, max 25 s)."""
@@ -414,21 +440,28 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         if not req.text.strip() or len(req.text) > 20000:
             raise HTTPException(status_code=400, detail="Informe vacío o demasiado largo")
         a: Assistant = state["assistant"]
+        if req.source not in EXTERNAL_AGENTS:
+            raise HTTPException(status_code=400, detail="Agente desconocido")
+        label, folder = EXTERNAL_AGENTS[req.source]
         summary, report = split_report(req.text)
         title = " ".join(req.title.split())[:100] or "tarea"
         note = ""
         vault = getattr(a, "vault", None)
         if vault:
             day = datetime.now().strftime("%Y-%m-%d")
-            header = f"> Tarea hecha por {req.source} (membresía) · {day}\n\n"
+            header = f"> Tarea hecha por {label} con Claude (membresía) · {day}\n\n"
             try:
-                note = vault.create(f"{day} {title}"[:120], header + report[:3800], REPORT_FOLDER, check_secrets=False)
+                note = vault.create(
+                    f"{day} {title}"[:120], header + report[:15000], folder, check_secrets=False, max_chars=16000
+                )
             except Exception as exc:  # sin nota, el aviso llega igual
                 log.warning("no se pudo guardar el informe de %s: %s", req.source, exc)
         board = getattr(a, "board", None)
         if board:
             where = f" Lo tienes en Obsidian, en {note}." if note else ""
-            board.post("info", req.source, f"{req.source.capitalize()} ha terminado: {title}. {summary}{where}")
+            board.post("info", req.source, f"{label} ha terminado: {title}. {summary}{where}")
+        if getattr(a, "activity", None):
+            a.activity.emit("agent_done", agent=req.source, label=label, summary=summary, note=note, model="Claude")
         log.info("informe de %s recibido (%d caracteres) -> %s", req.source, len(req.text), note or "sin nota")
         return {"note": note, "summary": summary}
 

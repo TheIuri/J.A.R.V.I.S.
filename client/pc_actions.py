@@ -136,6 +136,12 @@ class PCActions:
                 if self.delegate is None:
                     return "delegar tareas solo funciona con el HUD del PC"
                 return self.delegate.start(str(action.get("task", ""))[:1500])
+            if kind == "audit":
+                if self.delegate is None:
+                    return "las auditorías solo funcionan con el HUD del PC"
+                return self.delegate.audit(
+                    str(action.get("scope", "")), str(action.get("context", "")), str(action.get("project", ""))
+                )
             return f"accion desconocida: {kind}"
         except Exception as exc:  # una accion fallida no debe cerrar el cliente
             return f"error en {kind}: {exc}"

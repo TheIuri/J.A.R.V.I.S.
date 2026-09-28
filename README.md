@@ -359,7 +359,11 @@ terminar, el informe va a Obsidian y te avisa: en el HUD y, si tienes ntfy, en e
 | **Técnico del NAS** | revisa TrueNAS a fondo y propone soluciones (no cambia nada) | *"Que el técnico revise el servidor"* | `JARVIS/Servidor` |
 | **Organizador** | cruza agenda, recordatorios, tiempo, notas y recuerdos y propone un plan | *"Organízame la semana"* | `JARVIS/Planes` |
 | **Escritor** | redacta textos largos con tus notas y recuerdos | *"Escríbeme una reclamación para la compañía de la luz"* | `JARVIS/Textos` |
+| **Compras** | compara productos: características, precios, opiniones y una tabla comparativa | *"Compárame robots aspiradores de menos de 300 €"* | `JARVIS/Compras` |
 
+- **Modelo por agente**: `AGENT_<NOMBRE>_PROVIDERS` le da a un agente su propia cadena, por ejemplo
+  `AGENT_COMPRAS_PROVIDERS: "gemini,groq"` o `AGENT_ESCRITOR_PROVIDERS: "gemini,groq"`. Sin eso, usan
+  `AGENT_LLM_PROVIDERS` o, si tampoco está, los de siempre.
 - *"¿Cómo van los agentes?"* te da el estado. Puede haber 2 trabajando a la vez.
 - Solo aparecen los agentes que tienen sus herramientas: el técnico, por ejemplo, necesita TrueNAS configurado.
 - `AGENTS_ENABLED: "false"` los desactiva.
@@ -388,6 +392,22 @@ Instalación, una sola vez en el PC:
 1. Instala Claude Code, siguiendo las instrucciones de [code.claude.com](https://code.claude.com).
 2. Abre una terminal, ejecuta `claude`, inicia sesión con tu cuenta y ciérralo.
 3. Al lanzar `py jarvis_hud.py` debe salir `Claude Code (membresia): disponible`.
+
+### Auditor de ciberseguridad (Claude con tu membresía)
+
+*"Haz una auditoría de seguridad del servidor"* o *"Audita el código de CaliperWorks"*. JARVIS pide confirmación,
+porque gasta cupo de la membresía. Claude Code trabaja en tu PC y el informe llega a Obsidian
+(`JARVIS/Seguridad`) con cada hallazgo clasificado (Crítico, Alto, Medio, Bajo), la evidencia y cómo corregirlo.
+
+- **Servidor**: el NAS recopila una foto de su seguridad: servicios en marcha, SSH, SMB, usuarios con sudo, 2FA,
+  certificados, apps con puertos publicados y actualizaciones pendientes, y alertas. No incluye secretos: de las
+  claves SSH solo dice si existen. Claude solo puede **buscar** en internet, para mirar vulnerabilidades
+  conocidas, pero **no abrir páginas**, porque lleva datos de tu servidor.
+- **Código**: Claude revisa un proyecto del PC **solo leyendo archivos y sin internet**. JARVIS está permitido
+  siempre; para añadir otros, copia `client/audit.example.json` a `client/audit.json` con sus rutas, por ejemplo
+  `{"caliperworks": "C:/Users/Ori/Claude/caliperworks"}`.
+
+Solo funciona hablando desde el HUD del PC y necesita Claude Code instalado y con la sesión iniciada.
 
 ### Modo Claude y selector de modelo
 

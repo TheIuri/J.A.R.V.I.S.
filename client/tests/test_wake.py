@@ -85,37 +85,94 @@ def test_pc_wol_action_validates_mac():
     assert pc.run({"action": "wol", "mac": "AA:BB:CC:DD:EE:FF", "device": "sobremesa"}) == "encendido enviado a sobremesa"
 
 
-def test_delegate_runs_claude_code_safely(tmp_path):
-    import os
+FAKE_AUDIT_CLAUDE = r'''#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+prompt = sys.stdin.read()
+with open(os.environ["FAKE_LOG"], "a") as f:
+    f.write(json.dumps({"args": args, "stdin": prompt, "cwd": os.getcwd()}) + "\n")
+for o in [
+    {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "WebSearch", "input": {}}]}},
+    {"type": "result", "is_error": False, "result": "RESUMEN: Hecho.\n# Informe"},
+]:
+    print(json.dumps(o), flush=True)
+'''
+
+
+def fake_claude(tmp_path, monkeypatch):
     import stat
+
+    fake = tmp_path / "claude"
+    fake.write_text(FAKE_AUDIT_CLAUDE)
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("FAKE_LOG", str(tmp_path / "log"))
+    return str(fake)
+
+
+def wait_for(items, n=1):
     import time as t
 
+    for _ in range(80):
+        if len(items) >= n:
+            return
+        t.sleep(0.1)
+
+
+def calls(tmp_path):
+    import json as j
+
+    return [j.loads(line) for line in (tmp_path / "log").read_text().splitlines()]
+
+
+def test_delegate_runs_claude_code_safely(tmp_path, monkeypatch):
     from delegate import ALLOWED, Delegate
 
-    # Un "claude" falso que guarda sus argumentos y lo que recibe por la entrada estándar.
-    fake = tmp_path / "claude"
-    fake.write_text(
-        "#!/bin/sh\n"
-        f'printf "%s\\n" "$@" > "{tmp_path}/args"\n'
-        f'cat > "{tmp_path}/stdin"\n'
-        'echo "RESUMEN: Hecho."\necho "# Informe"\n'
-    )
-    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
-    reports, spoken = [], []
-    d = Delegate(lambda title, text: reports.append((title, text)), spoken.append, exe=str(fake))
+    reports, spoken, events = [], [], []
+    d = Delegate(lambda *a: reports.append(a), spoken.append, exe=fake_claude(tmp_path, monkeypatch), event=events.append)
     task = 'compara placas solares"; rm -rf / #'
     assert d.start(task) == "tarea enviada a Claude"
-    for _ in range(50):
-        if reports:
-            break
-        t.sleep(0.1)
-    assert reports == [(task, "RESUMEN: Hecho.\n# Informe")] and spoken == []
-    args = (tmp_path / "args").read_text().split("\n")
+    wait_for(reports)
+    assert reports == [(task, "RESUMEN: Hecho.\n# Informe", "claude")] and spoken == []
+    args = calls(tmp_path)[0]["args"]
     assert task not in "\n".join(args)  # la tarea nunca va en la línea de comandos
     assert args[args.index("--allowedTools") + 1] == ALLOWED and "--strict-mcp-config" in args
     assert "Read" in args[args.index("--disallowedTools") + 1]
-    assert task in (tmp_path / "stdin").read_text()
-    assert os.path.exists(fake)
+    assert task in calls(tmp_path)[0]["stdin"]
+    assert [e["type"] for e in events] == ["agent_start", "agent_tool"] and events[1]["tool"] == "web_search"
+
+
+def test_server_audit_can_search_but_not_open_pages(tmp_path, monkeypatch):
+    from delegate import Delegate
+
+    reports = []
+    d = Delegate(lambda *a: reports.append(a), lambda t: None, exe=fake_claude(tmp_path, monkeypatch))
+    assert d.audit("servidor", context="## SSH\npuerto 22, login con contraseña: True") == "tarea enviada a Claude"
+    wait_for(reports)
+    call = calls(tmp_path)[0]
+    allowed = call["args"][call["args"].index("--allowedTools") + 1]
+    denied = call["args"][call["args"].index("--disallowedTools") + 1].split(",")
+    assert allowed == "WebSearch" and "WebFetch" in denied and "Read" in denied and "Bash" in denied
+    assert "login con contraseña: True" in call["stdin"] and reports[0][2] == "auditor"
+
+
+def test_code_audit_only_reads_allowed_projects_without_internet(tmp_path, monkeypatch):
+    from delegate import Delegate, load_projects
+
+    project = tmp_path / "caliper"
+    project.mkdir()
+    (tmp_path / "audit.json").write_text('{"CaliperWorks": "%s", "fantasma": "/no/existe"}' % project)
+    projects = load_projects(tmp_path / "audit.json")
+    assert set(projects) == {"jarvis", "caliperworks"}  # jarvis siempre; las rutas que no existen, fuera
+    reports = []
+    d = Delegate(lambda *a: reports.append(a), lambda t: None, exe=fake_claude(tmp_path, monkeypatch), projects=projects)
+    assert d.audit("codigo", project="otro").startswith("proyecto no permitido")
+    assert d.audit("codigo", project="caliperworks") == "tarea enviada a Claude"
+    wait_for(reports)
+    call = calls(tmp_path)[0]
+    allowed = call["args"][call["args"].index("--allowedTools") + 1]
+    denied = call["args"][call["args"].index("--disallowedTools") + 1].split(",")
+    assert allowed == "Read,Glob,Grep" and {"WebSearch", "WebFetch", "Bash", "Edit", "Write"} <= set(denied)
+    assert call["cwd"] == str(project) and reports[0][0] == "seguridad del código de caliperworks"
 
 
 def test_delegate_without_claude_installed():
