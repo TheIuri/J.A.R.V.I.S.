@@ -442,3 +442,34 @@ a.card:hover { background: #333336; transform: translateY(-1px); }
   font-size: 12.5px; color: var(--claro); background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); }
 .agent-model select:focus-visible { outline: 2px solid var(--azul); outline-offset: 1px; }
 .agent-model select:disabled { opacity: .5; }
+
+/* Encargo directo a un agente (sin pasar por el LLM de la conversación) */
+.agent-form { display: grid; gap: 8px; margin-bottom: 22px; padding: 16px; border-radius: 20px; background: var(--baldosa-2); }
+.agent-form h2 { margin: 0 0 4px; }
+.agent-form select, .agent-form textarea { width: 100%; padding: 10px 12px; border-radius: 12px; font: inherit; font-size: 14px;
+  color: #f5f5f7; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); resize: vertical; }
+.agent-form select:focus-visible, .agent-form textarea:focus-visible { outline: 2px solid var(--azul); outline-offset: 1px; }
+.agent-form textarea::placeholder { color: var(--apagado); }
+.agent-hint { margin: 0; font-size: 12.5px; color: var(--apagado); }
+.agent-hint:empty { display: none; }
+.agent-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--claro); }
+#agent-go, .btn-primary { justify-self: start; padding: 9px 20px; border: 0; border-radius: 999px; font: inherit; font-size: 14px;
+  font-weight: 600; color: #fff; background: var(--azul); cursor: pointer; }
+#agent-go:hover, .btn-primary:hover { filter: brightness(1.1); }
+#agent-go:disabled, .btn-primary:disabled { opacity: .5; cursor: default; }
+
+/* Perfiles del captador (pestaña Leads) */
+.profiles { margin-top: 26px; }
+.profile { margin-bottom: 12px; padding: 14px 16px; border-radius: 20px; background: var(--baldosa-2); display: grid; gap: 8px; }
+.profile header { display: flex; align-items: baseline; gap: 8px; }
+.profile header strong { font-size: 15px; }
+.profile header small { color: var(--apagado); font-size: 12px; }
+.profile textarea, .agent-form input { width: 100%; padding: 10px 12px; border-radius: 12px; font: inherit; font-size: 14px;
+  color: #f5f5f7; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); resize: vertical; }
+.profile textarea:focus-visible, .agent-form input:focus-visible { outline: 2px solid var(--azul); outline-offset: 1px; }
+.profile .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.btn-quiet { padding: 8px 16px; border-radius: 999px; border: 1px solid rgba(255,255,255,.16); background: none;
+  color: var(--claro); font: inherit; font-size: 13px; cursor: pointer; }
+.btn-quiet:hover { color: #f5f5f7; border-color: rgba(255,255,255,.3); }
+.profile-new summary { cursor: pointer; color: var(--azul); font-weight: 600; font-size: 14px; padding: 6px 0; }
+.profile-new[open] summary { margin-bottom: 8px; }

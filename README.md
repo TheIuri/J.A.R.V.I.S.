@@ -419,6 +419,11 @@ escrito y el estado (*nuevo*, *contactado*, *interesado*, *descartado*), que cam
   LEADS_PROFILE: "Taller de impresión 3D en Badia del Vallès: piezas a medida, prototipos, figuras y repuestos"
   LEADS_PROFILE_CALIPERWORKS: "CaliperWorks: software de gestión para talleres de impresión 3D (inventario de filamento, presupuestos y pedidos con factura, calculadora de costes desde Bambu Studio, estado de las impresoras y escaparate para encargos). Cliente ideal: talleres y granjas de impresión 3D pequeños o medianos y makers que venden impresiones (web propia, Etsy, Wallapop, Instagram), en España."
   ```
+- **Perfiles desde el HUD**: en **Leads → Perfiles** puedes crear, cambiar o quitar perfiles sin tocar TrueNAS. Se
+  guardan en el NAS (`lead_profiles.json`) y mandan sobre los de la configuración; *Quitar* vuelve al de TrueNAS.
+- **Encargo directo**: en **Agentes → Encargo** eliges el agente, escribes el encargo y pulsas *Encargar*. No pasa por
+  el LLM de la conversación, así que funciona aunque Groq esté en su límite (y con el captador en Claude, todo va con
+  tu membresía).
 - Solo datos públicos de empresas (su web y el contacto que publican), nunca de particulares. JARVIS no envía nada:
   el mensaje lo mandas tú.
 

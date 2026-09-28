@@ -98,6 +98,7 @@ $("login-form").addEventListener("submit", async (e) => {
     $("login").hidden = true;
     loadModels(); // con token ya se pueden pedir los modelos
     loadAgents();
+    loadProfiles();
   }
 });
 
@@ -1577,6 +1578,56 @@ function agentModelPicker(a) {
   return label;
 }
 
+// Encargo directo: el agente arranca sin gastar cupo del LLM de la conversación.
+let agentInfo = [];
+function fillAgentForm(agents) {
+  agentInfo = agents;
+  const form = $("agent-form");
+  form.hidden = !agents.length;
+  const pick = $("agent-pick");
+  const prev = pick.value;
+  pick.textContent = "";
+  for (const a of agents) {
+    const name = a.label.replace(/^(El|La) /, "").replace(/^./, (c) => c.toUpperCase());
+    pick.append(new Option(`${name}${a.prefer ? ` · ${modelName(a.prefer)}` : ""}`, a.id));
+  }
+  if (agents.some((a) => a.id === prev)) pick.value = prev;
+  agentHint();
+}
+
+function agentHint() {
+  const a = agentInfo.find((x) => x.id === $("agent-pick").value);
+  $("agent-hint").textContent = !a ? "" : a.profiles?.length
+    ? `Nombra el producto en el encargo para usar su perfil: ${a.profiles.join(", ")}.`
+    : a.description;
+}
+
+$("agent-pick").addEventListener("change", agentHint);
+$("agent-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const task = $("agent-task").value.trim();
+  if (!task) return;
+  const btn = $("agent-go");
+  btn.disabled = true;
+  $("agent-msg").textContent = "";
+  try {
+    const resp = await api("/api/agents/run", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent: $("agent-pick").value, task, refresh: $("agent-refresh").checked }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(body.detail || `HTTP ${resp.status}`);
+    $("agent-msg").textContent = body.reused ? "Ya había un informe parecido: te lo muestro (0 tokens)." : "En marcha. Te aviso al terminar.";
+    if (!body.reused) $("agent-task").value = "";
+    $("agent-refresh").checked = false;
+    loadAgents();
+  } catch (err) {
+    $("agent-msg").textContent = `No se pudo: ${err.message || err}`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 async function loadAgents() {
   if (mode === "server" && !getToken()) return;
   let data = { agents: [], jobs: [] };
@@ -1586,6 +1637,7 @@ async function loadAgents() {
   } catch {
     /* sin conexión: se deja lo que había */
   }
+  fillAgentForm(data.agents);
   const agents = $("agents-list");
   agents.textContent = "";
   for (const a of data.agents) {
@@ -1705,6 +1757,92 @@ function iconButton(icon, text, onClick, cls = "pill-btn") {
   b.addEventListener("click", onClick);
   return b;
 }
+
+// Perfiles del captador: lo que ofreces a cada tipo de cliente. Se guardan en el NAS.
+async function saveProfile(name, text) {
+  const resp = await api("/api/leads/profiles", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, text }),
+  });
+  const body = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(body.detail || `HTTP ${resp.status}`);
+  renderProfiles(body.profiles || []);
+  loadAgents(); // el encargo directo muestra los perfiles del captador
+  return body.name;
+}
+
+function renderProfiles(profiles) {
+  const list = $("profiles-list");
+  list.textContent = "";
+  for (const p of profiles) {
+    const box = document.createElement("div");
+    box.className = "profile";
+    const head = document.createElement("header");
+    const name = document.createElement("strong");
+    name.textContent = p.name;
+    const src = document.createElement("small");
+    src.textContent = p.source === "nas" ? "guardado desde el HUD" : "de la configuración de TrueNAS";
+    head.append(name, src);
+    const text = document.createElement("textarea");
+    text.rows = 4;
+    text.maxLength = 2000;
+    text.value = p.text;
+    text.setAttribute("aria-label", `Perfil ${p.name}`);
+    const row = document.createElement("div");
+    row.className = "row";
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "btn-primary";
+    save.textContent = "Guardar";
+    const msg = document.createElement("span");
+    msg.className = "agent-hint";
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        await saveProfile(p.name, text.value);
+      } catch (err) {
+        msg.textContent = `No se pudo: ${err.message || err}`;
+        save.disabled = false;
+      }
+    });
+    row.append(save);
+    if (p.source === "nas") {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "btn-quiet";
+      del.textContent = "Quitar";
+      del.title = "Borra lo guardado desde el HUD; si existe en TrueNAS, vuelve a ese";
+      del.addEventListener("click", () => saveProfile(p.name, "").catch((err) => (msg.textContent = `No se pudo: ${err.message || err}`)));
+      row.append(del);
+    }
+    row.append(msg);
+    box.append(head, text, row);
+    list.append(box);
+  }
+}
+
+async function loadProfiles() {
+  if (mode === "server" && !getToken()) return;
+  try {
+    const resp = await api("/api/leads/profiles");
+    $("profiles").hidden = !resp.ok;
+    if (resp.ok) renderProfiles((await resp.json()).profiles || []);
+  } catch {
+    /* servidor antiguo */
+  }
+}
+
+$("profile-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("profile-msg").textContent = "";
+  try {
+    const name = await saveProfile($("profile-name").value, $("profile-text").value);
+    $("profile-msg").textContent = `Guardado como «${name}».`;
+    $("profile-name").value = "";
+    $("profile-text").value = "";
+  } catch (err) {
+    $("profile-msg").textContent = `No se pudo: ${err.message || err}`;
+  }
+});
 
 async function loadLeads() {
   if (mode === "server" && !getToken()) return;
@@ -2213,6 +2351,7 @@ async function init() {
   loadModels();
   loadAgents();
   loadLeads();
+  loadProfiles();
   loadInsights();
   loadUsage();
   moveInk();

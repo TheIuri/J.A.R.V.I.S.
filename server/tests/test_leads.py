@@ -161,3 +161,38 @@ def test_agents_endpoint_lists_the_hunter_profiles():
     hunter = next(a for a in agents if a["id"] == "captador")
     assert hunter["profiles"] == ["general", "caliperworks"]
     assert "profiles" not in next(a for a in agents if a["id"] == "compras")
+
+
+def test_hunter_profiles_can_be_edited_from_the_hud_and_persist(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from jarvis.main import create_app
+    from tests.test_core import make_assistant
+
+    path = tmp_path / "lead_profiles.json"
+    team = AgentTeam(ScriptedLLM([]).llm(), {"web_search": fake_search()}, lead_profile="Taller",
+                     lead_profiles={"tienda": "Tienda online"}, profiles_path=path)
+    assert team.save_profile("Caliper Works", "Software de gestión para talleres de impresión 3D") == "caliperworks"
+    assert team.lead_profile_for("busca clientes para CaliperWorks") == (
+        "caliperworks", "Software de gestión para talleres de impresión 3D")
+    team.save_profile("general", "Taller de impresión 3D en Badia")
+    reloaded = AgentTeam(ScriptedLLM([]).llm(), {"web_search": fake_search()}, lead_profile="Taller",
+                         lead_profiles={"tienda": "Tienda online"}, profiles_path=path)
+    assert reloaded.lead_profile == "Taller de impresión 3D en Badia"
+    assert {p["name"]: p["source"] for p in reloaded.profiles()} == {
+        "general": "nas", "tienda": "config", "caliperworks": "nas"}
+    with pytest.raises(ToolError):
+        reloaded.save_profile("x", "algo")
+    reloaded.save_profile("general", "")  # borrar lo guardado: vuelve al de la configuracion
+    assert reloaded.lead_profile == "Taller"
+
+    assistant = make_assistant()
+    assistant.team = reloaded
+    client = TestClient(create_app(assistant, api_token="s"))
+    auth = {"Authorization": "Bearer s"}
+    assert client.get("/api/leads/profiles").status_code == 401
+    out = client.post("/api/leads/profiles", json={"name": "impresoras", "text": "Venta de impresoras"}, headers=auth)
+    assert out.json()["name"] == "impresoras"
+    names = [p["name"] for p in client.get("/api/leads/profiles", headers=auth).json()["profiles"]]
+    assert names == ["general", "tienda", "caliperworks", "impresoras"]
+    assert client.post("/api/leads/profiles", json={"name": "a", "text": "x"}, headers=auth).status_code == 400

@@ -132,7 +132,7 @@ def build_assistant(settings: Settings) -> Assistant:
         team = AgentTeam(
             agent_llm, available, vault, assistant.board, settings.timezone, own, assistant.activity,
             leads, settings.leads_profile, settings.leads_profiles, AgentHistory(data / "agents_history.json"),
-            data / "agent_models.json",
+            data / "agent_models.json", data / "lead_profiles.json",
         )
         assistant.team = team
         assistant.leads = leads
@@ -224,6 +224,17 @@ EXTERNAL_AGENTS = {
     "claude": ("Claude", REPORT_FOLDER),
     "auditor": ("El auditor de seguridad", "JARVIS/Seguridad"),
 }
+
+
+class LeadProfileRequest(BaseModel):
+    name: str
+    text: str = ""  # "" = borrar lo guardado desde el HUD
+
+
+class AgentRunRequest(BaseModel):
+    agent: str
+    task: str
+    refresh: bool = False  # repetirlo aunque haya un informe parecido reciente
 
 
 class AgentModelRequest(BaseModel):
@@ -421,6 +432,38 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         if after < 0:
             return {"events": [], "last": log_.last_id}
         return {"events": log_.since(after, min(max(wait, 0), NOTIFY_WAIT_MAX_S)), "last": log_.last_id}
+
+    def hunter() -> AgentTeam:
+        team: AgentTeam | None = getattr(state["assistant"], "team", None)
+        if team is None or "captador" not in team.available:
+            raise HTTPException(status_code=404, detail="El captador de clientes no está disponible")
+        return team
+
+    @app.get("/api/leads/profiles", dependencies=[Depends(require_token)])
+    def lead_profiles() -> dict:
+        """Lo que ofreces, para que el captador busque el cliente adecuado (uno por producto o negocio)."""
+        return {"profiles": hunter().profiles()}
+
+    @app.post("/api/leads/profiles", dependencies=[Depends(require_token)])
+    def save_lead_profile(req: LeadProfileRequest) -> dict:
+        team = hunter()
+        try:
+            name = team.save_profile(req.name, req.text)
+        except ToolError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"name": name, "profiles": team.profiles()}
+
+    @app.post("/api/agents/run", dependencies=[Depends(require_token)])
+    def agent_run(req: AgentRunRequest) -> dict:
+        """Encargo directo desde el HUD: sin pasar por el LLM de la conversacion (no gasta su cupo)."""
+        team: AgentTeam | None = getattr(state["assistant"], "team", None)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Agentes desactivados")
+        try:
+            job, message = team.request(req.agent, req.task, req.refresh)
+        except ToolError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"job": job.id if job else None, "reused": job is None, "message": message}
 
     @app.post("/api/agents/model", dependencies=[Depends(require_token)])
     def agent_model(req: AgentModelRequest) -> dict:
