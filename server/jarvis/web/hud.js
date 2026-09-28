@@ -244,6 +244,33 @@ const MODEL_COLORS = {
 };
 const PROVIDER_NAME = { groq: "Groq", gemini: "Gemini", cerebras: "Cerebras", mistral: "Mistral", opencode: "OpenCode", openrouter: "OpenRouter", ollama: "Ollama" };
 let currentModel = "";
+
+// "cerebras:gpt-oss-120b" -> "Cerebras · gpt-oss-120b": que se vea de un vistazo quien ha contestado.
+function providerLabel(spec) {
+  if (!spec) return "";
+  const i = String(spec).indexOf(":");
+  if (i < 0) return PROVIDER_NAME[spec] || spec;
+  const prov = spec.slice(0, i);
+  return `${PROVIDER_NAME[prov] || prov.charAt(0).toUpperCase() + prov.slice(1)} · ${spec.slice(i + 1)}`;
+}
+
+// Si ha contestado otro modelo que el elegido (limite, caida...), es un respaldo.
+function isBackup(spec) {
+  if (!spec || !currentModel) return false;
+  return spec !== currentModel && !spec.startsWith(`${currentModel}:`);
+}
+
+function showSource(spec) {
+  const el = $("source");
+  if (!el) return;
+  el.hidden = !spec;
+  if (!spec) return;
+  const backup = isBackup(spec);
+  el.textContent = `${providerLabel(spec)}${backup ? " · respaldo" : ""}`;
+  el.title = backup ? "El modelo elegido no estaba disponible; ha contestado este" : "Modelo que ha contestado";
+  el.classList.toggle("backup", backup);
+  el.style.setProperty("--swatch", `rgb(${modelRgb(spec).join(",")})`);
+}
 let modelOptions = [];
 
 function selectedModel() {
@@ -733,6 +760,7 @@ async function readFlow(resp) {
 function showTurn(body) {
   $("you").textContent = body.transcript;
   $("subtitle").textContent = body.reply;
+  showSource(body.provider);
 
   const t = body.timings_ms || {};
   stats.count += 1;
@@ -744,7 +772,7 @@ function showTurn(body) {
     .filter(([k]) => k !== "total")
     .map(([k, v]) => `${k} ${v}`)
     .join(" · ") || "—";
-  $("s-model").textContent = body.provider || "—";
+  $("s-model").textContent = providerLabel(body.provider) || "—";
   $("s-tools").textContent = (body.tools_used || []).join(", ") || "—";
 
   const turn = document.createElement("div");
@@ -758,7 +786,7 @@ function showTurn(body) {
   const meta = document.createElement("div");
   meta.className = "meta";
   const actions = (body.pc_results || []).map((r) => `[PC] ${r.result}`);
-  meta.textContent = [`${t.total ?? "?"} ms`, ...(body.tools_used || []), ...actions].join(" · ");
+  meta.textContent = [providerLabel(body.provider), `${t.total ?? "?"} ms`, ...(body.tools_used || []), ...actions].join(" · ");
   turn.append(u, a, meta);
   $("log").append(turn);
   $("log").scrollTop = $("log").scrollHeight;
@@ -813,6 +841,7 @@ async function resetConversation() {
   $("log").textContent = "";
   $("subtitle").textContent = "";
   $("you").textContent = "";
+  showSource("");
 }
 
 // --- avisos proactivos (recordatorios, agenda, TrueNAS...) ----------------------------
@@ -1262,8 +1291,9 @@ function onFlow(ev) {
     case "reply":
       $("subtitle").textContent = ev.text;
       fire(REGION.language, ev.text);
-      trace(`JARVIS${ev.provider ? ` · ${ev.provider}` : ""}`, ev.text, REGIONS[REGION.language].color);
-      if (ev.provider) $("s-model").textContent = ev.provider;
+      trace(`JARVIS${ev.provider ? ` · ${providerLabel(ev.provider)}${isBackup(ev.provider) ? " (respaldo)" : ""}` : ""}`, ev.text, REGIONS[REGION.language].color);
+      showSource(ev.provider);
+      if (ev.provider) $("s-model").textContent = providerLabel(ev.provider);
       setTimeout(loadUsage, 500);
       break;
     case "speaking":
@@ -1322,6 +1352,10 @@ function satellite(ev) {
   return sat;
 }
 
+function fmtDay(iso) {
+  return iso ? String(iso).slice(0, 10).split("-").reverse().join("/") : "";
+}
+
 function retireSatellite(sat, ms) {
   setTimeout(() => sat.el.classList.add("leaving"), ms);
   setTimeout(() => {
@@ -1350,7 +1384,7 @@ function onActivity(ev) {
       const idx = toolRegion(ev.tool || "");
       const tl = TOOL_LABEL[ev.tool] || ev.tool;
       sat.span.textContent = tl;
-      if (ev.model) sat.small.textContent = ev.model;
+      if (ev.model) sat.small.textContent = providerLabel(ev.model);
       pulses.push({ fromSat: sat.key, to: idx, t: 0, dur: reducedMotion ? 0.01 : 0.7, rgb });
       regionState[idx].act = Math.max(regionState[idx].act, 0.8);
       trace(label, tl, rgb);
@@ -1362,12 +1396,22 @@ function onActivity(ev) {
       sat.state = "done";
       sat.el.classList.add("done");
       sat.span.textContent = ev.summary || "terminado";
-      if (ev.model) sat.small.textContent = ev.model;
+      if (ev.model) sat.small.textContent = providerLabel(ev.model);
       pulses.push({ fromSat: sat.key, to: REGION.thalamus, t: 0, dur: reducedMotion ? 0.01 : 0.9, rgb: [48, 209, 88] });
-      trace(label, `terminado: ${ev.summary || ""}`, [48, 209, 88]);
+      trace(label, `terminado${ev.model ? ` con ${providerLabel(ev.model)}` : ""}: ${ev.summary || ""}`, [48, 209, 88]);
       if (!ev.job && externalJobs.has(ev.agent)) Object.assign(externalJobs.get(ev.agent), { state: "terminado", summary: ev.summary, note: ev.note, cards: ev.cards });
       if (ev.cards?.length) showOptions(label, ev.cards, ev.note, rgb);
       retireSatellite(sat, 6000);
+      break;
+    case "agent_reused":
+      sat.state = "done";
+      sat.el.classList.add("done");
+      sat.span.textContent = "reutiliza un informe";
+      sat.small.textContent = `del ${fmtDay(ev.date)} · 0 tokens`;
+      pulses.push({ from: REGION.hippocampus, toSat: sat.key, t: 0, dur: reducedMotion ? 0.01 : 0.9, rgb });
+      trace(label, `reutiliza el informe del ${fmtDay(ev.date)} (0 tokens): ${ev.summary || ""}`, rgb);
+      if (ev.cards?.length) showOptions(label, ev.cards, ev.note, rgb);
+      retireSatellite(sat, 5000);
       break;
     case "leads":
       sat.span.textContent = ev.new ? `${ev.new} leads nuevos` : "sin leads nuevos";
@@ -1475,7 +1519,7 @@ async function loadAgents() {
     task.textContent = j.task;
     const meta = document.createElement("div");
     meta.className = "meta";
-    for (const part of [j.model, j.steps ? `${j.steps} pasos` : "", j.started ? `hace ${elapsed(j.started)}` : ""].filter(Boolean)) {
+    for (const part of [providerLabel(j.model), j.steps ? `${j.steps} pasos` : "", j.started ? `hace ${elapsed(j.started)}` : ""].filter(Boolean)) {
       const m = document.createElement("span");
       m.textContent = part;
       meta.append(m);
