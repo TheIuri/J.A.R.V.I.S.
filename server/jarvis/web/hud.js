@@ -836,6 +836,105 @@ function fillFacts(items, title = "") {
 
 let answerAt = 0;
 let answerTools = [];
+let answerVisual = false; // la respuesta tiene tarjeta visual (tiempo...): sus datos exactos mandan sobre el texto
+
+// --- tarjeta del tiempo: iconos dibujados y datos exactos de la herramienta (no del texto del modelo) -----
+
+function weatherKind(code) {
+  if (code <= 1) return "clear";
+  if (code === 2) return "partly";
+  if (code === 3) return "cloudy";
+  if (code === 45 || code === 48) return "fog";
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return "snow";
+  if (code >= 95) return "storm";
+  return "rain";
+}
+
+const WX_CLOUD = '<path class="wx-cloud" d="M19 50h27a10 10 0 0 0 1.5-19.9A14 14 0 0 0 20.2 33 8.6 8.6 0 0 0 19 50z"/>';
+const WX_SUN_RAYS = [0, 45, 90, 135, 180, 225, 270, 315]
+  .map((a) => `<line x1="0" y1="-17" x2="0" y2="-22" transform="rotate(${a})"/>`).join("");
+
+function weatherIcon(code, isDay = true) {
+  const kind = weatherKind(code);
+  const sun = (x, y, s) => isDay
+    ? `<g class="wx-sun" transform="translate(${x} ${y}) scale(${s})"><circle r="11"/><g class="wx-rays">${WX_SUN_RAYS}</g></g>`
+    : `<g class="wx-moon" transform="translate(${x} ${y}) scale(${s})"><path d="M6 -13a14 14 0 1 0 7 20 11 11 0 0 1-7-20z"/></g>`;
+  const up = (svg) => `<g transform="translate(0 -7)">${svg}</g>`;
+  let body;
+  if (kind === "clear") body = sun(32, 32, 1);
+  else if (kind === "partly") body = sun(24, 24, 0.72) + WX_CLOUD;
+  else if (kind === "cloudy") body = WX_CLOUD;
+  else if (kind === "fog") body = up(WX_CLOUD) + '<g class="wx-fog"><line x1="14" y1="52" x2="50" y2="52"/><line x1="20" y1="58" x2="44" y2="58"/></g>';
+  else if (kind === "snow") body = up(WX_CLOUD) + '<g class="wx-snow"><circle cx="22" cy="52" r="2.4"/><circle cx="32" cy="57" r="2.4"/><circle cx="42" cy="52" r="2.4"/></g>';
+  else if (kind === "storm") body = up(WX_CLOUD) + '<path class="wx-bolt" d="M34 42l-8 11h7l-4 9 11-13h-7l4-7z"/>';
+  else body = up(WX_CLOUD) + '<g class="wxi-drops"><line x1="22" y1="49" x2="19" y2="57"/><line x1="32" y1="49" x2="29" y2="59"/><line x1="42" y1="49" x2="39" y2="57"/></g>';
+  return `<svg class="wx wxi-${kind}" viewBox="0 0 64 64" aria-hidden="true">${body}</svg>`;
+}
+
+function showWeather(card) {
+  const box = $("answer-visual");
+  const now = card.now || {};
+  const days = (card.days || []).filter((d) => d.min != null && d.max != null);
+  const lo = Math.min(...days.map((d) => d.min));
+  const hi = Math.max(...days.map((d) => d.max));
+  const span = Math.max(1, hi - lo);
+  const el = document.createElement("section");
+  el.className = "wx-card";
+  el.setAttribute("aria-label", `El tiempo en ${card.title}`);
+  // Solo números y textos fijos de la herramienta; aun así, todo lo de fuera va como texto.
+  el.innerHTML = `
+    <div class="wx-now">
+      ${weatherIcon(now.code, now.day !== false)}
+      <div class="wx-temp num"></div>
+      <div class="wx-what"><b></b><span></span><small></small></div>
+    </div>
+    <ol class="wx-days"></ol>`;
+  el.querySelector(".wx-temp").textContent = now.temp != null ? `${now.temp}°` : "—";
+  el.querySelector(".wx-what b").textContent = now.text ? now.text.charAt(0).toUpperCase() + now.text.slice(1) : "";
+  el.querySelector(".wx-what span").textContent = card.title || "";
+  el.querySelector(".wx-what small").textContent = [now.feels != null ? `Sensación ${now.feels}°` : "",
+    now.wind != null ? `Viento ${now.wind} km/h` : ""].filter(Boolean).join(" · ");
+  const list = el.querySelector(".wx-days");
+  for (const d of days) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="wx-day"></span>${weatherIcon(d.code)}<span class="wx-max num"></span>
+      <span class="wx-bar"><i></i></span><span class="wx-min num"></span><span class="wx-pop num"></span>`;
+    li.title = d.text;
+    li.querySelector(".wx-day").textContent = d.label.replace(/^(\p{L}{3})\p{L}+ (\d+)$/u, "$1 $2"); // Jueves 1 -> Jue 1
+    li.querySelector(".wx-max").textContent = `${d.max}°`;
+    li.querySelector(".wx-min").textContent = `${d.min}°`;
+    const bar = li.querySelector(".wx-bar i");
+    bar.style.bottom = `${((d.min - lo) / span) * 100}%`;
+    bar.style.height = `${Math.max(10, ((d.max - d.min) / span) * 100)}%`;
+    const rain = li.querySelector(".wx-pop");
+    rain.textContent = d.rain != null && d.rain >= 20 ? `${d.rain}%` : "";
+    rain.classList.toggle("wet", (d.rain || 0) >= 50);
+    list.append(li);
+  }
+  list.dataset.n = String(days.length);
+  box.replaceChildren(el);
+  box.hidden = false;
+  answerVisual = true;
+  $("answer-empty").hidden = true;
+  $("answer-card").hidden = false;
+  fillFacts([]); // los datos ya están en la tarjeta, exactos
+}
+
+function clearVisual() {
+  answerVisual = false;
+  $("answer-visual").hidden = true;
+  $("answer-visual").textContent = "";
+}
+
+// Tarjetas que llegan de las herramientas: las del tiempo van a la respuesta; el resto, a Resultados.
+function routeCards(cards) {
+  const rest = [];
+  for (const c of cards || []) {
+    if (c.kind === "weather") showWeather(c);
+    else rest.push(c);
+  }
+  if (rest.length) showCards(rest);
+}
 
 // Muestra una respuesta (o un aviso) en el panel de la derecha.
 function showAnswer({ q, text, label = "" }) {
@@ -843,10 +942,11 @@ function showAnswer({ q, text, label = "" }) {
   $("answer-empty").hidden = true;
   $("answer-card").hidden = false;
   $("answer-card").classList.toggle("is-notice", !!label);
+  if (label) clearVisual(); // un aviso no es la respuesta del tiempo
   if (q !== undefined) $("answer-q").textContent = q ? `› ${q}` : label;
   const same = $("answer-text").dataset.raw === (text || "");
   renderRich($("answer-text"), text || "");
-  fillFacts(factsOf(text || ""));
+  if (!answerVisual) fillFacts(factsOf(text || ""));
   if (same) return; // la misma respuesta que ya llegó en directo: sin repetir la entrada
   const card = $("answer-card");
   card.classList.remove("fresh");
@@ -862,6 +962,7 @@ function showQuestion(q) {
   $("answer-text").textContent = "";
   $("answer-text").dataset.raw = "";
   fillFacts([]);
+  clearVisual();
   setAnswerTools([]);
 }
 
@@ -1028,7 +1129,7 @@ async function ask(path, init) {
     setState("idle");
     return;
   }
-  if (body.cards?.length && $("cards").hidden) showCards(body.cards); // servidor sin directo
+  if (body.cards?.length && $("cards").hidden && !answerVisual) routeCards(body.cards); // servidor sin directo
   showTurn(body);
   if (body.audio_wav_b64 && prefs.voice) await playWav(body.audio_wav_b64);
   else setState("idle");
@@ -1141,6 +1242,7 @@ async function resetConversation() {
   $("log").textContent = "";
   $("answer-card").hidden = true;
   $("answer-empty").hidden = false;
+  clearVisual();
   hideCards();
   showSource("");
 }
@@ -1601,7 +1703,7 @@ function onFlow(ev) {
       break;
     }
     case "cards":
-      showCards(ev.cards || []);
+      routeCards(ev.cards);
       break;
     case "reply":
       showAnswer({ text: ev.text });
@@ -2284,7 +2386,7 @@ function showInsight(card, quiet = false) {
   const rgb = REGIONS[idx].color;
   const items = (card.items || []).map((i) => ({ k: i.k, v: i.v }));
   const current = !$("answer-card").hidden && Date.now() - answerAt < 90000;
-  if (current || $("answer-card").hidden) {
+  if ((current && !answerVisual) || $("answer-card").hidden) {
     if (!current) {
       $("answer-empty").hidden = true;
       $("answer-card").hidden = false;

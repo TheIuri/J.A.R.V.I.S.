@@ -97,7 +97,7 @@ class OpenMeteo:
             params={
                 "latitude": lat,
                 "longitude": lon,
-                "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m",
+                "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,is_day",
                 "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
                 "timezone": "auto",
                 "forecast_days": days,
@@ -108,6 +108,29 @@ class OpenMeteo:
 
 
 MAX_FORECAST_DAYS = 14
+
+
+def weather_card(ctx: ToolContext, where: str, cur: dict, d: dict) -> None:
+    """Datos exactos para la tarjeta del tiempo del HUD (iconos y grados salen de aqui, no del texto del modelo)."""
+    def num(value):
+        return None if value is None else round(float(value))
+
+    days = []
+    for i, day in enumerate(d.get("time", [])):
+        code = d["weather_code"][i]
+        days.append({
+            "date": day, "label": "Hoy" if i == 0 else ("Mañana" if i == 1 else _weekday_label(day)),
+            "code": code, "text": WEATHER_CODES.get(code, "desconocido"),
+            "min": num(d["temperature_2m_min"][i]), "max": num(d["temperature_2m_max"][i]),
+            "rain": d.get("precipitation_probability_max", [None] * (i + 1))[i],
+        })
+    ctx.cards.append({
+        "kind": "weather", "title": where,
+        "now": {"temp": num(cur["temperature_2m"]), "feels": num(cur["apparent_temperature"]),
+                "code": cur["weather_code"], "text": WEATHER_CODES.get(cur["weather_code"], "desconocido"),
+                "wind": num(cur["wind_speed_10m"]), "day": cur.get("is_day", 1) != 0},
+        "days": days,
+    })
 
 
 def _weekday_label(day: str) -> str:
@@ -124,7 +147,7 @@ def weather_tool(
 ) -> Tool:
     api = api or OpenMeteo()
 
-    def run(_ctx: ToolContext, city: str = "", days: int = 3) -> str:
+    def run(ctx: ToolContext, city: str = "", days: int = 3) -> str:
         try:
             days = max(1, min(MAX_FORECAST_DAYS, int(days)))
         except (TypeError, ValueError):
@@ -150,6 +173,7 @@ def weather_tool(
             f"(sensación {cur['apparent_temperature']:.0f} °C), viento {cur['wind_speed_10m']:.0f} km/h."
         ]
         d = data["daily"]
+        weather_card(ctx, where, cur, d)
         for i, day in enumerate(d["time"]):
             label = "Hoy" if i == 0 else ("Mañana" if i == 1 else _weekday_label(day))
             rain = d["precipitation_probability_max"][i]
@@ -167,7 +191,9 @@ def weather_tool(
             "Tiempo actual y previsión día a día (hasta 14 días). Si el usuario no dice ciudad, deja 'city' vacío "
             "y se usará su ciudad por defecto. Elige 'days' según lo que pregunte: hoy o ahora = 1, mañana = 2, "
             "esta semana o los próximos días = 7, el fin de semana = los días que faltan hasta el domingo, "
-            "la semana que viene = 14. Cuenta el resumen de todos los días que pidió, no solo el de hoy."
+            "la semana que viene = 14. Cuenta el resumen de todos los días que pidió, no solo el de hoy, y di "
+            "siempre las temperaturas en grados (mínima y máxima) y la probabilidad de lluvia si es alta. "
+            "El HUD enseña la tarjeta del tiempo con iconos y todos los datos."
         ),
         parameters={
             "type": "object",

@@ -574,3 +574,44 @@ body.no-labels #flow .region { display: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* --- tarjeta del tiempo: iconos dibujados y datos exactos de la herramienta ------------------ */
+.answer-visual { margin: 0 0 18px; }
+.answer-visual[hidden] { display: none; }
+.wx-card { padding: 16px 16px 12px; border-radius: 22px;
+  background: linear-gradient(160deg, rgba(41, 151, 255, .2), rgba(41, 151, 255, .04) 60%), var(--baldosa-2); }
+.wx-now { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 4px 12px; }
+.wx-now .wx { width: 72px; height: 72px; }
+.wx-temp { font-family: var(--sans); font-size: 52px; font-weight: 650; line-height: 1; letter-spacing: -0.04em; }
+.wx-what { display: grid; gap: 1px; min-width: 0; }
+.wx-what b { font-size: 16px; font-weight: 600; }
+.wx-what span { font-size: 13px; color: var(--claro); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wx-what small { font-size: 12.5px; color: var(--apagado); }
+.wx-days { list-style: none; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(50px, 1fr); gap: 4px;
+  margin: 14px -4px 0; padding: 12px 4px 4px; border-top: 1px solid var(--linea); overflow-x: auto; scrollbar-width: none; }
+.wx-days::-webkit-scrollbar { display: none; }
+.wx-days li { display: grid; justify-items: center; gap: 3px; padding: 6px 2px 4px; border-radius: 14px; }
+.wx-days li:first-child { background: rgba(255, 255, 255, .06); }
+.wx-day { font-size: 12px; font-weight: 600; color: var(--claro); white-space: nowrap; }
+.wx-days .wx { width: 34px; height: 34px; }
+.wx-max { font-family: var(--sans); font-size: 16px; font-weight: 650; }
+.wx-min { font-family: var(--sans); font-size: 13px; color: var(--apagado); }
+/* Rango del día frente al de toda la previsión: más alta = más calor ese día. */
+.wx-bar { position: relative; width: 6px; height: 40px; border-radius: 3px; background: rgba(255, 255, 255, .08); overflow: hidden; }
+.wx-bar i { position: absolute; left: 0; right: 0; border-radius: 3px; background: linear-gradient(0deg, #6fdcff, #ffd60a 70%, #ff9f0a); }
+.wx-pop { min-height: 1.2em; font-size: 11.5px; color: var(--apagado); }
+.wx-pop.wet { color: #64b5ff; font-weight: 600; }
+body.big-answers .wx-temp { font-size: 64px; }
+/* Iconos */
+.wx { overflow: visible; }
+.wx-sun circle { fill: #ffd60a; }
+.wx-rays line { stroke: #ffd60a; stroke-width: 3.4; stroke-linecap: round; }
+.wx-moon path { fill: #dfe6ff; }
+.wx-cloud { fill: #e9edf5; }
+.wxi-partly .wx-cloud, .wxi-rain .wx-cloud, .wxi-storm .wx-cloud, .wxi-snow .wx-cloud { fill: #cdd4e0; }
+.wxi-drops line { stroke: #64b5ff; stroke-width: 3.2; stroke-linecap: round; }
+.wx-snow circle { fill: #fff; }
+.wx-fog line { stroke: #aeb4c0; stroke-width: 3.2; stroke-linecap: round; }
+.wx-bolt { fill: #ffd60a; }
+.wx-now .wxi-clear .wx-rays { transform-origin: 0 0; animation: rayos 24s linear infinite; }
+@keyframes rayos { to { transform: rotate(360deg); } }

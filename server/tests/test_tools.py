@@ -488,3 +488,21 @@ def test_weather_for_the_whole_week():
     tool.fn(ToolContext(), days=99)
     assert asked == ["7", "3", "14"]
     assert tool.parameters["properties"]["days"]["maximum"] == 14 and "esta semana" in tool.description
+
+
+def test_weather_sends_an_exact_card_to_the_hud():
+    def handler(request):
+        return httpx.Response(200, json={
+            "current": {"temperature_2m": 21.6, "apparent_temperature": 22.2, "weather_code": 2, "wind_speed_10m": 9.4,
+                        "is_day": 0},
+            "daily": {"time": ["2026-09-29", "2026-09-30"], "weather_code": [2, 61], "temperature_2m_min": [15.4, 14.6],
+                      "temperature_2m_max": [24.5, 19.2], "precipitation_probability_max": [5, 80]},
+        })
+
+    ctx = ToolContext()
+    weather_tool("", OpenMeteo(httpx.Client(transport=httpx.MockTransport(handler))), home_coords=(1, 2)).fn(ctx, days=2)
+    card = ctx.cards[0]
+    assert card["kind"] == "weather" and card["title"] == "casa"
+    assert card["now"] == {"temp": 22, "feels": 22, "code": 2, "text": "parcialmente nublado", "wind": 9, "day": False}
+    assert card["days"][1] == {"date": "2026-09-30", "label": "Mañana", "code": 61, "text": "lluvia débil",
+                               "min": 15, "max": 19, "rain": 80}
