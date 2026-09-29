@@ -55,14 +55,12 @@ services:
       # --- Busqueda web: DuckDuckGo sin clave; con Brave (2000 busquedas/mes gratis) es mas estable ---
       # BRAVE_API_KEY: "" # api-dashboard.search.brave.com
 
-      # --- Agenda: enlaces secretos iCal de Google Calendar / Outlook (ver README) ---
+      # --- Agenda: enlaces secretos iCal de Google Calendar u otros (ver README) ---
       # CALENDARS: "personal=https://...basic.ics;trabajo=https://...calendar.ics"
-      # Crear eventos (py client/calendar_login.py google|outlook te da estos valores; ver README):
+      # Crear eventos en Google Calendar (py client/calendar_login.py te da estos valores; ver README):
       # GOOGLE_CLIENT_ID: ""
       # GOOGLE_CLIENT_SECRET: ""
       # GOOGLE_REFRESH_TOKEN: ""
-      # OUTLOOK_CLIENT_ID: ""
-      # OUTLOOK_REFRESH_TOKEN: ""
 
       # --- Camara (vision): por defecto Gemini si esta configurado, si no el modelo de vision de Groq ---
       # VISION_PROVIDERS: "gemini,groq"

@@ -1,22 +1,17 @@
-"""Crear eventos en Google Calendar y Outlook (lo de leer sigue en calendar.py, con iCal).
+"""Crear eventos en Google Calendar (lo de leer sigue en calendar.py, con iCal).
 
-Cada servicio necesita una app gratuita propia y un inicio de sesion una sola vez en el PC
-(client/calendar_login.py), que da un refresh token con permiso SOLO para eventos del calendario:
-- Google: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN (GOOGLE_CALENDAR_ID, por
-  defecto "primary"). La app de Google debe estar "En produccion": en "Prueba" el token caduca a los 7 dias.
-- Outlook (Microsoft Graph): OUTLOOK_CLIENT_ID, OUTLOOK_REFRESH_TOKEN (OUTLOOK_TENANT, por defecto
-  "common"). Microsoft renueva el refresh token en cada uso y el viejo caduca a los 90 dias, asi que
-  el nuevo se guarda en el dataset (outlook_token.json) y tiene prioridad sobre la variable.
+Necesita una app gratuita de Google y un inicio de sesion una sola vez en el PC (client/calendar_login.py),
+que da un refresh token con permiso SOLO para eventos del calendario: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+GOOGLE_REFRESH_TOKEN (GOOGLE_CALENDAR_ID, por defecto "primary"). La app de Google debe estar "En produccion":
+en "Prueba" el token caduca a los 7 dias.
 Crear un evento siempre pide confirmacion ("si") antes de hacerlo.
 """
 
 from __future__ import annotations
 
-import json
 import threading
 import time
 from datetime import date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -28,9 +23,6 @@ from .registry import Tool, ToolContext, ToolError
 
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
 GOOGLE_API = "https://www.googleapis.com/calendar/v3"
-MS_LOGIN = "https://login.microsoftonline.com"
-GRAPH = "https://graph.microsoft.com/v1.0"
-OUTLOOK_SCOPE = "Calendars.ReadWrite offline_access"
 MAX_TITLE = 200
 
 
@@ -104,76 +96,6 @@ class GoogleCalendar(_OAuth):
         return self._post_json(url, body).get("htmlLink", "")
 
 
-def saved_outlook_token(token_file: Path, env_token: str) -> str:
-    """El refresh token de Outlook guardado en el dataset (renovado, o del boton del HUD), si corresponde a la
-    configuracion actual: si cambias OUTLOOK_REFRESH_TOKEN, manda la variable."""
-    try:
-        saved = json.loads(Path(token_file).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return ""
-    if saved.get("origin") == env_token[-12:] and saved.get("refresh_token"):
-        return str(saved["refresh_token"])
-    return ""
-
-
-class OutlookCalendar(_OAuth):
-    name = "Outlook"
-
-    def __init__(self, client_id: str, refresh_token: str, tenant: str = "common", token_file: Path | None = None,
-                 client: httpx.Client | None = None):
-        super().__init__(client)
-        self.client_id = client_id
-        self.tenant = tenant or "common"
-        self.token_file = token_file
-        self.refresh_token = refresh_token
-        if token_file:
-            try:
-                saved = json.loads(token_file.read_text(encoding="utf-8"))
-                # El guardado solo vale si viene del mismo token inicial (si cambias la variable, manda la nueva).
-                if saved.get("origin") == refresh_token[-12:] and saved.get("refresh_token"):
-                    self.refresh_token = saved["refresh_token"]
-            except (OSError, ValueError):
-                pass
-        self._origin = refresh_token[-12:]
-
-    def _refresh(self) -> dict[str, Any]:
-        resp = self._client.post(f"{MS_LOGIN}/{self.tenant}/oauth2/v2.0/token", data={
-            "grant_type": "refresh_token", "refresh_token": self.refresh_token, "client_id": self.client_id,
-            "scope": OUTLOOK_SCOPE,
-        })
-        if resp.status_code != 200:
-            raise ToolError("Microsoft rechaza el acceso al calendario; vuelve a ejecutar calendar_login.py outlook")
-        data = resp.json()
-        if data.get("refresh_token") and data["refresh_token"] != self.refresh_token:
-            self.refresh_token = data["refresh_token"]
-            if self.token_file:
-                try:
-                    self.token_file.parent.mkdir(parents=True, exist_ok=True)
-                    tmp = self.token_file.with_suffix(".tmp")
-                    tmp.write_text(json.dumps({"origin": self._origin, "refresh_token": self.refresh_token}),
-                                   encoding="utf-8")
-                    tmp.chmod(0o600)
-                    tmp.replace(self.token_file)
-                except OSError:
-                    pass  # sin guardar sigue funcionando hasta que caduque el de la variable
-        return data
-
-    def create(self, title: str, start: datetime | date, end: datetime | date, tz: str, location: str = "",
-               notes: str = "") -> str:
-        def point(value: datetime | date) -> dict[str, str]:
-            if isinstance(value, datetime):
-                return {"dateTime": value.replace(tzinfo=None).isoformat(timespec="seconds"), "timeZone": tz}
-            return {"dateTime": f"{value.isoformat()}T00:00:00", "timeZone": tz}
-
-        body: dict[str, Any] = {"subject": title, "start": point(start), "end": point(end),
-                                "isAllDay": not isinstance(start, datetime)}
-        if location:
-            body["location"] = {"displayName": location}
-        if notes:
-            body["body"] = {"contentType": "text", "content": notes}
-        return self._post_json(f"{GRAPH}/me/events", body).get("webLink", "")
-
-
 def _when(args: dict[str, Any], tz: ZoneInfo, now: datetime) -> tuple[datetime | date, datetime | date, str]:
     """(inicio, fin, texto para decir). Sin hora = todo el dia."""
     try:
@@ -199,7 +121,7 @@ def _when(args: dict[str, Any], tz: ZoneInfo, now: datetime) -> tuple[datetime |
     return start, start + timedelta(minutes=minutes), f"{label} a las {start:%H:%M}"
 
 
-def calendar_add_tool(calendars: dict[str, GoogleCalendar | OutlookCalendar], timezone: str = "Europe/Madrid",
+def calendar_add_tool(calendars: dict[str, GoogleCalendar], timezone: str = "Europe/Madrid",
                       now=None) -> Tool:
     tz = ZoneInfo(timezone)
     now = now or (lambda: datetime.now(tz))
@@ -254,12 +176,12 @@ def calendar_add_tool(calendars: dict[str, GoogleCalendar | OutlookCalendar], ti
 
 
 def calendar_missing_tool() -> Tool:
-    """Sin Google ni Outlook conectados: la tool existe para que JARVIS diga la verdad en vez de inventarse que
+    """Sin Google Calendar conectado: la tool existe para que JARVIS diga la verdad en vez de inventarse que
     ha creado el evento (y ofrezca un recordatorio mientras tanto)."""
 
     def run(_ctx: ToolContext, title: str = "", date: str = "", **_: Any) -> str:
         raise ToolError(
-            "todavía no puedo crear eventos: falta conectar Google Calendar u Outlook (se hace una vez, ver "
+            "todavía no puedo crear eventos: falta conectar Google Calendar (se hace una vez, ver "
             "'Crear eventos' en el README). Mientras tanto puedo ponerte un recordatorio"
         )
 

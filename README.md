@@ -143,23 +143,22 @@ Ejemplos: *"¿Qué tiempo hará mañana?"*, *"Pon el volumen al 30"*, *"Abre Spo
 Ejemplos: *"¿Cómo quedó ayer el Barça?"*, *"¿Quién fue Ramón y Cajal?"*, *"¿Qué noticias hay hoy?"*,
 *"¿Cuántas millas son 42 kilómetros?"*, *"¿Cuánto son 50 dólares en euros?"*.
 
-### Agenda (Google Calendar y Outlook)
+### Agenda (Google Calendar)
 
 JARVIS lee tus calendarios con su **dirección secreta iCal**, sin OAuth ni proyectos en la nube (solo lectura):
 
 - **Google Calendar**: en la web, ⚙️ → Configuración → (tu calendario) → *Integrar el calendario* →
   **Dirección secreta en formato iCal**.
-- **Outlook / Microsoft 365**: Outlook web → ⚙️ → Calendario → *Calendarios compartidos* → **Publicar un
-  calendario** → permiso "Puede ver todos los detalles" → copia el enlace **ICS**.
+- Cualquier otro calendario que publique un enlace **iCal (.ics)** también vale.
 
 ```yaml
-CALENDARS: "personal=https://calendar.google.com/calendar/ical/.../basic.ics;trabajo=https://outlook.office365.com/owa/calendar/.../calendar.ics"
+CALENDARS: "personal=https://calendar.google.com/calendar/ical/.../basic.ics;trabajo=https://.../trabajo.ics"
 ```
 
 Esos enlaces dan acceso a tu agenda: trátalos como una contraseña (solo en las variables de la app, nunca en el
 repositorio). Ejemplos: *"¿Qué tengo mañana?"*, *"¿Qué tengo esta semana en el trabajo?"*.
 
-### Crear eventos (Google Calendar y Outlook)
+### Crear eventos (Google Calendar)
 
 Leer la agenda va con los enlaces iCal de arriba. Para que JARVIS **cree** eventos (*"Apúntame el dentista el
 miércoles a las 10:30"*) hace falta dar permiso una vez, en el PC, con `client/calendar_login.py`. El permiso es solo
@@ -175,17 +174,6 @@ para eventos del calendario y JARVIS **siempre pregunta antes de crear** ("¿Cre
 4. En el PC: `py calendar_login.py google`, pega el Client ID y el Secret, acepta en el navegador (si avisa de "app
    no verificada": *Configuración avanzada → Ir a…*) y copia las tres líneas que imprime al YAML de TrueNAS.
    Opcional: `GOOGLE_CALENDAR_ID` para usar otro calendario que no sea el principal.
-
-**Outlook (Microsoft 365 / outlook.com)**
-1. En [entra.microsoft.com](https://entra.microsoft.com) → *App registrations → New registration*: nombre `JARVIS`,
-   cuentas **"Any organizational directory and personal Microsoft accounts"**, sin Redirect URI.
-2. En la app: *Authentication → Allow public client flows → **Yes*** y guarda. Copia el *Application (client) ID*.
-3. **Sin PC, desde el HUD (también en el móvil)**: pon `OUTLOOK_CLIENT_ID: "el-id"` en el YAML de TrueNAS y
-   redespliega. En **Sesión → Calendario** pulsa **Conectar Outlook**: te da un código; abre
-   `microsoft.com/devicelogin` (en el móvil vale), escríbelo y acepta. Listo: JARVIS ya crea eventos en tu Outlook.
-   *O con el PC*: `py calendar_login.py outlook`, pega el ID, abre la web que indica, escribe el código y acepta.
-   Copia las líneas que imprime al YAML de TrueNAS.
-   Microsoft renueva el permiso cada vez que se usa; JARVIS guarda el renovado en el dataset (`outlook_token.json`).
 
 ### Wake-on-LAN
 
@@ -272,11 +260,23 @@ Una interfaz web con un **cerebro 3D de neuronas** que gira sobre sí mismo y mu
 Está hecho con WebGL (Three.js, incluido en `server/jarvis/web/vendor/`, sin CDN): un núcleo de corteza que brilla,
 racimos de neuronas de color por región y dendritas por las que viajan señales; con brillo (bloom) y giro continuo. Si el
 navegador no tiene WebGL, se dibuja la versión 2D de antes. El estilo es el de las páginas de producto de Apple en oscuro
-(el mismo de la presentación de CaliperWorks): escenario negro, baldosas de cristal gris carbón y el azul del sistema. Incluye
-subtítulos, historial y un panel lateral con tres pestañas:
-- **Agentes**: las tareas en marcha (agente, modelo que responde, pasos, tiempo) y el equipo con el modelo de cada uno.
+(el mismo de la presentación de CaliperWorks): escenario negro, baldosas de cristal gris carbón y el azul del sistema.
+
+A la izquierda hay un carril de navegación (abajo en el móvil) con cinco secciones:
+- **Inicio**: la conversación a la izquierda, el cerebro en el centro y la **Respuesta** a la derecha. La respuesta se ve
+  con los datos importantes remarcados por colores (horas, fechas, precios, temperaturas, porcentajes, cantidades) y, arriba,
+  en fichas grandes con su etiqueta («Máxima · 25 °C», «Hora · 17:45»). Se hace en el navegador, sin gastar tokens; si
+  llega la ficha del servidor (`/api/insights`), sustituye a las del navegador. Debajo, las herramientas usadas, el modelo
+  que ha contestado y los resultados de la búsqueda o de un agente.
+- **Agentes**: el encargo directo, el alta de agentes personalizados, las tareas en marcha y el equipo con el modelo de cada uno.
+- **Leads**: los posibles clientes y los perfiles del captador.
 - **Traza**: línea de tiempo de todo lo que pasa (tu turno, herramientas, agentes, Claude, el auditor, avisos).
-- **Sesión**: intercambios, latencia, pico, tiempo por etapa, modelo, tools usadas, córtex y recuerdos.
+- **Sesión**: intercambios, latencia, pico, tiempo por etapa, modelo, tools usadas, cuota y córtex.
+
+El botón de **Ajustes** (arriba a la derecha) reúne las preferencias de ese dispositivo: respuestas en voz alta, remarcar
+datos, etiquetas del cerebro, mostrar la conversación y tamaño de las respuestas. También están ahí el calendario
+(si Google Calendar está conectado), la cámara, los recuerdos, empezar una conversación nueva y cerrar la sesión en ese dispositivo.
+Con `#agents`, `#leads`, `#trace`, `#session` o `#settings` al final de la dirección, el HUD se abre directamente en esa sección.
 
 Arriba, en el centro, el **selector de CEREBRO** muestra el modelo activo y deja cambiarlo (también con el teclado).
 Cuando un agente trabaja aparece como **satélite** orbitando el cerebro 3D, unido a la corteza prefrontal por un haz; cada

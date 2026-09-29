@@ -133,9 +133,6 @@ class Settings:
     google_client_secret: str = ""
     google_refresh_token: str = ""
     google_calendar_id: str = "primary"
-    outlook_client_id: str = ""
-    outlook_refresh_token: str = ""
-    outlook_tenant: str = "common"
     ha_url: str = ""  # Home Assistant, p. ej. http://192.168.1.50:8123
     ha_token: str = ""
     ha_entities: str = ""  # opcional: prefijos de entity_id permitidos ("light.,switch.salon")
@@ -284,9 +281,6 @@ def load_settings() -> Settings:
         google_client_secret=_env("GOOGLE_CLIENT_SECRET"),
         google_refresh_token=_env("GOOGLE_REFRESH_TOKEN"),
         google_calendar_id=_env("GOOGLE_CALENDAR_ID", "primary"),
-        outlook_client_id=_env("OUTLOOK_CLIENT_ID"),
-        outlook_refresh_token=_env("OUTLOOK_REFRESH_TOKEN"),
-        outlook_tenant=_env("OUTLOOK_TENANT", "common"),
         ha_url=_env("HA_URL"),
         ha_token=_env("HA_TOKEN"),
         ha_entities=_env("HA_ENTITIES"),

@@ -27,6 +27,8 @@
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></symbol>
     <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
     <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4 4v4.5h4.5"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 10.5L12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h9M18 7h2M4 17h2M11 17h9"/><circle cx="15.5" cy="7" r="2.3"/><circle cx="8.5" cy="17" r="2.3"/></symbol>
   </svg>
 
   <header class="topbar">
@@ -51,27 +53,28 @@
     <div class="topbar-end">
       <span class="live" id="live"><span class="live-dot"></span><span id="live-text">En espera</span></span>
       <span id="clock" class="num"></span>
+      <button id="nav-settings" class="icon-btn" type="button" data-view="settings" aria-label="Ajustes" title="Ajustes">
+        <svg class="icon"><use href="#i-settings"/></svg>
+      </button>
     </div>
   </header>
 
-  <main>
-    <aside id="log" aria-label="Conversación"><p class="log-empty">Aquí aparecerá la conversación: lo que dices, lo que responde y los avisos.</p></aside>
+  <nav id="rail" class="rail" aria-label="Secciones">
+    <button type="button" id="nav-home" data-view="home" aria-current="page"><svg class="icon"><use href="#i-home"/></svg><span>Inicio</span></button>
+    <button type="button" id="nav-agents" data-view="agents"><svg class="icon"><use href="#i-agents"/></svg><span>Agentes</span><span class="badge" id="badge-agents" hidden></span></button>
+    <button type="button" id="nav-leads" data-view="leads"><svg class="icon"><use href="#i-leads"/></svg><span>Leads</span><span class="badge" id="badge-leads" hidden></span></button>
+    <button type="button" id="nav-trace" data-view="trace"><svg class="icon"><use href="#i-trace"/></svg><span>Traza</span><span class="badge" id="badge-trace" hidden></span></button>
+    <button type="button" id="nav-session" data-view="session"><svg class="icon"><use href="#i-session"/></svg><span>Sesión</span></button>
+  </nav>
 
+  <main>
     <section id="stage">
       <canvas id="gl" aria-hidden="true"></canvas>
       <canvas id="orb" aria-label="Mantén pulsado para hablar"></canvas>
       <div id="flow" aria-hidden="true"></div>
       <video id="cam" muted playsinline hidden aria-label="Cámara activa"></video>
-      <section id="cards" hidden aria-label="Resultados">
-        <header><span id="cards-title">Resultados</span><button id="cards-close" type="button" aria-label="Cerrar resultados"><svg class="icon"><use href="#i-close"/></svg></button></header>
-        <div id="cards-list"></div>
-      </section>
-      <section id="insights" aria-label="Fichas de las respuestas" aria-live="polite"></section>
       <div class="stage-foot">
         <p id="trail" aria-label="Recorrido del último turno"></p>
-        <p id="subtitle" aria-live="polite"></p>
-        <p id="source" hidden></p>
-        <p id="you"></p>
         <p id="state">En espera</p>
         <p id="hint" class="hint">Mantén pulsado el cerebro o la barra espaciadora</p>
         <form id="ask" autocomplete="off">
@@ -80,108 +83,159 @@
       </div>
     </section>
 
-    <aside id="panel">
-      <nav class="tabs" role="tablist" aria-label="Panel">
-        <button role="tab" id="tab-agents" aria-controls="pane-agents" aria-selected="true"><svg class="icon"><use href="#i-agents"/></svg>Agentes<span class="badge" id="badge-agents" hidden></span></button>
-        <button role="tab" id="tab-leads" aria-controls="pane-leads" aria-selected="false" tabindex="-1"><svg class="icon"><use href="#i-leads"/></svg>Leads<span class="badge" id="badge-leads" hidden></span></button>
-        <button role="tab" id="tab-trace" aria-controls="pane-trace" aria-selected="false" tabindex="-1"><svg class="icon"><use href="#i-trace"/></svg>Traza<span class="badge" id="badge-trace" hidden></span></button>
-        <button role="tab" id="tab-session" aria-controls="pane-session" aria-selected="false" tabindex="-1"><svg class="icon"><use href="#i-session"/></svg>Sesión</button>
-        <span class="tab-ink" aria-hidden="true"></span>
-      </nav>
+    <aside id="log" aria-label="Conversación"><p class="log-empty">Aquí aparecerá la conversación: lo que dices, lo que responde y los avisos.</p></aside>
 
-      <section role="tabpanel" id="pane-agents" aria-labelledby="tab-agents">
-        <form id="agent-form" class="agent-form" hidden>
-          <h2>Encargo. <span class="gris">Directo a un agente.</span></h2>
-          <select id="agent-pick" aria-label="Agente"></select>
-          <textarea id="agent-task" rows="3" maxlength="300" required aria-label="Qué tiene que hacer"
-            placeholder="Busca talleres de impresión 3D en Cataluña que vendan figuras por Etsy"></textarea>
-          <p id="agent-hint" class="agent-hint"></p>
-          <label class="agent-check"><input type="checkbox" id="agent-refresh"> Buscar de nuevo aunque haya un informe reciente</label>
-          <button type="submit" id="agent-go">Encargar</button>
-          <p id="agent-msg" class="agent-hint" aria-live="polite"></p>
-        </form>
-        <h2>Tareas. <span class="gris">Lo que está en marcha.</span></h2>
-        <ol id="jobs-list" class="jobs"></ol>
+    <aside id="answer" aria-label="Respuesta" aria-live="polite">
+      <h2>Respuesta. <span class="gris">Lo importante, a la vista.</span></h2>
+      <p id="answer-empty" class="log-empty">Pregunta algo: aquí verás la respuesta con las cifras, horas, fechas y precios remarcados.</p>
+      <article id="answer-card" class="answer-card" hidden>
+        <p id="answer-q" class="answer-q"></p>
+        <h3 id="answer-title" class="answer-title" hidden></h3>
+        <dl id="answer-facts" class="facts" hidden></dl>
+        <p id="answer-text" class="answer-text"></p>
+        <div id="answer-meta" class="answer-meta">
+          <span id="source" class="source" hidden></span>
+        </div>
+      </article>
+      <section id="cards" hidden aria-label="Resultados">
+        <header><span id="cards-title">Resultados</span><button id="cards-close" type="button" aria-label="Cerrar resultados"><svg class="icon"><use href="#i-close"/></svg></button></header>
+        <div id="cards-list"></div>
+      </section>
+    </aside>
+
+    <section id="workspace" hidden>
+      <section id="pane-agents" class="pane" aria-labelledby="h-agents" hidden>
+        <h1 id="h-agents">Agentes. <span class="gris">Encárgales trabajo largo y sigue a lo tuyo.</span></h1>
+        <div class="pane-grid agents-grid">
+          <div class="col">
+            <form id="agent-form" class="agent-form" hidden>
+              <h2>Encargo. <span class="gris">Directo a un agente.</span></h2>
+              <select id="agent-pick" aria-label="Agente"></select>
+              <textarea id="agent-task" rows="4" maxlength="300" required aria-label="Qué tiene que hacer"
+                placeholder="Busca talleres de impresión 3D en Cataluña que vendan figuras por Etsy"></textarea>
+              <p id="agent-hint" class="agent-hint"></p>
+              <label class="agent-check"><input type="checkbox" id="agent-refresh"><span>Buscar de nuevo aunque haya un informe reciente</span></label>
+              <button type="submit" id="agent-go">Encargar</button>
+              <p id="agent-msg" class="agent-hint" aria-live="polite"></p>
+            </form>
+            <details id="custom-new" class="agent-form custom-new" hidden>
+              <summary>Nuevo agente <span class="gris">· personalizado</span></summary>
+              <form id="custom-form" class="stack">
+                <p class="agent-hint">Solo busca y lee en internet (nunca tus datos privados). Máximo 8 agentes personalizados.
+                  También puedes pedírselo a JARVIS: «crea un agente que vigile los precios del filamento».</p>
+                <input id="custom-name" maxlength="40" required aria-label="Nombre" placeholder="Nombre (p. ej. Vigilante de filamento)">
+                <input id="custom-desc" maxlength="160" aria-label="Qué hace" placeholder="Qué hace, en una frase">
+                <textarea id="custom-instr" rows="6" minlength="20" maxlength="2000" required aria-label="Instrucciones"
+                  placeholder="Qué buscar, en qué fuentes, con qué criterios y qué entregar"></textarea>
+                <select id="custom-model" aria-label="Modelo"></select>
+                <button type="submit" class="btn-primary">Crear agente</button>
+                <p id="custom-msg" class="agent-hint" aria-live="polite"></p>
+              </form>
+            </details>
+          </div>
+          <div class="col">
+            <h2>Tareas. <span class="gris">Lo que está en marcha.</span></h2>
+            <ol id="jobs-list" class="jobs"></ol>
+          </div>
+        </div>
         <h2>Equipo. <span class="gris">Cada uno con su modelo.</span></h2>
         <ul id="agents-list" class="agents"></ul>
-        <details id="custom-new" class="profile-new" hidden>
-          <summary>Nuevo agente</summary>
-          <form id="custom-form" class="agent-form">
-            <p class="agent-hint">Solo busca y lee en internet (nunca tus datos privados). Máximo 8 agentes personalizados.
-              También puedes pedírselo a JARVIS: «crea un agente que vigile los precios del filamento».</p>
-            <input id="custom-name" maxlength="40" required aria-label="Nombre" placeholder="Nombre (p. ej. Vigilante de filamento)">
-            <input id="custom-desc" maxlength="160" aria-label="Qué hace" placeholder="Qué hace, en una frase">
-            <textarea id="custom-instr" rows="5" minlength="20" maxlength="2000" required aria-label="Instrucciones"
-              placeholder="Qué buscar, en qué fuentes, con qué criterios y qué entregar"></textarea>
-            <select id="custom-model" aria-label="Modelo"></select>
-            <button type="submit" class="btn-primary">Crear agente</button>
-            <p id="custom-msg" class="agent-hint" aria-live="polite"></p>
-          </form>
-        </details>
       </section>
 
-      <section role="tabpanel" id="pane-leads" aria-labelledby="tab-leads" hidden>
-        <h2>Leads. <span class="gris">Clientes que podrían encajar.</span></h2>
-        <p id="lead-stats" class="lead-stats"></p>
-        <div id="lead-filter" class="filter" role="group" aria-label="Filtrar leads"></div>
-        <ol id="leads-list" class="leads"></ol>
-        <section id="profiles" class="profiles" hidden aria-labelledby="profiles-title">
-          <h2 id="profiles-title">Perfiles. <span class="gris">Qué ofreces a cada tipo de cliente.</span></h2>
-          <p class="agent-hint">El captador usa el perfil que nombres en el encargo («busca clientes para caliperworks»); si no nombras ninguno, el general.</p>
-          <div id="profiles-list"></div>
-          <details class="profile-new">
-            <summary>Añadir perfil</summary>
-            <form id="profile-form" class="agent-form">
-              <input id="profile-name" maxlength="30" required aria-label="Nombre del perfil" placeholder="Nombre (p. ej. caliperworks)">
-              <textarea id="profile-text" rows="5" maxlength="2000" required aria-label="Descripción"
-                placeholder="Qué es, a quién se lo vendes (cliente ideal) y qué señal indica que lo necesitan"></textarea>
-              <button type="submit" class="btn-primary">Guardar perfil</button>
-              <p id="profile-msg" class="agent-hint" aria-live="polite"></p>
-            </form>
-          </details>
-        </section>
+      <section id="pane-leads" class="pane" aria-labelledby="h-leads" hidden>
+        <h1 id="h-leads">Leads. <span class="gris">Clientes que podrían encajar.</span></h1>
+        <div class="pane-grid leads-grid">
+          <div class="col">
+            <p id="lead-stats" class="lead-stats"></p>
+            <div id="lead-filter" class="filter" role="group" aria-label="Filtrar leads"></div>
+            <ol id="leads-list" class="leads"></ol>
+          </div>
+          <section id="profiles" class="col profiles" hidden aria-labelledby="profiles-title">
+            <h2 id="profiles-title">Perfiles. <span class="gris">Qué ofreces a cada tipo de cliente.</span></h2>
+            <p class="agent-hint">El captador usa el perfil que nombres en el encargo («busca clientes para caliperworks»); si no nombras ninguno, el general.</p>
+            <div id="profiles-list"></div>
+            <details class="profile-new">
+              <summary>Añadir perfil</summary>
+              <form id="profile-form" class="agent-form">
+                <input id="profile-name" maxlength="30" required aria-label="Nombre del perfil" placeholder="Nombre (p. ej. caliperworks)">
+                <textarea id="profile-text" rows="5" maxlength="2000" required aria-label="Descripción"
+                  placeholder="Qué es, a quién se lo vendes (cliente ideal) y qué señal indica que lo necesitan"></textarea>
+                <button type="submit" class="btn-primary">Guardar perfil</button>
+                <p id="profile-msg" class="agent-hint" aria-live="polite"></p>
+              </form>
+            </details>
+          </section>
+        </div>
       </section>
 
-      <section role="tabpanel" id="pane-trace" aria-labelledby="tab-trace" hidden>
-        <h2>Traza. <span class="gris">Todo lo que pasa, al momento.</span></h2>
+      <section id="pane-trace" class="pane pane-narrow" aria-labelledby="h-trace" hidden>
+        <h1 id="h-trace">Traza. <span class="gris">Todo lo que pasa, al momento.</span></h1>
         <ol id="trace" class="trace"></ol>
       </section>
 
-      <section role="tabpanel" id="pane-session" aria-labelledby="tab-session" hidden>
-        <h2>Sesión. <span class="gris">Cómo va hoy.</span></h2>
+      <section id="pane-session" class="pane" aria-labelledby="h-session" hidden>
+        <h1 id="h-session">Sesión. <span class="gris">Cómo va hoy.</span></h1>
         <dl class="metrics">
-          <dt>Sesión</dt><dd id="s-time" class="num">00:00</dd>
-          <dt>Intercambios</dt><dd id="s-count" class="num">0</dd>
-          <dt>Latencia</dt><dd id="s-latency" class="num">—</dd>
-          <dt>Pico</dt><dd id="s-peak" class="num">—</dd>
-          <dt>Etapas</dt><dd id="s-stages" class="num">—</dd>
-          <dt>Modelo</dt><dd id="s-model" class="num">—</dd>
-          <dt>Herramientas</dt><dd id="s-tools" class="num">—</dd>
+          <div><dt>Sesión</dt><dd id="s-time" class="num">00:00</dd></div>
+          <div><dt>Intercambios</dt><dd id="s-count" class="num">0</dd></div>
+          <div><dt>Latencia</dt><dd id="s-latency" class="num">—</dd></div>
+          <div><dt>Pico</dt><dd id="s-peak" class="num">—</dd></div>
+          <div class="wide"><dt>Modelo</dt><dd id="s-model" class="num">—</dd></div>
+          <div class="wide"><dt>Etapas</dt><dd id="s-stages" class="num">—</dd></div>
+          <div class="wide"><dt>Herramientas</dt><dd id="s-tools" class="num">—</dd></div>
         </dl>
-        <h2>Cuota. <span class="gris">Lo que queda de cada modelo.</span></h2>
-        <ul id="quota-list" class="quota"></ul>
-        <section id="calendar-box" class="agent-form" hidden aria-labelledby="calendar-title">
-          <h2 id="calendar-title">Calendario. <span class="gris">Dónde crea eventos JARVIS.</span></h2>
-          <p id="calendar-state" class="agent-hint"></p>
-          <div id="outlook-code" class="outlook-code" hidden>
-            <p class="agent-hint">1. Abre <a id="outlook-link" href="https://microsoft.com/devicelogin" target="_blank"
-              rel="noopener noreferrer">microsoft.com/devicelogin</a> (en este u otro dispositivo).</p>
-            <p class="agent-hint">2. Escribe este código y acepta el permiso del calendario:</p>
-            <p class="code-big"><span id="outlook-user-code"></span>
-              <button type="button" id="outlook-copy" class="btn-quiet">Copiar</button></p>
+        <div class="pane-grid">
+          <div class="col">
+            <h2>Cuota. <span class="gris">Lo que queda de cada modelo.</span></h2>
+            <ul id="quota-list" class="quota"></ul>
           </div>
-          <button type="button" id="outlook-connect" class="btn-primary" hidden>Conectar Outlook</button>
-        </section>
-        <h2>Córtex. <span class="gris">Qué región trabaja.</span></h2>
-        <ul id="cortex"></ul>
-        <div class="actions">
-          <button id="camera" type="button" aria-pressed="false"><svg class="icon"><use href="#i-camera"/></svg><span>Cámara</span></button>
-          <button id="memories" type="button"><svg class="icon"><use href="#i-memory"/></svg><span>Memoria</span></button>
-          <button id="reset" type="button"><svg class="icon"><use href="#i-reset"/></svg><span>Nueva conversación</span></button>
+          <div class="col">
+            <h2>Córtex. <span class="gris">Qué región trabaja.</span></h2>
+            <ul id="cortex"></ul>
+          </div>
         </div>
-        <div id="memory-list"></div>
       </section>
-    </aside>
+
+      <section id="pane-settings" class="pane" aria-labelledby="h-settings" hidden>
+        <h1 id="h-settings">Ajustes. <span class="gris">Cómo quieres que funcione este HUD.</span></h1>
+        <div class="pane-grid">
+          <div class="col">
+            <section class="agent-form" aria-labelledby="h-prefs">
+              <h2 id="h-prefs">Preferencias. <span class="gris">Se guardan en este dispositivo.</span></h2>
+              <label class="switch"><span><b>Respuestas en voz alta</b><small>JARVIS lee lo que responde y los avisos.</small></span><input type="checkbox" id="pref-voice"></label>
+              <label class="switch"><span><b>Remarcar datos</b><small>Cifras, horas, fechas y precios destacados en las respuestas.</small></span><input type="checkbox" id="pref-highlight"></label>
+              <label class="switch"><span><b>Etiquetas del cerebro</b><small>Nombre de cada región sobre el cerebro 3D.</small></span><input type="checkbox" id="pref-labels"></label>
+              <label class="switch"><span><b>Conversación en pantalla</b><small>La columna de la izquierda con el historial.</small></span><input type="checkbox" id="pref-log"></label>
+              <div class="switch"><span><b>Tamaño de las respuestas</b><small>Para leerlas de un vistazo desde lejos.</small></span>
+                <span class="segmented" role="group" aria-label="Tamaño de las respuestas">
+                  <button type="button" data-size="normal">Normal</button><button type="button" data-size="big">Grande</button>
+                </span>
+              </div>
+            </section>
+            <section class="agent-form" aria-labelledby="h-conv">
+              <h2 id="h-conv">Conversación. <span class="gris">Cámara y memoria.</span></h2>
+              <div class="actions">
+                <button id="camera" type="button" aria-pressed="false"><svg class="icon"><use href="#i-camera"/></svg><span>Cámara</span></button>
+                <button id="memories" type="button"><svg class="icon"><use href="#i-memory"/></svg><span>Ver recuerdos</span></button>
+                <button id="reset" type="button"><svg class="icon"><use href="#i-reset"/></svg><span>Nueva conversación</span></button>
+              </div>
+              <div id="memory-list"></div>
+            </section>
+          </div>
+          <div class="col">
+            <section id="calendar-box" class="agent-form" hidden aria-labelledby="calendar-title">
+              <h2 id="calendar-title">Calendario. <span class="gris">Dónde crea eventos JARVIS.</span></h2>
+              <p id="calendar-state" class="agent-hint"></p>
+            </section>
+            <section class="agent-form" aria-labelledby="h-access">
+              <h2 id="h-access">Acceso. <span class="gris">Este dispositivo.</span></h2>
+              <p class="agent-hint">El token de JARVIS se guarda solo en este navegador. Ciérrala si el dispositivo no es tuyo.</p>
+              <button type="button" id="logout" class="btn-quiet">Cerrar sesión en este dispositivo</button>
+            </section>
+          </div>
+        </div>
+      </section>
+    </section>
   </main>
 
   <div id="login" hidden>

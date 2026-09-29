@@ -88,7 +88,7 @@ def test_agenda_text():
 
 
 def test_calendar_errors_do_not_leak_the_secret_url():
-    c = Calendars({"trabajo": "https://outlook/SECRETO.ics"},
+    c = Calendars({"trabajo": "https://calendario/SECRETO.ics"},
                   client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(403))))
     with pytest.raises(ToolError) as err:
         c.events(date(2026, 9, 28), 1)
