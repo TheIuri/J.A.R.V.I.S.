@@ -443,9 +443,19 @@ Cuando JARVIS responde con datos (usó herramientas o la respuesta es larga), ap
 con los datos clave (*Máxima 22 °C · Cielo soleado · Lista: leche, pan, huevos*). La hace el mismo modelo en segundo
 plano, así que no retrasa la respuesta; gasta una petición más por turno. `INSIGHTS_ENABLED: "false"` las apaga.
 
+**Memoria de conversaciones**: JARVIS guarda lo que habláis en el NAS (`turns.db`, en el dataset) durante 30 días,
+con Groq y con Claude. Así:
+- **tras reiniciar o actualizar** sigue la conversación donde estaba (los últimos turnos de las últimas 12 horas; con
+  Claude, además, retoma la misma sesión);
+- **recuerda conversaciones anteriores**: si preguntas «¿te acuerdas de lo del dentista?», busca en ese registro lo
+  hablado sobre el tema, aunque hayas empezado una conversación nueva u otro día.
+  Los datos que cambian (tiempo, agenda, precios) los vuelve a consultar siempre con las herramientas.
+Aparte están los **recuerdos** (datos sobre ti que guarda con `memory_save`, en *Ajustes → Ver recuerdos*) y tus
+notas de **Obsidian**, que consulta cuando hace falta.
+
 **Resumidor nocturno**: con `SUMMARY_AT: "23:30"` (y Obsidian), cada noche añade a tu nota del día un resumen de lo
-que hablaste con JARVIS: temas, lo que se hizo y lo que quedó pendiente. Para eso guarda las conversaciones del
-día en el NAS (`turns.db`), las borra a los 7 días y omite las líneas que parezcan contraseñas o claves.
+que hablaste con JARVIS: temas, lo que se hizo y lo que quedó pendiente. Lo saca del mismo registro y omite las
+líneas que parezcan contraseñas o claves.
 
 **Modelos gratis y sus límites**: las capas gratuitas tienen tope por minuto y por día, y los agentes gastan mucho
 porque leen páginas enteras. Conviene repartir:

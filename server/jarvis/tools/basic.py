@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -107,12 +107,28 @@ class OpenMeteo:
         return resp.json()
 
 
+MAX_FORECAST_DAYS = 14
+
+
+def _weekday_label(day: str) -> str:
+    """ "2026-10-01" -> "Jueves 1" (el modelo no tiene que calcular qué día de la semana es)."""
+    try:
+        d = date.fromisoformat(day)
+    except ValueError:
+        return day
+    return f"{DAYS[d.weekday()].capitalize()} {d.day}"
+
+
 def weather_tool(
     default_city: str, api: OpenMeteo | None = None, home_coords: tuple[float, float] | None = None
 ) -> Tool:
     api = api or OpenMeteo()
 
-    def run(_ctx: ToolContext, city: str = "", days: int = 1) -> str:
+    def run(_ctx: ToolContext, city: str = "", days: int = 3) -> str:
+        try:
+            days = max(1, min(MAX_FORECAST_DAYS, int(days)))
+        except (TypeError, ValueError):
+            days = 3
         city = city.strip() or default_city
         if not city and not home_coords:
             raise ToolError("no se ha indicado ciudad y no hay HOME_CITY configurada")
@@ -135,7 +151,7 @@ def weather_tool(
         ]
         d = data["daily"]
         for i, day in enumerate(d["time"]):
-            label = "Hoy" if i == 0 else ("Mañana" if i == 1 else day)
+            label = "Hoy" if i == 0 else ("Mañana" if i == 1 else _weekday_label(day))
             rain = d["precipitation_probability_max"][i]
             lines.append(
                 f"{label}: {WEATHER_CODES.get(d['weather_code'][i], 'desconocido')}, "
@@ -148,14 +164,17 @@ def weather_tool(
     return Tool(
         name="get_weather",
         description=(
-            "Tiempo actual y previsión. Si el usuario no dice ciudad, deja 'city' vacío "
-            "y se usará su ciudad por defecto."
+            "Tiempo actual y previsión día a día (hasta 14 días). Si el usuario no dice ciudad, deja 'city' vacío "
+            "y se usará su ciudad por defecto. Elige 'days' según lo que pregunte: hoy o ahora = 1, mañana = 2, "
+            "esta semana o los próximos días = 7, el fin de semana = los días que faltan hasta el domingo, "
+            "la semana que viene = 14. Cuenta el resumen de todos los días que pidió, no solo el de hoy."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "city": {"type": "string", "description": "Ciudad, p. ej. 'Madrid'. Vacío = ciudad del usuario."},
-                "days": {"type": "integer", "minimum": 1, "maximum": 7, "description": "Días de previsión (1 = hoy)."},
+                "days": {"type": "integer", "minimum": 1, "maximum": 14,
+                         "description": "Días de previsión desde hoy (1 = solo hoy, 7 = esta semana). Por defecto 3."},
             },
         },
         fn=run,

@@ -125,7 +125,11 @@ class ClaudeCode:
         self.home = Path(home)  # config y sesiones de Claude Code (en el dataset: sobreviven a reinicios)
         self.memories = memories
         self.timezone = timezone
-        self.sessions: dict[str, str] = {}  # sesion del HUD -> sesion de Claude Code
+        # Sesion del HUD -> sesion de Claude Code. Se guarda en el dataset: tras reiniciar o actualizar JARVIS,
+        # Claude sigue la misma conversacion (--resume; sus ficheros de sesion tambien estan en self.home).
+        self.sessions: dict[str, str] = self._load_sessions()
+        # (sesion, texto) -> contexto para una conversacion nueva: lo ultimo hablado y conversaciones relacionadas.
+        self.context: Callable[[str, str], str] = lambda session, text: ""
         self._lock = threading.Lock()  # una conversacion a la vez (las sesiones son compartidas)
         self._stats_lock = threading.Lock()
 
@@ -180,6 +184,25 @@ class ClaudeCode:
 
     def reset(self, session: str) -> None:
         self.sessions.pop(session, None)
+        self._save_sessions()
+
+    def _load_sessions(self) -> dict[str, str]:
+        try:
+            data = json.loads((self.home / "sessions.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return {str(k)[:40]: v for k, v in data.items() if isinstance(v, str) and SESSION_RE.match(v)} \
+            if isinstance(data, dict) else {}
+
+    def _save_sessions(self) -> None:
+        try:
+            self.home.mkdir(parents=True, exist_ok=True)
+            tmp = self.home / "sessions.json.tmp"
+            tmp.write_text(json.dumps(self.sessions), encoding="utf-8")
+            tmp.chmod(0o600)
+            tmp.replace(self.home / "sessions.json")
+        except OSError:
+            log.warning("no se pudieron guardar las sesiones de Claude")
 
     def command(self, alias: str, resume: str | None, max_turns: int = MAX_TURNS,
                 tools: tuple[str, ...] = ALLOWED, extra: list[str] | None = None) -> list[str]:
@@ -214,19 +237,28 @@ class ClaudeCode:
             raise ValueError(f"modelo desconocido: {model}")
         with self._lock:  # una conversacion con Claude a la vez
             resume = self.sessions.get(session)
-            prompt = text if resume else self._intro() + text
+            if resume:
+                prompt = text
+            else:
+                try:
+                    extra = self.context(session, text)
+                except Exception:
+                    log.exception("no se pudo preparar el contexto de la conversacion")
+                    extra = ""
+                prompt = self._intro(extra) + text
             if self.full and self.mcp_config:
                 tools = FULL_TOOLS
             else:
                 tools = ALLOWED + (MCP_TOOLS if self.mcp_config else ())
             return self._run(model, resume, prompt, session, emit, tools=tools, mcp=True)
 
-    def _intro(self) -> str:
+    def _intro(self, extra: str = "") -> str:
         try:
             mem = self.memories()
         except Exception:
             mem = []
         memories = ("\nLo que sabes del usuario:\n" + "\n".join(f"- {m}" for m in mem[:30])) if mem else ""
+        memories += extra.rstrip()
         now = datetime.now().strftime("%A %d/%m/%Y %H:%M")
         if self.full and self.system:
             return FULL_INTRO.format(system=self.system, now=now, memories=memories)
@@ -282,8 +314,9 @@ class ClaudeCode:
                 kind = msg.get("type")
                 if msg.get("session_id") and SESSION_RE.match(str(msg["session_id"])):
                     session_id = msg["session_id"]
-                    if session:
+                    if session and self.sessions.get(session) != session_id:
                         self.sessions[session] = session_id
+                        self._save_sessions()
                 if kind == "assistant":
                     for item in msg.get("message", {}).get("content", []):
                         if item.get("type") == "tool_use":
@@ -316,8 +349,8 @@ class ClaudeCode:
         failed = not result or result.get("is_error") or not str(result.get("result", "")).strip()
         self._count(alias, result, bool(failed))
         if failed:
-            if session:
-                self.sessions.pop(session, None)  # empezar limpio la proxima vez
+            if session and self.sessions.pop(session, None):  # empezar limpio la proxima vez
+                self._save_sessions()
             detail = (result or {}).get("result") or stderr.strip().splitlines()[-1:] or ["sin respuesta"]
             detail = detail if isinstance(detail, str) else detail[0]
             log.warning("Claude Code fallo: %s", _short(detail, 300))

@@ -112,6 +112,9 @@ def build_assistant(settings: Settings) -> Assistant:
         retriever,
     )
     assistant.vault = vault
+    # Registro de conversaciones (siempre): seguir tras reiniciar y recordar lo hablado otros dias.
+    data.mkdir(parents=True, exist_ok=True)
+    assistant.turn_log = TurnLog(data / "turns.db", settings.timezone)
     assistant.activity = ActivityLog()  # trazabilidad de agentes para el HUD
     if settings.insights_enabled:
         assistant.insights = Insights(llm, assistant.activity)
@@ -151,6 +154,7 @@ def build_assistant(settings: Settings) -> Assistant:
 
         assistant.claude = ClaudeCode(settings.claude_token, data / "claude", memories=memories,
                                       timezone=settings.timezone, models=settings.claude_models or CLAUDE_DEFAULTS)
+        assistant.claude.context = assistant.claude_context
         log.info("Claude (membresia) en el NAS: %s", "disponible" if assistant.claude.available else
                  "falta el programa claude en la imagen")
         if getattr(assistant, "team", None) is not None:
@@ -207,8 +211,7 @@ def build_watcher(
         checks.append(
             briefing_check(ask, settings.briefing_at, settings.timezone, settings.briefing_weekends, board.seen)
         )
-    if settings.summary_at and assistant.vault:
-        assistant.turn_log = TurnLog(Path(settings.data_dir) / "turns.db", settings.timezone)
+    if settings.summary_at and assistant.vault and assistant.turn_log:
         checks.append(
             summary_check(assistant.llm, assistant.turn_log, assistant.vault, settings.summary_at, settings.timezone,
                           board.seen)
@@ -834,6 +837,8 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             if cards:
                 events.put({"type": "cards", "cards": cards})
             events.put({"type": "reply", "text": reply, "provider": name, "ms": ms})
+            if a.turn_log:
+                a.turn_log.add(session, text, reply)
             audio, ms_tts = None, 0
             if req.speak:
                 events.put({"type": "speaking"})

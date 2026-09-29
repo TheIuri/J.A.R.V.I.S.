@@ -463,3 +463,28 @@ def test_music_always_goes_to_spotify_when_it_is_configured(monkeypatch):
         monkeypatch.setenv(var, "v")
     names = build_registry(config.load_settings()).names()
     assert "spotify_control" in names and "pc_media" not in names
+
+
+def test_weather_for_the_whole_week():
+    asked = []
+
+    def handler(request):
+        asked.append(request.url.params["forecast_days"])
+        days = int(request.url.params["forecast_days"])
+        return httpx.Response(200, json={
+            "current": {"temperature_2m": 20.0, "apparent_temperature": 20.0, "weather_code": 0, "wind_speed_10m": 5.0},
+            "daily": {"time": [f"2026-09-{28 + i:02d}" if 28 + i <= 30 else f"2026-10-{28 + i - 30:02d}" for i in range(days)],
+                      "weather_code": [0] * days, "temperature_2m_min": [15.0] * days,
+                      "temperature_2m_max": [25.0] * days, "precipitation_probability_max": [10] * days},
+        })
+
+    api = OpenMeteo(httpx.Client(transport=httpx.MockTransport(handler)))
+    tool = weather_tool("", api, home_coords=(41.5, 2.1))
+    out = tool.fn(ToolContext(), days=7)
+    lines = out.splitlines()
+    assert len(lines) == 8 and lines[1].startswith("Hoy:") and lines[2].startswith("Mañana:")
+    assert lines[3].startswith("Miércoles 30:") and lines[4].startswith("Jueves 1:")
+    tool.fn(ToolContext())
+    tool.fn(ToolContext(), days=99)
+    assert asked == ["7", "3", "14"]
+    assert tool.parameters["properties"]["days"]["maximum"] == 14 and "esta semana" in tool.description

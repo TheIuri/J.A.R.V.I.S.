@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 from .llm import FallbackLLM
 from .memory import Retriever, as_prompt
+from .memory.retrieval import keywords
 from .stt import STT
 from .tools import ToolContext, ToolRegistry
 from .tools.registry import PendingAction
@@ -106,6 +107,8 @@ class Assistant:
         self.system_prompt = system_prompt
         # Contexto de la conversacion en curso, solo en RAM (la memoria persistente es el Nivel 3).
         self._history: dict[str, deque[dict[str, str]]] = defaultdict(lambda: deque(maxlen=history_turns * 2))
+        self._history_turns = history_turns
+        self._seeded: set[str] = set()  # sesiones ya retomadas del registro (o empezadas de cero a proposito)
         self._pending: dict[str, tuple[PendingAction, float]] = {}  # accion esperando un "si", por sesion
         self.board = None  # tablon de avisos proactivos (notify.NoticeBoard), si esta activo
         self.vault = None  # boveda de Obsidian, si esta configurada
@@ -173,6 +176,44 @@ class Assistant:
     def reset(self, session: str = "default") -> None:
         self._history.pop(session, None)
         self._pending.pop(session, None)
+        self._seeded.add(session)  # "Nueva conversacion": no se retoma la anterior del registro
+
+    def _resume_history(self, session: str) -> None:
+        """Tras reiniciar o actualizar JARVIS, la conversacion sigue donde estaba (desde el registro en disco)."""
+        if session in self._seeded or not self.turn_log:
+            return
+        self._seeded.add(session)
+        if self._history.get(session):
+            return
+        history = self._history[session]
+        for user, reply in self.turn_log.recent(session, self._history_turns):
+            history.append({"role": "user", "content": user})
+            history.append({"role": "assistant", "content": reply})
+
+    def claude_context(self, session: str, text: str) -> str:
+        """Para una conversacion nueva de Claude (tras reiniciar, o la primera): lo ultimo que hablasteis en esta
+        sesion y las conversaciones anteriores relacionadas con lo que acaba de decir."""
+        if not self.turn_log:
+            return ""
+        recent = [] if session in self._seeded else self.turn_log.recent(session, self._history_turns)
+        self._seeded.add(session)
+        out = ""
+        if recent:
+            lines = "\n".join(f"- Usuario: {u[:300]} -> Tu: {r[:400]}" for u, r in recent)
+            out += f"\nLo ultimo que hablasteis (antes de reiniciarte):\n{lines}\n"
+        return out + self.conversation_context(session, text, skip={u for u, _ in recent})
+
+    def conversation_context(self, session: str, text: str, skip: set[str] | None = None) -> str:
+        """Conversaciones anteriores relacionadas con lo que se acaba de decir (para el prompt)."""
+        if not self.turn_log:
+            return ""
+        from .turnlog import related_prompt
+
+        try:
+            return related_prompt(self.turn_log.related(keywords(text), skip=skip))
+        except Exception:
+            log.exception("no se pudo buscar en el registro de conversaciones")
+            return ""
 
     def _confirm(
         self, text: str, session: str, speak: bool, timings: dict[str, int], ctx: ToolContext, emit: EventSink,
@@ -209,8 +250,11 @@ class Assistant:
             if is_affirmative(text):
                 return self._confirm(text, session, speak, timings, ctx, emit, waiting[0])
             log.info("[%s] accion cancelada (no hubo 'si'): %s", session, waiting[0].summary)
+        self._resume_history(session)
         history = self._history[session]
         system = self.system_prompt
+        in_context = {m["content"] for m in history if m["role"] == "user"}
+        system += self.conversation_context(session, text, skip=in_context)
         if self.memory:
             with _timed(timings, "memory"):
                 recalled = self.memory.recall(text)
