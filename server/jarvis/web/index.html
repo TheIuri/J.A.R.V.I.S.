@@ -104,6 +104,20 @@
         <ol id="jobs-list" class="jobs"></ol>
         <h2>Equipo. <span class="gris">Cada uno con su modelo.</span></h2>
         <ul id="agents-list" class="agents"></ul>
+        <details id="custom-new" class="profile-new" hidden>
+          <summary>Nuevo agente</summary>
+          <form id="custom-form" class="agent-form">
+            <p class="agent-hint">Solo busca y lee en internet (nunca tus datos privados). Máximo 8 agentes personalizados.
+              También puedes pedírselo a JARVIS: «crea un agente que vigile los precios del filamento».</p>
+            <input id="custom-name" maxlength="40" required aria-label="Nombre" placeholder="Nombre (p. ej. Vigilante de filamento)">
+            <input id="custom-desc" maxlength="160" aria-label="Qué hace" placeholder="Qué hace, en una frase">
+            <textarea id="custom-instr" rows="5" minlength="20" maxlength="2000" required aria-label="Instrucciones"
+              placeholder="Qué buscar, en qué fuentes, con qué criterios y qué entregar"></textarea>
+            <select id="custom-model" aria-label="Modelo"></select>
+            <button type="submit" class="btn-primary">Crear agente</button>
+            <p id="custom-msg" class="agent-hint" aria-live="polite"></p>
+          </form>
+        </details>
       </section>
 
       <section role="tabpanel" id="pane-leads" aria-labelledby="tab-leads" hidden>
@@ -146,6 +160,18 @@
         </dl>
         <h2>Cuota. <span class="gris">Lo que queda de cada modelo.</span></h2>
         <ul id="quota-list" class="quota"></ul>
+        <section id="calendar-box" class="agent-form" hidden aria-labelledby="calendar-title">
+          <h2 id="calendar-title">Calendario. <span class="gris">Dónde crea eventos JARVIS.</span></h2>
+          <p id="calendar-state" class="agent-hint"></p>
+          <div id="outlook-code" class="outlook-code" hidden>
+            <p class="agent-hint">1. Abre <a id="outlook-link" href="https://microsoft.com/devicelogin" target="_blank"
+              rel="noopener noreferrer">microsoft.com/devicelogin</a> (en este u otro dispositivo).</p>
+            <p class="agent-hint">2. Escribe este código y acepta el permiso del calendario:</p>
+            <p class="code-big"><span id="outlook-user-code"></span>
+              <button type="button" id="outlook-copy" class="btn-quiet">Copiar</button></p>
+          </div>
+          <button type="button" id="outlook-connect" class="btn-primary" hidden>Conectar Outlook</button>
+        </section>
         <h2>Córtex. <span class="gris">Qué región trabaja.</span></h2>
         <ul id="cortex"></ul>
         <div class="actions">

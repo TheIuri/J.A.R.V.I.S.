@@ -58,6 +58,7 @@ class AgentHistory:
     def __init__(self, path: Path | None = None):
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
+        self.ages = dict(MAX_AGE_DAYS)  # los agentes personalizados se anaden con sus dias
         self.entries: list[dict[str, Any]] = []
         if self.path:
             try:
@@ -75,7 +76,7 @@ class AgentHistory:
 
     def add(self, agent: str, topic: str, summary: str, note: str = "", cards: list[dict] | None = None,
             model: str = "", when: datetime | None = None) -> None:
-        if agent not in MAX_AGE_DAYS:
+        if agent not in self.ages:
             return
         with self._lock:
             self.entries.append({
@@ -87,7 +88,7 @@ class AgentHistory:
 
     def find(self, agent: str, topic: str, now: datetime | None = None) -> dict[str, Any] | None:
         """El trabajo mas reciente del mismo agente con un encargo parecido y todavia vigente."""
-        days = MAX_AGE_DAYS.get(agent)
+        days = self.ages.get(agent)
         if not days:
             return None
         now = now or datetime.now()

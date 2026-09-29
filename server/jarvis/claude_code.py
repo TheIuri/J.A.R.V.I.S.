@@ -38,6 +38,7 @@ TIMEOUT_S = 5 * 60
 MAX_TURNS = 15
 TASK_TIMEOUT_S = 15 * 60  # encargos de los agentes (investigar, comparar, buscar clientes)
 TASK_MAX_TURNS = 40
+RAW_LIMIT = 20_000  # de cada resultado de herramienta que se guarda para la verificacion
 TASK_TOOL_BUDGET = 20  # lo que se le pide que no pase (busquedas + lecturas); el tope real es TASK_MAX_TURNS
 WRAP_UP = ("Se acabo el tiempo de buscar: NO uses mas herramientas. Escribe ahora el informe final completo, con el "
            "formato pedido, usando solo lo que ya has encontrado.")
@@ -241,7 +242,7 @@ class ClaudeCode:
         if model not in self.model_ids:
             raise ValueError(f"modelo desconocido: {model}")
         try:
-            text, _ = self._run(model, None, prompt, None, emit, max_turns, TASK_TIMEOUT_S, tools, cwd)
+            text, _ = self._run(model, None, prompt, None, emit, max_turns, TASK_TIMEOUT_S, tools, cwd, raw=True)
         except MaxTurns as exc:
             if not exc.session_id:
                 raise
@@ -251,7 +252,8 @@ class ClaudeCode:
         return text
 
     def _run(self, alias, resume, prompt, session, emit, max_turns=MAX_TURNS, timeout=TIMEOUT_S,
-             tools: tuple[str, ...] = ALLOWED, cwd: Path | None = None, mcp: bool = False) -> tuple[str, list[str]]:
+             tools: tuple[str, ...] = ALLOWED, cwd: Path | None = None, mcp: bool = False,
+             raw: bool = False) -> tuple[str, list[str]]:
         names: dict[str, str] = {}
         used: list[str] = []
         session_id = None

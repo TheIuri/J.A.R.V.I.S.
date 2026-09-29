@@ -180,7 +180,10 @@ para eventos del calendario y JARVIS **siempre pregunta antes de crear** ("¿Cre
 1. En [entra.microsoft.com](https://entra.microsoft.com) → *App registrations → New registration*: nombre `JARVIS`,
    cuentas **"Any organizational directory and personal Microsoft accounts"**, sin Redirect URI.
 2. En la app: *Authentication → Allow public client flows → **Yes*** y guarda. Copia el *Application (client) ID*.
-3. En el PC: `py calendar_login.py outlook`, pega el ID, abre la web que indica, escribe el código y acepta.
+3. **Sin PC, desde el HUD (también en el móvil)**: pon `OUTLOOK_CLIENT_ID: "el-id"` en el YAML de TrueNAS y
+   redespliega. En **Sesión → Calendario** pulsa **Conectar Outlook**: te da un código; abre
+   `microsoft.com/devicelogin` (en el móvil vale), escríbelo y acepta. Listo: JARVIS ya crea eventos en tu Outlook.
+   *O con el PC*: `py calendar_login.py outlook`, pega el ID, abre la web que indica, escribe el código y acepta.
    Copia las líneas que imprime al YAML de TrueNAS.
    Microsoft renueva el permiso cada vez que se usa; JARVIS guarda el renovado en el dataset (`outlook_token.json`).
 
@@ -478,6 +481,18 @@ y el escritor no: usan tus datos privados (NAS, agenda, notas) y esos nunca van 
 **Resultados en tarjetas**: el investigador y el de compras terminan con sus opciones como tarjetas (la recomendada
 primero, con datos clave, precio, lo mejor, lo peor y la fuente). Se abren al terminar y luego desde **Agentes → Ver
 resultados**. El aviso hablado es corto: el resumen en una o dos frases; el informe completo queda en Obsidian.
+
+**Vigilancia de alucinaciones (0 tokens)**: al terminar un informe, JARVIS comprueba con código (sin preguntar a
+ningún modelo) que cada web, email, teléfono y precio que da el agente aparece en lo que de verdad leyó. Lo que no
+aparece sale marcado **"Sin verificar"** en la tarjeta o el lead, en una sección *Verificación de datos* de la nota de
+Obsidian y en el aviso ("Ojo: 2 datos sin verificar"). No significa que sea falso, sino que no hay fuente que lo
+respalde: compruébalo antes de usarlo.
+
+**Agentes personalizados**: en **Agentes → Nuevo agente** (o pidiéndoselo a JARVIS: *"crea un agente que vigile los
+precios del filamento"*) creas un especialista con nombre, instrucciones y modelo (p. ej. Claude Sonnet). Límites
+fijos: **solo busca y lee en internet** (nunca tus datos privados), máximo **8**, instrucciones de hasta 2000
+caracteres y el mismo presupuesto de pasos que los demás. Sale en el equipo y en *Encargo*, reutiliza sus informes
+durante 30 días y guarda en `JARVIS/Agentes/<nombre>`. Crear no pide confirmación; quitarlo por voz sí.
 
 **Sin repetir investigaciones (0 tokens)**: cada informe del investigador y del de compras se apunta en el NAS
 (`agents_history.json`). Si pides algo parecido mientras siga vigente (compras: 30 días; investigador: 90), JARVIS te

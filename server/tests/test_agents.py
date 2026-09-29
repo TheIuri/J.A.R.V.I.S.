@@ -188,8 +188,8 @@ def test_agent_tools_are_traced_live():
     script = ScriptedLLM([[("web_search", {"query": "x"})], "RESUMEN: Ok.\n# X"])
     activity = ActivityLog()
     AgentTeam(script.llm(), {"web_search": fake_search()}, activity=activity).start("investigador", "x", background=False)
-    assert [e["type"] for e in activity.since(0)] == ["agent_start", "agent_tool", "agent_done"]
-    assert activity.since(0)[1]["tool"] == "web_search" and activity.since(2) == [activity.since(0)[2]]
+    assert [e["type"] for e in activity.since(0)] == ["agent_start", "agent_tool", "agent_verify", "agent_done"]
+    assert activity.since(0)[1]["tool"] == "web_search" and activity.since(3) == [activity.since(0)[3]]
 
 
 def test_agent_models_config(monkeypatch):
@@ -227,7 +227,7 @@ def test_activity_and_agents_endpoints():
     assert [e["type"] for e in events] == ["agent_start", "agent_done"]
     agents = client.get("/api/agents", headers=auth).json()
     assert {"id": "compras", "label": "El asesor de compras", "doing": "comparando",
-            "description": SPECS["compras"].description, "models": "fake:m", "prefer": "",
+            "description": SPECS["compras"].description, "custom": False, "models": "fake:m", "prefer": "",
             "choices": ["fake:m"]} in agents["agents"]
     assert agents["jobs"][0]["state"] == "terminado" and agents["jobs"][0]["model"] == "fake:m"
 
@@ -347,3 +347,68 @@ def test_hud_can_start_an_agent_without_the_chat_llm(tmp_path):
     assert client.post("/api/agents/run", json={"agent": "nadie", "task": "x"}, headers=auth).status_code == 400
     out = client.post("/api/agents/run", json={"agent": "compras", "task": "monitor 4k"}, headers=auth).json()
     assert out["job"] == 1 and not out["reused"] and "se ha puesto con ello" in out["message"]
+
+
+def test_custom_agents_are_web_only_limited_and_persist(tmp_path):
+    import json
+
+    import pytest
+    from fastapi.testclient import TestClient
+
+    from jarvis.agent_history import AgentHistory
+    from jarvis.agents import CUSTOM_MAX, PRIVATE_TOOLS, AgentTeam, agent_tools
+    from jarvis.main import create_app
+    from jarvis.tools import ToolContext
+    from jarvis.tools.registry import ToolError, ToolRegistry
+    from tests.test_core import make_assistant
+    from tests.test_tools import ScriptedLLM
+
+    path = tmp_path / "custom.json"
+    tools = {"web_search": fake_search(), "web_read": fake_tool("web_read", "pagina"),
+             "obsidian_read": fake_tool("obsidian_read", "secreto")}
+    script = ScriptedLLM(["RESUMEN: El PLA sigue a 18 €.\n# Precios\n- https://ejemplo.es/solar"])
+    team = AgentTeam(script.llm(), tools, history=AgentHistory(tmp_path / "h.json"), custom_path=path)
+    registry = ToolRegistry()
+    for tool in agent_tools(team):
+        registry.register(tool)
+    ctx = ToolContext()
+    out = registry.execute("agent_create", json.dumps({
+        "name": "Vigilante de filamento", "description": "vigila precios de filamento PLA y PETG",
+        "instructions": "Busca el precio del kilo de PLA y PETG en tiendas españolas y compáralo con la semana pasada."}),
+        ctx)
+    assert "creado (a_vigilante_de_filamento)" in out and ctx.pending is None  # crear no pide confirmacion
+    key = "a_vigilante_de_filamento"
+    assert team.registries[key].names() == ["web_search", "web_read"]  # nunca obsidian ni datos privados
+    assert not set(team.specs[key].tools) & PRIVATE_TOOLS and team.is_web(key)
+    assert key in json.dumps(registry.specs(ToolContext()))  # agent_run ya lo ofrece sin reiniciar
+
+    job = team.start(key, "precio del PLA esta semana", background=False)
+    assert job.state == "terminado" and job.note == "" and team.history.find(key, "precio PLA semana")
+    assert 'Eres "Vigilante de filamento"' in script.requests[0]["messages"][0]["content"]
+
+    with pytest.raises(ToolError, match="ya existe"):
+        team.create_agent("Vigilante de filamento", "", "Otra vez lo mismo, instrucciones de prueba largas.")
+    with pytest.raises(ToolError, match="20 caracteres"):
+        team.create_agent("Corto", "", "poco")
+    for i in range(CUSTOM_MAX - 1):
+        team.create_agent(f"Agente {i}", "", "Instrucciones suficientemente largas para el agente de prueba.")
+    with pytest.raises(ToolError, match=f"ya hay {CUSTOM_MAX}"):
+        team.create_agent("Uno mas", "", "Instrucciones suficientemente largas para el agente de prueba.")
+
+    reloaded = AgentTeam(ScriptedLLM([]).llm(), tools, custom_path=path)
+    assert len(reloaded.custom) == CUSTOM_MAX and key in reloaded.available
+
+    # Quitar pide confirmacion por voz; desde el HUD es directo.
+    ctx = ToolContext()
+    registry.execute("agent_delete", json.dumps({"agent": key}), ctx)
+    assert ctx.pending is not None and key in team.custom
+    assistant = make_assistant()
+    assistant.team = team
+    client = TestClient(create_app(assistant, api_token="s"))
+    auth = {"Authorization": "Bearer s"}
+    assert client.delete(f"/api/agents/custom/{key}", headers=auth).json() == {"deleted": "Vigilante de filamento"}
+    assert key not in team.available and client.delete(f"/api/agents/custom/{key}", headers=auth).status_code == 404
+    new = client.post("/api/agents/custom", json={"name": "Competencia", "instructions": "Analiza a la competencia de "
+                                                  "CaliperWorks en España."}, headers=auth).json()["agent"]
+    agents = client.get("/api/agents", headers=auth).json()["agents"]
+    assert next(a for a in agents if a["id"] == new["key"])["custom"] is True

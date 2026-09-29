@@ -104,6 +104,18 @@ class GoogleCalendar(_OAuth):
         return self._post_json(url, body).get("htmlLink", "")
 
 
+def saved_outlook_token(token_file: Path, env_token: str) -> str:
+    """El refresh token de Outlook guardado en el dataset (renovado, o del boton del HUD), si corresponde a la
+    configuracion actual: si cambias OUTLOOK_REFRESH_TOKEN, manda la variable."""
+    try:
+        saved = json.loads(Path(token_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if saved.get("origin") == env_token[-12:] and saved.get("refresh_token"):
+        return str(saved["refresh_token"])
+    return ""
+
+
 class OutlookCalendar(_OAuth):
     name = "Outlook"
 
@@ -238,4 +250,26 @@ def calendar_add_tool(calendars: dict[str, GoogleCalendar | OutlookCalendar], ti
         confirm=True,
         describe=describe,
         timeout_s=20,
+    )
+
+
+def calendar_missing_tool() -> Tool:
+    """Sin Google ni Outlook conectados: la tool existe para que JARVIS diga la verdad en vez de inventarse que
+    ha creado el evento (y ofrezca un recordatorio mientras tanto)."""
+
+    def run(_ctx: ToolContext, title: str = "", date: str = "", **_: Any) -> str:
+        raise ToolError(
+            "todavía no puedo crear eventos: falta conectar Google Calendar u Outlook (se hace una vez, ver "
+            "'Crear eventos' en el README). Mientras tanto puedo ponerte un recordatorio"
+        )
+
+    return Tool(
+        name="calendar_add",
+        description="Crea un evento en el calendario del usuario (todavía sin conectar: explica cómo conectarlo).",
+        parameters={
+            "type": "object",
+            "properties": {"title": {"type": "string"}, "date": {"type": "string", "description": "AAAA-MM-DD"}},
+            "required": ["title"],
+        },
+        fn=run,
     )
