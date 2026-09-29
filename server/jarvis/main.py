@@ -37,7 +37,9 @@ from .obsidian import Vault
 from .pipeline import PENDING_TTL_S, Assistant, TurnResult, is_affirmative
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
-from .tools import build_registry, spotify_configured, truenas_snapshot
+from .outlook_login import OutlookLogin
+from .tools import build_registry, calendar_writers, spotify_configured, truenas_snapshot
+from .tools.calendar_write import calendar_add_tool
 from .tools.info import research_tools
 from .tools.calendar import Calendars, parse_calendars
 from .tools.registry import ToolContext, ToolError
@@ -162,6 +164,14 @@ def build_assistant(settings: Settings) -> Assistant:
                                         assistant.activity, settings.timezone)
             tools.replace(audit_tool(assistant.auditor))
             log.info("Auditor en el NAS: proyectos %s", ", ".join(assistant.auditor.available_projects()))
+    if settings.outlook_client_id and tools is not None:
+        # Conectar Outlook desde el HUD (codigo de dispositivo): al terminar, calendar_add ya crea eventos en el.
+        def outlook_connected() -> None:
+            tools.replace(calendar_add_tool(calendar_writers(settings), settings.timezone))
+
+        assistant.outlook = OutlookLogin(settings.outlook_client_id, settings.outlook_tenant, data / "outlook_token.json",
+                                         settings.outlook_refresh_token, on_connected=outlook_connected)
+    assistant.google_calendar = bool(settings.google_client_id and settings.google_refresh_token)
     assistant.only_claude = settings.hud_models == "claude"
     assistant.default_model = settings.default_model
     if getattr(assistant, "claude", None) is not None:
@@ -570,6 +580,21 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         except ToolError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"name": name, "profiles": team.profiles()}
+
+    @app.get("/api/calendar/status", dependencies=[Depends(require_token)])
+    def calendar_status() -> dict:
+        """Calendarios donde JARVIS puede crear eventos (y el estado de la conexion de Outlook desde el HUD)."""
+        a = state["assistant"]
+        outlook: OutlookLogin | None = getattr(a, "outlook", None)
+        return {"google": bool(getattr(a, "google_calendar", False)),
+                "outlook": outlook.status() if outlook else None}
+
+    @app.post("/api/calendar/outlook/connect", dependencies=[Depends(require_token)])
+    def calendar_outlook_connect() -> dict:
+        outlook: OutlookLogin | None = getattr(state["assistant"], "outlook", None)
+        if outlook is None:
+            raise HTTPException(status_code=404, detail="Falta OUTLOOK_CLIENT_ID en la configuración")
+        return outlook.start()
 
     @app.post("/api/agents/run", dependencies=[Depends(require_token)])
     def agent_run(req: AgentRunRequest) -> dict:

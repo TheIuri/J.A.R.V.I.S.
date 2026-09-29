@@ -180,7 +180,10 @@ para eventos del calendario y JARVIS **siempre pregunta antes de crear** ("¿Cre
 1. En [entra.microsoft.com](https://entra.microsoft.com) → *App registrations → New registration*: nombre `JARVIS`,
    cuentas **"Any organizational directory and personal Microsoft accounts"**, sin Redirect URI.
 2. En la app: *Authentication → Allow public client flows → **Yes*** y guarda. Copia el *Application (client) ID*.
-3. En el PC: `py calendar_login.py outlook`, pega el ID, abre la web que indica, escribe el código y acepta.
+3. **Sin PC, desde el HUD (también en el móvil)**: pon `OUTLOOK_CLIENT_ID: "el-id"` en el YAML de TrueNAS y
+   redespliega. En **Sesión → Calendario** pulsa **Conectar Outlook**: te da un código; abre
+   `microsoft.com/devicelogin` (en el móvil vale), escríbelo y acepta. Listo: JARVIS ya crea eventos en tu Outlook.
+   *O con el PC*: `py calendar_login.py outlook`, pega el ID, abre la web que indica, escribe el código y acepta.
    Copia las líneas que imprime al YAML de TrueNAS.
    Microsoft renueva el permiso cada vez que se usa; JARVIS guarda el renovado en el dataset (`outlook_token.json`).
 

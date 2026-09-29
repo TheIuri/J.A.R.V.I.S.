@@ -10,7 +10,13 @@ from ..memory import MemoryStore
 from ..obsidian import Vault
 from .basic import datetime_tool, weather_tool
 from .calendar import Calendars, calendar_tool, parse_calendars
-from .calendar_write import GoogleCalendar, OutlookCalendar, calendar_add_tool, calendar_missing_tool
+from .calendar_write import (
+    GoogleCalendar,
+    OutlookCalendar,
+    calendar_add_tool,
+    calendar_missing_tool,
+    saved_outlook_token,
+)
 from .delegate import delegate_tool
 from .homeassistant import HomeAssistant, ha_tools
 from .info import info_tools
@@ -95,6 +101,10 @@ def build_registry(
     return registry
 
 
+def calendar_writers(settings: Settings) -> dict:
+    return _calendar_writers(settings)
+
+
 def _calendar_writers(settings: Settings) -> dict:
     """Calendarios donde JARVIS puede crear eventos (cada uno con su inicio de sesion)."""
     writers: dict = {}
@@ -103,7 +113,9 @@ def _calendar_writers(settings: Settings) -> dict:
             settings.google_client_id, settings.google_client_secret, settings.google_refresh_token,
             settings.google_calendar_id,
         )
-    if settings.outlook_client_id and settings.outlook_refresh_token:
+    token_file = Path(settings.data_dir) / "outlook_token.json"
+    if settings.outlook_client_id and (settings.outlook_refresh_token or
+                                       saved_outlook_token(token_file, settings.outlook_refresh_token)):
         writers["outlook"] = OutlookCalendar(
             settings.outlook_client_id, settings.outlook_refresh_token, settings.outlook_tenant,
             Path(settings.data_dir) / "outlook_token.json",

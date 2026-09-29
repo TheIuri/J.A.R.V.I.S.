@@ -104,6 +104,18 @@ class GoogleCalendar(_OAuth):
         return self._post_json(url, body).get("htmlLink", "")
 
 
+def saved_outlook_token(token_file: Path, env_token: str) -> str:
+    """El refresh token de Outlook guardado en el dataset (renovado, o del boton del HUD), si corresponde a la
+    configuracion actual: si cambias OUTLOOK_REFRESH_TOKEN, manda la variable."""
+    try:
+        saved = json.loads(Path(token_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if saved.get("origin") == env_token[-12:] and saved.get("refresh_token"):
+        return str(saved["refresh_token"])
+    return ""
+
+
 class OutlookCalendar(_OAuth):
     name = "Outlook"
 

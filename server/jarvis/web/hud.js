@@ -100,6 +100,7 @@ $("login-form").addEventListener("submit", async (e) => {
     loadModels(); // con token ya se pueden pedir los modelos
     loadAgents();
     loadProfiles();
+    loadCalendar();
   }
 });
 
@@ -1907,6 +1908,58 @@ $("profile-form").addEventListener("submit", async (e) => {
   }
 });
 
+// Calendario: conectar Outlook con un código (sirve desde el móvil, sin PC).
+let outlookPoll = null;
+let outlookWasPending = false;
+async function loadCalendar() {
+  if (mode === "server" && !getToken()) return;
+  let data;
+  try {
+    const resp = await api("/api/calendar/status");
+    if (!resp.ok) return;
+    data = await resp.json();
+  } catch {
+    return;
+  }
+  const o = data.outlook;
+  $("calendar-box").hidden = false;
+  const parts = [];
+  if (data.google) parts.push("Google Calendar: conectado");
+  if (o?.connected) parts.push("Outlook: conectado");
+  let text = parts.join(" · ");
+  if (!o && !data.google) text = "Sin calendario conectado. Para Outlook, añade OUTLOOK_CLIENT_ID en TrueNAS (pasos en el README).";
+  else if (o && !o.connected && o.state !== "pending") text = [text, "Outlook: sin conectar"].filter(Boolean).join(" · ");
+  if (o?.state === "error") text += ` · No se pudo: ${o.detail}`;
+  if (o?.state === "pending") text = [text, "Outlook: esperando a que aceptes"].filter(Boolean).join(" · ");
+  $("calendar-state").textContent = text;
+  const pending = o?.state === "pending";
+  $("outlook-code").hidden = !pending;
+  if (pending) {
+    $("outlook-user-code").textContent = o.user_code;
+    $("outlook-link").href = o.verification_uri;
+    $("outlook-link").textContent = o.verification_uri.replace(/^https?:\/\//, "");
+  }
+  $("outlook-connect").hidden = !o || pending;
+  $("outlook-connect").textContent = o?.connected ? "Volver a conectar Outlook" : "Conectar Outlook";
+  clearTimeout(outlookPoll);
+  if (pending) outlookPoll = setTimeout(loadCalendar, 3000);
+  else if (o?.state === "ok" && outlookWasPending) trace("Calendario", "Outlook conectado: ya puedo crear eventos", [48, 209, 88]);
+  outlookWasPending = pending;
+}
+
+$("outlook-connect").addEventListener("click", async () => {
+  $("outlook-connect").disabled = true;
+  try {
+    await api("/api/calendar/outlook/connect", { method: "POST" });
+  } finally {
+    $("outlook-connect").disabled = false;
+    loadCalendar();
+  }
+});
+$("outlook-copy").addEventListener("click", () => {
+  navigator.clipboard?.writeText($("outlook-user-code").textContent).catch(() => {});
+});
+
 async function loadLeads() {
   if (mode === "server" && !getToken()) return;
   try {
@@ -2422,6 +2475,7 @@ async function init() {
   loadAgents();
   loadLeads();
   loadProfiles();
+  loadCalendar();
   loadInsights();
   loadUsage();
   moveInk();
