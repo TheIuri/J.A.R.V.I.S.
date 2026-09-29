@@ -37,9 +37,9 @@ from .obsidian import Vault
 from .pipeline import PENDING_TTL_S, Assistant, TurnResult, is_affirmative
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
-from .tools import build_registry, spotify_configured, truenas_snapshot
+from .tools import build_registry, make_calendars, spotify_configured, truenas_snapshot
 from .tools.info import research_tools
-from .tools.calendar import Calendars, parse_calendars
+from .tools.calendar import Calendars
 from .tools.registry import ToolContext, ToolError
 from .tools.reminders import ReminderStore
 from .tools.truenas import _default_connect
@@ -90,7 +90,7 @@ def build_assistant(settings: Settings) -> Assistant:
         if store and settings.obsidian_memory_note:
             store.on_change(lambda: vault.export_memory(store))
             vault.export_memory(store)
-    calendars = Calendars(parse_calendars(settings.calendars), settings.timezone) if settings.calendars else None
+    calendars = make_calendars(settings)
     reminders = ReminderStore(data / "reminders.db", settings.timezone) if settings.notify_enabled else None
     vision = (
         Vision(FallbackLLM([OpenAICompatLLM(p, settings.llm_timeout_s, 512) for p in settings.vision_providers]))

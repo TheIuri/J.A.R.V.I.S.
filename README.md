@@ -145,7 +145,12 @@ Ejemplos: *"¿Cómo quedó ayer el Barça?"*, *"¿Quién fue Ramón y Cajal?"*, 
 
 ### Agenda (Google Calendar)
 
-JARVIS lee tus calendarios con su **dirección secreta iCal**, sin OAuth ni proyectos en la nube (solo lectura):
+Si has conectado Google Calendar para crear eventos (ver *Crear eventos* más abajo), JARVIS **lee tu agenda de Google
+directamente por su API**, al momento, con ese mismo permiso: no hace falta nada más. Es lo recomendable, porque la
+dirección secreta iCal de Google tarda horas en mostrar los eventos nuevos.
+
+Además (o sin Google conectado) puede leer cualquier calendario con su **dirección secreta iCal** (solo lectura).
+Si un evento llega por los dos caminos, sale una sola vez:
 
 - **Google Calendar**: en la web, ⚙️ → Configuración → (tu calendario) → *Integrar el calendario* →
   **Dirección secreta en formato iCal**.

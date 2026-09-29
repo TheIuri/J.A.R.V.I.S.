@@ -2139,7 +2139,7 @@ async function loadCalendar() {
   }
   $("calendar-box").hidden = false;
   $("calendar-state").textContent = data.google
-    ? "Google Calendar: conectado. Pide «crea un evento…» y te pedirá confirmación antes de crearlo."
+    ? "Google Calendar: conectado. Lee tu agenda al momento y crea eventos (siempre te pide confirmación antes)."
     : "Sin calendario conectado. Para Google Calendar, sigue «Crear eventos» en el README.";
 }
 
