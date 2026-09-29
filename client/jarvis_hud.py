@@ -46,14 +46,18 @@ CONTENT_TYPES = {
 }
 
 # Rutas del servidor que el HUD puede usar (nada mas se reenvia).
-PROXY_POST = {"/api/chat", "/api/voice", "/api/reset", "/api/transcribe", "/api/leads/update"}
+PROXY_POST = {
+    "/api/chat", "/api/voice", "/api/reset", "/api/transcribe", "/api/leads/update", "/api/leads/profiles",
+    "/api/agents/run", "/api/agents/model", "/api/agents/custom", "/api/calendar/outlook/connect",
+}
 STREAM_POST = {"/api/chat/stream", "/api/voice/stream"}  # flujo de pensamiento en directo (NDJSON)
 PROXY_GET = {
     "/api/memories", "/api/notifications", "/api/models", "/api/activity", "/api/agents", "/api/leads", "/api/insights",
-    "/api/usage",
+    "/api/usage", "/api/leads/profiles", "/api/calendar/status",
     "/health",
 }
 MEMORY_DELETE = re.compile(r"^/api/memories/\d+$")
+CUSTOM_AGENT_DELETE = re.compile(r"^/api/agents/custom/a_[a-z0-9_]{1,30}$")  # quitar un agente personalizado
 MAX_BODY = 12 * 1024 * 1024
 EVENTS_WAIT_S = 20  # espera larga: el navegador recibe los avisos al instante
 
@@ -315,7 +319,7 @@ def make_handler(hud: Hud, port: int):
         def do_DELETE(self):
             if not self._trusted():
                 return self._json(403, {"detail": "origen no permitido"})
-            if MEMORY_DELETE.match(self.path):
+            if MEMORY_DELETE.match(self.path) or CUSTOM_AGENT_DELETE.match(self.path):
                 return self._forward("DELETE", self.path)
             self._json(404, {"detail": "no encontrado"})
 
