@@ -390,12 +390,6 @@ a.card:hover { background: #333336; transform: translateY(-1px); }
   color: #ffd60a; background: rgba(255,214,10,.08); border: 1px solid rgba(255,214,10,.25); overflow-wrap: anywhere; }
 .unverified::before { content: "⚠ "; }
 
-/* Conectar Outlook desde el HUD */
-.outlook-code { display: grid; gap: 4px; }
-.outlook-code[hidden] { display: none; }
-.code-big { display: flex; align-items: center; gap: 12px; margin: 6px 0 0; font-size: 26px; font-weight: 700;
-  letter-spacing: .12em; font-variant-numeric: tabular-nums; color: #f5f5f7; }
-.outlook-code a { color: var(--azul); }
 
 /* --- navegación: carril a la izquierda (abajo en el móvil) ------------------------------------ */
 .rail { position: fixed; z-index: 9; top: calc(var(--barra-alto) + var(--hueco)); left: var(--hueco); bottom: var(--hueco); width: var(--rail);

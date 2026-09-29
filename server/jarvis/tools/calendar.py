@@ -1,4 +1,4 @@
-"""Agenda: lee calendarios de Google, Outlook o cualquiera que publique un enlace iCal (.ics).
+"""Agenda: lee calendarios de Google o de cualquiera que publique un enlace iCal (.ics).
 
 Sin OAuth ni proyectos en la nube: cada servicio da una "direccion secreta en formato iCal".
 Se configuran con CALENDARS ("personal=https://...ics;trabajo=https://...ics"). Esas URLs dan

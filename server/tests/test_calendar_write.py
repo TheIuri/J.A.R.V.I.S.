@@ -8,7 +8,7 @@ import pytest
 from jarvis.config import Settings
 from jarvis.pipeline import Assistant
 from jarvis.tools import ToolContext, build_registry
-from jarvis.tools.calendar_write import GoogleCalendar, OutlookCalendar, calendar_add_tool
+from jarvis.tools.calendar_write import GoogleCalendar, calendar_add_tool
 from jarvis.tools.registry import ToolError
 from tests.test_tools import NoTTS, ScriptedLLM, registry
 
@@ -25,9 +25,7 @@ class Recorder:
         self.requests.append(request)
         if "token" in request.url.path:
             return httpx.Response(200, json=self.token_body)
-        if request.url.host == "www.googleapis.com":
-            return httpx.Response(200, json={"htmlLink": "https://calendar.google.com/e/1"})
-        return httpx.Response(201, json={"webLink": "https://outlook.live.com/e/1"})
+        return httpx.Response(200, json={"htmlLink": "https://calendar.google.com/e/1"})
 
     def client(self):
         return httpx.Client(transport=httpx.MockTransport(self))
@@ -60,24 +58,6 @@ def test_bad_dates_are_rejected():
             tool.fn(ToolContext(), title="x", **kw)
 
 
-def test_outlook_keeps_the_rotated_refresh_token(tmp_path):
-    token_file = tmp_path / "outlook_token.json"
-    rec = Recorder({"access_token": "AT", "expires_in": 3600, "refresh_token": "NUEVO"})
-    cal = OutlookCalendar("cid", "refresh-inicial", token_file=token_file, client=rec.client())
-    tool = calendar_add_tool({"outlook": cal}, now=NOW)
-    out = tool.fn(ToolContext(), title="Revisión coche", date="2026-10-02", time="09:00", location="Taller")
-    assert "creado en Outlook el viernes 2 de octubre a las 09:00" in out
-    assert b"refresh_token=refresh-inicial" in rec.requests[0].content
-    assert rec.requests[0].url.path == "/common/oauth2/v2.0/token"
-    body = json.loads(rec.requests[1].content)
-    assert body["start"] == {"dateTime": "2026-10-02T09:00:00", "timeZone": "Europe/Madrid"}
-    assert body["isAllDay"] is False and body["location"] == {"displayName": "Taller"}
-    assert json.loads(token_file.read_text())["refresh_token"] == "NUEVO"
-    # Tras reiniciar, usa el token renovado; si cambias la variable, manda la nueva.
-    assert OutlookCalendar("cid", "refresh-inicial", token_file=token_file).refresh_token == "NUEVO"
-    assert OutlookCalendar("cid", "otro-token-nuevo", token_file=token_file).refresh_token == "otro-token-nuevo"
-
-
 def test_expired_login_says_how_to_fix_it():
     def handler(request):
         return httpx.Response(400, json={"error": "invalid_grant"})
@@ -89,25 +69,40 @@ def test_expired_login_says_how_to_fix_it():
 
 def test_creating_an_event_needs_a_yes():
     rec = Recorder()
-    tool = calendar_add_tool({"google": GoogleCalendar("i", "s", "r", client=rec.client()),
-                              "outlook": OutlookCalendar("c", "r", client=rec.client())}, now=NOW)
-    assert tool.parameters["properties"]["calendar"]["enum"] == ["google", "outlook"]
-    args = {"title": "Cena", "date": "2026-10-03", "time": "21:00", "calendar": "outlook"}
-    assert tool.describe(args) == "crear en Outlook el evento «Cena» el sábado 3 de octubre a las 21:00"
+    tool = calendar_add_tool({"google": GoogleCalendar("i", "s", "r", client=rec.client())}, now=NOW)
+    assert tool.parameters["properties"]["calendar"]["enum"] == ["google"]
+    args = {"title": "Cena", "date": "2026-10-03", "time": "21:00"}
+    assert tool.describe(args) == "crear en Google Calendar el evento «Cena» el sábado 3 de octubre a las 21:00"
     script = ScriptedLLM([[("calendar_add", args)], "¿Creo la cena el sábado a las 21:00?"])
     assistant = Assistant(None, script.llm(), NoTTS(), "s", tools=registry(tool))
     assistant.handle_text("apunta una cena el sábado a las nueve")
     assert rec.requests == []  # nada hasta el "sí"
     done = assistant.handle_text("sí")
-    assert done.reply.startswith("Hecho. Evento «Cena» creado en Outlook") and len(rec.requests) == 2
+    assert done.reply.startswith("Hecho. Evento «Cena» creado en Google Calendar") and len(rec.requests) == 2
 
 
 def test_registry_offers_it_only_with_credentials(tmp_path):
     base = dict(api_token="t", data_dir=str(tmp_path))
-    # Sin Google ni Outlook la tool existe, pero solo para decir la verdad: no crea nada y explica como conectarlo.
+    # Sin Google Calendar la tool existe, pero solo para decir la verdad: no crea nada y explica como conectarlo.
     missing = build_registry(Settings(**base))
     from jarvis.tools import ToolContext as _Ctx
     out = missing.execute("calendar_add", '{"title": "Dentista", "date": "2026-10-01"}', _Ctx())
     assert out.startswith("ERROR: todavía no puedo crear eventos") and "recordatorio" in out
-    reg = build_registry(Settings(**base, outlook_client_id="c", outlook_refresh_token="r"))
-    assert "calendar_add" in reg.names()
+    reg = build_registry(Settings(**base, google_client_id="c", google_client_secret="s", google_refresh_token="r"))
+    assert reg.get("calendar_add").confirm
+
+
+def test_calendar_status_endpoint():
+    from fastapi.testclient import TestClient
+
+    from jarvis.main import create_app
+    from tests.test_core import make_assistant
+
+    assistant = make_assistant()
+    client = TestClient(create_app(assistant, api_token="s"))
+    auth = {"Authorization": "Bearer s"}
+    assert client.get("/api/calendar/status").status_code == 401
+    assert client.get("/api/calendar/status", headers=auth).json() == {"google": False}
+    assistant.google_calendar = True
+    assert client.get("/api/calendar/status", headers=auth).json() == {"google": True}
+    assert client.post("/api/calendar/outlook/connect", headers=auth).status_code in (404, 405)

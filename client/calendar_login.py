@@ -1,11 +1,10 @@
 """Da permiso a JARVIS para CREAR eventos en tu calendario (una sola vez, en el PC).
 
     py calendar_login.py google     -> GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN
-    py calendar_login.py outlook    -> OUTLOOK_CLIENT_ID / OUTLOOK_REFRESH_TOKEN
 
 El permiso es solo para eventos del calendario (nada de correo ni archivos). Los valores que
 imprime van en las variables de la app de TrueNAS; no los compartas ni los subas al repositorio.
-Los pasos para crear la app de Google o de Microsoft estan en el README ("Crear eventos").
+Los pasos para crear la app de Google estan en el README ("Crear eventos").
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ import hashlib
 import secrets
 import sys
 import threading
-import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
@@ -26,7 +24,6 @@ import httpx
 GOOGLE_PORT = 8889
 GOOGLE_REDIRECT = f"http://127.0.0.1:{GOOGLE_PORT}/"
 GOOGLE_SCOPE = "https://www.googleapis.com/auth/calendar.events"
-MS_SCOPE = "Calendars.ReadWrite offline_access"
 
 
 def google() -> None:
@@ -85,48 +82,9 @@ def google() -> None:
     print(f'GOOGLE_REFRESH_TOKEN: "{token}"')
 
 
-def outlook() -> None:
-    client_id = input("Application (client) ID de Microsoft: ").strip()
-    tenant = input("Tenant [common]: ").strip() or "common"
-    base = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0"
-    resp = httpx.post(f"{base}/devicecode", data={"client_id": client_id, "scope": MS_SCOPE}, timeout=15)
-    if resp.status_code != 200:
-        sys.exit(f"Microsoft no acepta la app ({resp.status_code}): {resp.text[:300]}\n"
-                 "¿Activaste «Allow public client flows» en Authentication?")
-    flow = resp.json()
-    print(f"\n1. Abre {flow['verification_uri']}\n2. Escribe este código: {flow['user_code']}\n"
-          "3. Inicia sesión con tu cuenta de Outlook y acepta.\n")
-    webbrowser.open(flow["verification_uri"])
-    deadline = time.monotonic() + int(flow.get("expires_in", 900))
-    interval = int(flow.get("interval", 5))
-    while time.monotonic() < deadline:
-        time.sleep(interval)
-        token = httpx.post(f"{base}/token", data={
-            "grant_type": "urn:ietf:params:oauth:grant-type:device_code", "client_id": client_id,
-            "device_code": flow["device_code"],
-        }, timeout=15).json()
-        error = token.get("error")
-        if error == "authorization_pending":
-            continue
-        if error == "slow_down":
-            interval += 5
-            continue
-        if error:
-            sys.exit(f"Microsoft devolvió un error: {token.get('error_description', error)[:300]}")
-        print("Pon esto en las variables de la app de TrueNAS (y no lo compartas):\n")
-        print(f'OUTLOOK_CLIENT_ID: "{client_id}"')
-        if tenant != "common":
-            print(f'OUTLOOK_TENANT: "{tenant}"')
-        print(f'OUTLOOK_REFRESH_TOKEN: "{token["refresh_token"]}"')
-        return
-    sys.exit("Tiempo agotado: vuelve a ejecutarlo.")
-
-
 if __name__ == "__main__":
     which = sys.argv[1].lower() if len(sys.argv) > 1 else ""
-    if which == "google":
+    if which in ("", "google"):
         google()
-    elif which == "outlook":
-        outlook()
     else:
-        sys.exit("Uso: py calendar_login.py google   |   py calendar_login.py outlook")
+        sys.exit("Uso: py calendar_login.py google")
