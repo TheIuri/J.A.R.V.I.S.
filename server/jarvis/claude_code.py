@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Callable
 
 log = logging.getLogger(__name__)
+COMPACT_TOKENS = 40_000
 
 # Versiones que se ofrecen en el HUD (CLAUDE_MODELS las cambia). El id es el nombre del modelo que se
 # pasa a Claude Code con --model; el primero es el de por defecto.
@@ -129,7 +130,13 @@ class ClaudeCode:
         # Claude sigue la misma conversacion (--resume; sus ficheros de sesion tambien estan en self.home).
         self.sessions: dict[str, str] = self._load_sessions()
         # (sesion, texto) -> contexto para una conversacion nueva: lo ultimo hablado y conversaciones relacionadas.
-        self.context: Callable[[str, str], str] = lambda session, text: ""
+        self.context: Callable[..., str] = lambda session, text, fresh=False: ""
+        # Compactar: cuando el contexto de una conversacion pasa de este tamano (tokens), la siguiente pregunta
+        # empieza una sesion nueva con un resumen hecho sin LLM (lo ultimo hablado + recuerdos): gasta mucho menos
+        # que arrastrar toda la conversacion en cada mensaje.
+        self.compact_at = COMPACT_TOKENS
+        self.context_tokens: dict[str, int] = {}
+        self.compacted: set[str] = set()
         self._lock = threading.Lock()  # una conversacion a la vez (las sesiones son compartidas)
         self._stats_lock = threading.Lock()
 
@@ -240,8 +247,10 @@ class ClaudeCode:
             if resume:
                 prompt = text
             else:
+                fresh = session in self.compacted
+                self.compacted.discard(session)
                 try:
-                    extra = self.context(session, text)
+                    extra = self.context(session, text, fresh=fresh)
                 except Exception:
                     log.exception("no se pudo preparar el contexto de la conversacion")
                     extra = ""
@@ -257,7 +266,7 @@ class ClaudeCode:
             mem = self.memories()
         except Exception:
             mem = []
-        memories = ("\nLo que sabes del usuario:\n" + "\n".join(f"- {m}" for m in mem[:30])) if mem else ""
+        memories = ("\nLo que sabes del usuario:\n" + "\n".join(f"- {m}" for m in mem[:60])) if mem else ""
         memories += extra.rstrip()
         now = datetime.now().strftime("%A %d/%m/%Y %H:%M")
         if self.full and self.system:
@@ -288,6 +297,7 @@ class ClaudeCode:
              raw: bool = False) -> tuple[str, list[str]]:
         names: dict[str, str] = {}
         used: list[str] = []
+        context = 0  # tokens de contexto de la ultima llamada al modelo
         session_id = None
         started: dict[str, float] = {}
         result = None
@@ -318,6 +328,10 @@ class ClaudeCode:
                         self.sessions[session] = session_id
                         self._save_sessions()
                 if kind == "assistant":
+                    u = msg.get("message", {}).get("usage") or {}
+                    size = sum(int(u.get(k) or 0) for k in
+                               ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+                    context = max(context, size)
                     for item in msg.get("message", {}).get("content", []):
                         if item.get("type") == "tool_use":
                             name = TOOL_NAMES.get(item.get("name"), item.get("name", "?"))
@@ -357,4 +371,14 @@ class ClaudeCode:
             if (result or {}).get("subtype") == "error_max_turns":
                 raise MaxTurns(session_id)
             raise RuntimeError(f"Claude no ha respondido: {_short(detail, 200)}")
+        if session:
+            self._maybe_compact(session, context)
         return str(result["result"]).strip(), used
+
+    def _maybe_compact(self, session: str, context: int) -> None:
+        self.context_tokens[session] = context
+        if context >= self.compact_at and self.sessions.pop(session, None):
+            log.info("Claude: la conversacion %s ocupa %d tokens; la siguiente empieza compactada", session, context)
+            self.compacted.add(session)
+            self.context_tokens.pop(session, None)
+            self._save_sessions()

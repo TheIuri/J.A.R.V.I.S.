@@ -179,7 +179,7 @@ def format_agenda(events: list[Event], start: date, days: int, today: date) -> s
 
 
 def calendar_tool(calendars: Calendars) -> Tool:
-    def run(_ctx: ToolContext, day: str = "hoy", days: int = 1, calendar: str = "") -> str:
+    def run(ctx: ToolContext, day: str = "hoy", days: int = 1, calendar: str = "") -> str:
         today = datetime.now(calendars.tz).date()
         key = day.strip().lower()
         if key in ("hoy", ""):
@@ -193,7 +193,14 @@ def calendar_tool(calendars: Calendars) -> Tool:
                 start = date.fromisoformat(key)
             except ValueError as exc:
                 raise ToolError("day debe ser 'hoy', 'mañana', 'semana' o una fecha AAAA-MM-DD") from exc
-        return format_agenda(calendars.events(start, days, calendar.lower()), start, days, today)
+        events = calendars.events(start, days, calendar.lower())
+        span = _day_label(start, today) if days == 1 else f"Próximos {days} días"
+        ctx.cards.append({"kind": "agenda", "title": span, "events": [
+            {"day": _day_label(e.start.date(), today), "date": e.start.date().isoformat(),
+             "time": "" if e.all_day else f"{e.start:%H:%M}", "end": "" if e.all_day else f"{e.end:%H:%M}",
+             "title": e.title[:160], "location": e.location[:160], "calendar": e.calendar}
+            for e in events[:MAX_EVENTS]]})
+        return format_agenda(events, start, days, today)
 
     names = sorted(calendars.calendars)
     props = {

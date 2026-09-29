@@ -93,7 +93,7 @@ services:
 
       # --- Memoria (Nivel 3): SQLite en el dataset (/data/memory.db) ---
       MEMORY_ENABLED: "true" # "false" = sin memoria (no lee ni guarda recuerdos)
-      # MEMORY_MAX_ITEMS: "8" # recuerdos que se le pasan al LLM en cada turno
+      # MEMORY_MAX_ITEMS: "14" # recuerdos que se le pasan al LLM en cada turno
 
       # --- Obsidian (opcional): descomenta tambien el volumen /vault de arriba ---
       # OBSIDIAN_VAULT: "/vault"

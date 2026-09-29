@@ -52,3 +52,23 @@ def test_claude_sessions_are_kept_on_disk_and_new_ones_get_context(tmp_path):
     assert "Lo ultimo que hablasteis" in ctx and "apúntame el dentista" in ctx
     assert "Lo ultimo" not in a.claude_context("hud", "otra cosa")  # solo la primera vez
     assert "dentista" in ClaudeCode("t", tmp_path, exe="claude")._intro(ctx)
+
+
+def test_long_claude_conversations_are_compacted(tmp_path):
+    c = ClaudeCode("token", tmp_path, exe="claude")
+    c.sessions["hud"] = "0b6c1c9e-1f1a-4d7e-9a55-3f2b8b0f5d11"
+    c._maybe_compact("hud", 12_000)
+    assert c.sessions and "hud" not in c.compacted
+    c._maybe_compact("hud", c.compact_at + 1)
+    assert "hud" not in c.sessions and "hud" in c.compacted
+    assert ClaudeCode("token", tmp_path, exe="claude").sessions == {}  # tambien en disco
+
+    log = TurnLog(tmp_path / "t.db")
+    for i in range(12):
+        log.add("hud", f"pregunta {i}", f"respuesta {i}")
+    a = Assistant(None, None, NoTTS(), "sistema", history_turns=6)
+    a.turn_log = log
+    a._seeded.add("hud")  # ya estaba hablando: sin compactar no se repite nada
+    assert "Lo ultimo" not in a.claude_context("hud", "hola")
+    ctx = a.claude_context("hud", "hola", fresh=True)
+    assert "compactado" in ctx and "pregunta 11" in ctx and "pregunta 2" in ctx and "pregunta 1 " not in ctx

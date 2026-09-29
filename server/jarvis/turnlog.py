@@ -53,7 +53,7 @@ class TurnLog:
         ).fetchall()
         return [(u, r) for u, r in reversed(rows)]
 
-    def related(self, words: list[str], limit: int = 3, skip: set[str] | None = None) -> list[tuple[str, str, str]]:
+    def related(self, words: list[str], limit: int = 5, skip: set[str] | None = None) -> list[tuple[str, str, str]]:
         """[(fecha, usuario, respuesta)] de conversaciones anteriores con palabras en comun (las mas parecidas y,
         a igualdad, las mas recientes). `skip`: frases del usuario que ya estan en el contexto."""
         from .memory.retrieval import keywords

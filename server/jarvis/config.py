@@ -107,7 +107,7 @@ class Settings:
 
     # Nivel 3: memoria
     memory_enabled: bool = True
-    memory_max_items: int = 8  # recuerdos inyectados como maximo antes de cada respuesta
+    memory_max_items: int = 14  # recuerdos inyectados como maximo antes de cada respuesta
 
     # Obsidian: ruta de la boveda dentro del contenedor ("" = desactivado)
     obsidian_vault: str = ""
@@ -260,7 +260,7 @@ def load_settings() -> Settings:
         edge_pitch=_env("EDGE_PITCH", "+0Hz"),
         history_turns=_env_int("HISTORY_TURNS", 6),
         memory_enabled=_env_bool("MEMORY_ENABLED", True),
-        memory_max_items=_env_int("MEMORY_MAX_ITEMS", 8),
+        memory_max_items=_env_int("MEMORY_MAX_ITEMS", 14),
         obsidian_vault=_env("OBSIDIAN_VAULT"),
         obsidian_inbox=_env("OBSIDIAN_INBOX", "Inbox"),
         obsidian_daily=_env("OBSIDIAN_DAILY_FOLDER", "Diario"),

@@ -190,17 +190,21 @@ class Assistant:
             history.append({"role": "user", "content": user})
             history.append({"role": "assistant", "content": reply})
 
-    def claude_context(self, session: str, text: str) -> str:
-        """Para una conversacion nueva de Claude (tras reiniciar, o la primera): lo ultimo que hablasteis en esta
-        sesion y las conversaciones anteriores relacionadas con lo que acaba de decir."""
+    def claude_context(self, session: str, text: str, fresh: bool = False) -> str:
+        """Para una conversacion nueva de Claude (la primera, tras reiniciar o al compactar una larga): lo ultimo
+        que hablasteis en esta sesion y las conversaciones anteriores relacionadas con lo que acaba de decir."""
         if not self.turn_log:
             return ""
-        recent = [] if session in self._seeded else self.turn_log.recent(session, self._history_turns)
+        if fresh:  # compactada: resumen sin LLM de lo reciente, un poco mas largo
+            recent = self.turn_log.recent(session, self._history_turns + 4, hours=24)
+        else:
+            recent = [] if session in self._seeded else self.turn_log.recent(session, self._history_turns)
         self._seeded.add(session)
         out = ""
         if recent:
+            why = "la conversacion se ha compactado para gastar menos" if fresh else "antes de reiniciarte"
             lines = "\n".join(f"- Usuario: {u[:300]} -> Tu: {r[:400]}" for u, r in recent)
-            out += f"\nLo ultimo que hablasteis (antes de reiniciarte):\n{lines}\n"
+            out += f"\nLo ultimo que hablasteis ({why}):\n{lines}\n"
         return out + self.conversation_context(session, text, skip={u for u, _ in recent})
 
     def conversation_context(self, session: str, text: str, skip: set[str] | None = None) -> str:

@@ -40,8 +40,11 @@ def format_datetime(now: datetime) -> str:
 def datetime_tool(timezone: str) -> Tool:
     tz = ZoneInfo(timezone)
 
-    def run(_ctx: ToolContext) -> str:
-        return format_datetime(datetime.now(tz))
+    def run(ctx: ToolContext) -> str:
+        now = datetime.now(tz)
+        ctx.cards.append({"kind": "clock", "time": f"{now:%H:%M}",
+                          "date": f"{DAYS[now.weekday()].capitalize()} {now.day} de {MONTHS[now.month - 1]} de {now.year}"})
+        return format_datetime(now)
 
     return Tool(
         name="get_datetime",

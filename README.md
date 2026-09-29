@@ -245,7 +245,7 @@ origen y confianza.
 - **Qué guarda**: lo que le pides que recuerde, o datos duraderos que cambian respuestas futuras. No guarda charla
   trivial ni duplicados.
 - **Qué nunca guarda**: contraseñas, claves, tokens, tarjetas ni IBAN. Se rechazan aunque el LLM lo intente.
-- **Qué usa en cada respuesta**: como máximo `MEMORY_MAX_ITEMS` (8) recuerdos. Las preferencias entran siempre;
+- **Qué usa en cada respuesta**: como máximo `MEMORY_MAX_ITEMS` (14) recuerdos. Las preferencias entran siempre;
   el resto, por palabras en común con lo que dices (búsqueda FTS5, sin distinguir acentos). El log `jarvis.memory`
   dice por qué eligió cada recuerdo.
 - **Cómo lo gestiona JARVIS**: con las tools `memory_save`, `memory_search`, `memory_update` y `memory_forget`.
@@ -273,6 +273,9 @@ A la izquierda hay un carril de navegación (abajo en el móvil) con cinco secci
   en fichas grandes con su etiqueta («Máxima · 25 °C», «Hora · 17:45»). Se hace en el navegador, sin gastar tokens; si
   llega la ficha del servidor (`/api/insights`), sustituye a las del navegador. Debajo, las herramientas usadas, el modelo
   que ha contestado y los resultados de la búsqueda o de un agente.
+  **Tarjetas visuales** con los datos exactos de cada herramienta (no del texto del modelo): el **tiempo** con iconos
+  (sol, nubes, lluvia...) y la previsión día a día; la **música** de Spotify con su portada; la **agenda** con horas y
+  lugares; los **recordatorios**; las **conversiones** de unidades y divisas; la **hora**; y **Wikipedia** con su imagen.
 - **Agentes**: el encargo directo, el alta de agentes personalizados, las tareas en marcha y el equipo con el modelo de cada uno.
 - **Leads**: los posibles clientes y los perfiles del captador.
 - **Traza**: línea de tiempo de todo lo que pasa (tu turno, herramientas, agentes, Claude, el auditor, avisos).
@@ -447,6 +450,9 @@ plano, así que no retrasa la respuesta; gasta una petición más por turno. `IN
 con Groq y con Claude. Así:
 - **tras reiniciar o actualizar** sigue la conversación donde estaba (los últimos turnos de las últimas 12 horas; con
   Claude, además, retoma la misma sesión);
+- **con Claude, compacta las conversaciones largas**: cuando el contexto pasa de unos 40.000 tokens, la siguiente
+  pregunta empieza una sesión nueva con un resumen de lo último hablado (hecho sin gastar tokens) en vez de arrastrar
+  toda la conversación en cada mensaje;
 - **recuerda conversaciones anteriores**: si preguntas «¿te acuerdas de lo del dentista?», busca en ese registro lo
   hablado sobre el tema, aunque hayas empezado una conversación nueva u otro día.
   Los datos que cambian (tiempo, agenda, precios) los vuelve a consultar siempre con las herramientas.

@@ -506,3 +506,50 @@ def test_weather_sends_an_exact_card_to_the_hud():
     assert card["now"] == {"temp": 22, "feels": 22, "code": 2, "text": "parcialmente nublado", "wind": 9, "day": False}
     assert card["days"][1] == {"date": "2026-09-30", "label": "Mañana", "code": 61, "text": "lluvia débil",
                                "min": 15, "max": 19, "rain": 80}
+
+
+def test_tools_send_visual_cards():
+    from datetime import date as _date
+
+    from jarvis.tools.basic import datetime_tool
+    from jarvis.tools.calendar import Calendars, calendar_tool
+    from jarvis.tools.info import Currency, convert_tool
+    from jarvis.tools.reminders import ReminderStore, reminder_tools
+    from jarvis.tools.spotify import music_card
+
+    ctx = ToolContext()
+    datetime_tool("Europe/Madrid").fn(ctx)
+    assert ctx.cards[0]["kind"] == "clock" and ":" in ctx.cards[0]["time"]
+
+    ctx = ToolContext()
+    convert_tool(Currency()).fn(ctx, value=10, from_unit="km", to_unit="m")
+    assert ctx.cards[0] == {"kind": "convert", "from": "10 km", "to": "10.000 m", "note": ""}
+
+    import tempfile
+    store = ReminderStore(tempfile.mktemp(suffix=".db"))
+    set_, list_ = reminder_tools(store)[:2]
+    ctx = ToolContext()
+    set_.fn(ctx, text="Llamar a mamá", minutes=30)
+    items = ctx.cards[0]["items"]
+    assert ctx.cards[0]["kind"] == "reminders" and items[0]["text"] == "Llamar a mamá" and items[0]["new"]
+
+    class OneEvent(Calendars):
+        def events(self, start, days, only=""):
+            from jarvis.tools.calendar import Event
+            s = datetime(start.year, start.month, start.day, 10, 0, tzinfo=self.tz)
+            return [Event(s, s.replace(hour=11), "Dentista", "Sabadell", "google", False)]
+
+    ctx = ToolContext()
+    calendar_tool(OneEvent({})).fn(ctx, day="mañana")
+    ev = ctx.cards[0]["events"][0]
+    assert ctx.cards[0]["kind"] == "agenda" and ctx.cards[0]["title"] == "Mañana"
+    assert (ev["time"], ev["end"], ev["title"], ev["location"]) == ("10:00", "11:00", "Dentista", "Sabadell")
+    assert _date.fromisoformat(ev["date"])
+
+    ctx = ToolContext()
+    music_card(ctx, {"name": "Yellow", "artists": [{"name": "Coldplay"}], "album": {
+        "name": "Parachutes", "images": [{"url": "https://i.scdn.co/image/abc"}]},
+        "external_urls": {"spotify": "https://open.spotify.com/track/1"}}, "sonando")
+    assert ctx.cards[0] == {"kind": "music", "title": "Yellow", "artist": "Coldplay", "album": "Parachutes",
+                            "image": "https://i.scdn.co/image/abc", "url": "https://open.spotify.com/track/1",
+                            "state": "sonando"}

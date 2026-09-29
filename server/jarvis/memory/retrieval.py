@@ -46,7 +46,7 @@ def keywords(text: str) -> list[str]:
 
 
 class RuleRetriever:
-    def __init__(self, store: MemoryStore, max_items: int = 8, max_preferences: int = 5):
+    def __init__(self, store: MemoryStore, max_items: int = 14, max_preferences: int = 8):
         self.store = store
         self.max_items = max_items
         self.max_preferences = max_preferences
