@@ -216,7 +216,7 @@ async function toggleCamera() {
   }
   btn.classList.toggle("on", !!camStream);
   btn.setAttribute("aria-pressed", String(!!camStream));
-  btn.textContent = camStream ? "CÁMARA · ENCENDIDA" : "CÁMARA";
+  btn.querySelector("span").textContent = camStream ? "Cámara encendida" : "Cámara";
 }
 
 function snapshot() {
@@ -624,27 +624,23 @@ async function loadUsage() {
 }
 setInterval(loadUsage, 20000);
 
-// --- pestañas del panel ---------------------------------------------------------------
+// --- vistas: Inicio (cerebro y respuesta) y las secciones a pantalla amplia --------------------
 
-const TABS = ["agents", "leads", "trace", "session"];
+const VIEWS = ["home", "agents", "leads", "trace", "session", "settings"];
+let view = "home";
 
-function selectTab(name) {
-  for (const t of TABS) {
-    const on = t === name;
-    $(`tab-${t}`).setAttribute("aria-selected", String(on));
-    $(`tab-${t}`).tabIndex = on ? 0 : -1;
-    $(`pane-${t}`).hidden = !on;
+function selectView(name) {
+  if (!VIEWS.includes(name)) name = "home";
+  view = name;
+  document.body.dataset.view = name;
+  for (const btn of document.querySelectorAll("[data-view]")) {
+    if (btn.dataset.view === name) btn.setAttribute("aria-current", "page");
+    else btn.removeAttribute("aria-current");
   }
+  $("workspace").hidden = name === "home";
+  for (const v of VIEWS) if (v !== "home") $(`pane-${v}`).hidden = v !== name;
   if (name === "trace") setBadge("trace", (unseenTrace = 0));
-  moveInk();
-}
-
-function moveInk() {
-  const tab = document.querySelector('.tabs [aria-selected="true"]');
-  const ink = document.querySelector(".tab-ink");
-  if (!tab || !ink) return;
-  ink.style.width = `${tab.offsetWidth}px`;
-  ink.style.transform = `translateX(${tab.offsetLeft}px)`;
+  if (name !== "home") $("workspace").scrollTop = 0;
 }
 
 function setBadge(name, n) {
@@ -653,16 +649,233 @@ function setBadge(name, n) {
   b.textContent = n > 99 ? "99+" : String(n);
 }
 
-TABS.forEach((t, i) => {
-  $(`tab-${t}`).addEventListener("click", () => selectTab(t));
-  $(`tab-${t}`).addEventListener("keydown", (e) => {
-    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-    const next = TABS[(i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length];
-    selectTab(next);
-    $(`tab-${next}`).focus();
-  });
+for (const btn of document.querySelectorAll("[data-view]")) {
+  // El botón de Ajustes vuelve a Inicio si ya estás en Ajustes.
+  btn.addEventListener("click", () => selectView(btn.dataset.view === view && view !== "home" ? "home" : btn.dataset.view));
+}
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && view !== "home" && $("model-menu").hidden) selectView("home");
 });
-addEventListener("resize", moveInk);
+
+// --- preferencias de este dispositivo (Ajustes) -------------------------------------------------
+
+const PREFS_KEY = "jarvis_prefs";
+const prefs = { voice: true, highlight: true, labels: true, log: true, size: "normal" };
+try {
+  Object.assign(prefs, JSON.parse(localStorage.getItem(PREFS_KEY) || "{}"));
+} catch {
+  /* sin almacenamiento: valores por defecto */
+}
+
+function applyPrefs() {
+  document.body.classList.toggle("no-labels", !prefs.labels);
+  document.body.classList.toggle("no-log", !prefs.log);
+  document.body.classList.toggle("big-answers", prefs.size === "big");
+  for (const k of ["voice", "highlight", "labels", "log"]) $(`pref-${k}`).checked = !!prefs[k];
+  for (const b of document.querySelectorAll("[data-size]")) b.setAttribute("aria-pressed", String(b.dataset.size === prefs.size));
+}
+
+function savePrefs() {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    /* sin almacenamiento: vale para esta visita */
+  }
+  applyPrefs();
+}
+
+for (const k of ["voice", "highlight", "labels", "log"]) {
+  $(`pref-${k}`).addEventListener("change", (e) => {
+    prefs[k] = e.target.checked;
+    savePrefs();
+    if (k === "highlight") rerenderHighlights();
+  });
+}
+for (const b of document.querySelectorAll("[data-size]")) {
+  b.addEventListener("click", () => {
+    prefs.size = b.dataset.size;
+    savePrefs();
+  });
+}
+$("logout").addEventListener("click", () => {
+  setToken("");
+  askToken("Sesión cerrada en este dispositivo.");
+});
+applyPrefs();
+
+// --- respuesta visual: los datos importantes, remarcados (sin gastar tokens) ---------------------
+
+const MONTHS_RE = "enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre";
+const DAYS_RE = "lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo";
+const UNITS_RE = "km/h|kms?|kilómetros|metros|cm|mm|kg|kilos|gramos|g|litros|l|ml|GB|TB|MB|GHz|MHz|kWh|kW|W|ms|segundos|minutos|min|horas|h|días|dias|semanas|meses|años|kcal";
+// Por orden de prioridad: en la misma posición gana el primero.
+const FACT_RULES = [
+  ["money", "Precio", "(?:[$€]\\s?\\d[\\d.,]*|\\d[\\d.,]*\\s?(?:€|euros?|\\$|dólares|USD|EUR))(?![\\p{L}])"],
+  ["pct", "Porcentaje", "-?\\d+(?:[.,]\\d+)?\\s?(?:%|por ciento)"],
+  ["temp", "Temperatura", "-?\\d+(?:[.,]\\d+)?\\s?(?:°\\s?C|ºC|°|º|grados)"],
+  ["time", "Hora", "(?<![\\d:])(?:[01]?\\d|2[0-3]):[0-5]\\d(?![\\d:])|\\ba las? \\d{1,2}(?: y (?:media|cuarto)| menos cuarto)?(?: de la (?:mañana|tarde|noche))?(?![\\d:])"],
+  ["date", "Fecha", `\\b\\d{1,2} de (?:${MONTHS_RE})(?: de \\d{4})?|(?<![\\p{L}])(?:${DAYS_RE})(?:,? \\d{1,2} de (?:${MONTHS_RE})(?: de \\d{4})?|,? \\d{1,2}(?![\\d:]))?(?![\\p{L}])|(?<![\\p{L}])(?:pasado mañana|mañana|hoy|esta (?:tarde|noche))(?![\\p{L}])`],
+  ["measure", "Cifra", `\\d+(?:[.,]\\d+)?\\s?(?:${UNITS_RE})(?![\\p{L}])`],
+  ["num", "Cifra", "(?<![\\p{L}\\d])\\d{1,3}(?:\\.\\d{3})+(?:,\\d+)?|(?<![\\p{L}\\d.,])\\d+(?:,\\d+)?(?![\\d])"],
+  ["name", "", "«[^»]{1,80}»|\"[^\"]{2,80}\""],
+  ["ok", "", "(?<![\\p{L}])(?:hecho|listo|creado|guardado|apuntado|encendido|conectado|activado|confirmado|funcionando)(?![\\p{L}])"],
+  ["bad", "", "(?<![\\p{L}])(?:error|fallo|caído|apagado|desconectado|sin conexión|no he podido|no puedo)(?![\\p{L}])"],
+];
+const FACT_RE = new RegExp(FACT_RULES.map(([k, , src]) => `(?<${k}>${src})`).join("|"), "giu");
+const FACT_LABEL = Object.fromEntries(FACT_RULES.map(([k, label]) => [k, label]));
+const STOP = new Set(("de del la las el los lo un una unos unas y o a al en con por para que es son será serán está están hay " +
+  "sobre hasta desde entre sus su tu tus mi mis se te le les me muy más menos unos cerca casi ahora hoy ya tiene tienes " +
+  "tengo va van sería hace hacen quedan queda sale salen cuesta cuestan vale valen total aproximadamente unas").split(" "));
+
+// Troceado de un texto: [{text, kind}] (kind vacío = texto normal).
+function factPieces(text) {
+  const out = [];
+  let at = 0;
+  for (const m of String(text).matchAll(FACT_RE)) {
+    const kind = Object.keys(m.groups).find((k) => m.groups[k] !== undefined);
+    if (m.index > at) out.push({ text: text.slice(at, m.index), kind: "" });
+    out.push({ text: m[0], kind, index: m.index });
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) out.push({ text: text.slice(at), kind: "" });
+  return out;
+}
+
+function capital(word) {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+// Etiqueta de un dato, sacada de sus palabras vecinas: «12,5 TB libres» -> Libres, «la máxima será de 24 grados»
+// -> Máxima, «la Bambu Lab A1 cuesta 349 €» -> Bambu Lab A1. Si no hay nada claro, el tipo (Hora, Fecha...).
+function factLabel(text, piece, from) {
+  if (piece.kind === "num" || piece.kind === "measure") {
+    const next = text.slice(piece.index + piece.text.length).match(/^\s+([\p{L}]{3,})/u);
+    if (next && !STOP.has(next[1].toLowerCase())) {
+      piece.counted = true; // «3 recordatorios»: un número que cuenta algo vale tanto como una hora o un precio
+      return capital(next[1]);
+    }
+  }
+  const before = text.slice(from, piece.index).split(/[.;:!?\n]/).pop();
+  const words = before.match(/[\p{L}\p{N}]+/gu) || [];
+  while (words.length && STOP.has(words.at(-1).toLowerCase())) words.pop();
+  const label = [];
+  while (words.length && label.length < 3 && !STOP.has(words.at(-1).toLowerCase())) label.unshift(words.pop());
+  const kept = label.filter((w) => w.length > 1 || /\d/.test(w));
+  if (kept.length && (piece.kind !== "time" && piece.kind !== "date" || before.trim().split(/\s+/).length <= 3)) {
+    return capital(kept.join(" "));
+  }
+  return FACT_LABEL[piece.kind] || "Dato";
+}
+
+// Los datos de la respuesta para las fichas grandes: hasta 4, sin repetir.
+function factsOf(text) {
+  const seen = new Set();
+  const facts = [];
+  let from = 0;
+  for (const p of factPieces(text)) {
+    if (!p.kind) continue;
+    const end = p.index + p.text.length;
+    if (FACT_LABEL[p.kind]) {
+      const key = p.text.toLowerCase().replace(/\s+/g, " ");
+      if (!seen.has(key)) {
+        seen.add(key);
+        let k = factLabel(text, p, from);
+        if (facts.some((f) => f.k === k)) k = FACT_LABEL[p.kind] || "Dato"; // «3 recordatorios para mañana»
+        facts.push({ k, v: p.text, kind: p.kind, counted: p.counted });
+      }
+    }
+    from = end;
+  }
+  // Los números sueltos solo si no hay nada más concreto.
+  const strong = facts.filter((f) => f.kind !== "num" || f.counted);
+  return (strong.length ? strong : facts).slice(0, 4);
+}
+
+// Pinta el texto con los datos remarcados (siempre como texto: nunca HTML del modelo).
+function renderRich(el, text) {
+  el.textContent = "";
+  el.dataset.raw = text;
+  if (!prefs.highlight) {
+    el.textContent = text;
+    return;
+  }
+  for (const p of factPieces(text)) {
+    if (!p.kind) {
+      el.append(p.text);
+      continue;
+    }
+    const mark = document.createElement("mark");
+    mark.className = `hl hl-${p.kind}`;
+    mark.textContent = p.text;
+    el.append(mark);
+  }
+}
+
+function rerenderHighlights() {
+  for (const el of document.querySelectorAll("[data-raw]")) renderRich(el, el.dataset.raw);
+}
+
+function fillFacts(items, title = "") {
+  const dl = $("answer-facts");
+  dl.textContent = "";
+  dl.hidden = !items.length || !prefs.highlight;
+  dl.dataset.n = String(items.length);
+  for (const item of items) {
+    const box = document.createElement("div");
+    box.className = `fact${item.kind ? ` f-${item.kind}` : ""}`;
+    const dt = document.createElement("dt");
+    dt.textContent = item.k;
+    const dd = document.createElement("dd");
+    dd.textContent = item.v;
+    box.append(dt, dd);
+    dl.append(box);
+  }
+  $("answer-title").hidden = !title || dl.hidden;
+  $("answer-title").textContent = title;
+}
+
+let answerAt = 0;
+let answerTools = [];
+
+// Muestra una respuesta (o un aviso) en el panel de la derecha.
+function showAnswer({ q, text, label = "" }) {
+  answerAt = Date.now();
+  $("answer-empty").hidden = true;
+  $("answer-card").hidden = false;
+  $("answer-card").classList.toggle("is-notice", !!label);
+  if (q !== undefined) $("answer-q").textContent = q ? `› ${q}` : label;
+  const same = $("answer-text").dataset.raw === (text || "");
+  renderRich($("answer-text"), text || "");
+  fillFacts(factsOf(text || ""));
+  if (same) return; // la misma respuesta que ya llegó en directo: sin repetir la entrada
+  const card = $("answer-card");
+  card.classList.remove("fresh");
+  void card.offsetWidth; // reinicia la animación de entrada
+  card.classList.add("fresh");
+}
+
+function showQuestion(q) {
+  $("answer-empty").hidden = true;
+  $("answer-card").hidden = false;
+  $("answer-card").classList.remove("is-notice");
+  $("answer-q").textContent = `› ${q}`;
+  $("answer-text").textContent = "";
+  $("answer-text").dataset.raw = "";
+  fillFacts([]);
+  setAnswerTools([]);
+}
+
+function setAnswerTools(tools, extra = []) {
+  answerTools = tools;
+  const meta = $("answer-meta");
+  meta.querySelectorAll(".tool-chip").forEach((c) => c.remove());
+  for (const t of [...new Set(tools)].map((n) => TOOL_LABEL[n] || n).concat(extra)) {
+    const chip = document.createElement("span");
+    chip.className = "tool-chip";
+    chip.textContent = t;
+    meta.append(chip);
+  }
+}
 
 // --- traza: todo lo que pasa, en una línea de tiempo --------------------------------------
 
@@ -687,7 +900,7 @@ function trace(actor, what, rgb) {
   const list = $("trace");
   list.prepend(li);
   while (list.children.length > MAX_TRACE) list.lastChild.remove();
-  if ($("pane-trace").hidden) setBadge("trace", ++unseenTrace);
+  if (view !== "trace") setBadge("trace", ++unseenTrace);
   else unseenTrace = 0;
 }
 
@@ -712,7 +925,7 @@ async function askVoice(wav) {
     return setState("error", String(err.message || err).slice(0, 120));
   }
   if (!text) {
-    $("subtitle").textContent = "No te he oído bien, prueba otra vez.";
+    showAnswer({ q: "", text: "No te he oído bien, prueba otra vez.", label: "Micrófono" });
     return setState("idle");
   }
   return askClaude(text);
@@ -811,13 +1024,13 @@ async function ask(path, init) {
     return;
   }
   if (!body.transcript) {
-    $("subtitle").textContent = "No te he oído bien, prueba otra vez.";
+    showAnswer({ q: "", text: "No te he oído bien, prueba otra vez.", label: "Micrófono" });
     setState("idle");
     return;
   }
   if (body.cards?.length && $("cards").hidden) showCards(body.cards); // servidor sin directo
   showTurn(body);
-  if (body.audio_wav_b64) await playWav(body.audio_wav_b64);
+  if (body.audio_wav_b64 && prefs.voice) await playWav(body.audio_wav_b64);
   else setState("idle");
   $("flow").classList.add("past");
 }
@@ -845,9 +1058,9 @@ async function readFlow(resp) {
 }
 
 function showTurn(body) {
-  $("you").textContent = body.transcript;
-  $("subtitle").textContent = body.reply;
+  showAnswer({ q: body.transcript, text: body.reply });
   showSource(body.provider);
+  setAnswerTools(body.tools_used || [], (body.pc_results || []).map((r) => `PC · ${r.result}`));
 
   const t = body.timings_ms || {};
   stats.count += 1;
@@ -869,7 +1082,7 @@ function showTurn(body) {
   u.textContent = `› ${body.transcript}`;
   const a = document.createElement("div");
   a.className = "a";
-  a.textContent = body.reply;
+  renderRich(a, body.reply);
   const meta = document.createElement("div");
   meta.className = "meta";
   const actions = (body.pc_results || []).map((r) => `[PC] ${r.result}`);
@@ -926,8 +1139,9 @@ async function resetConversation() {
     body: JSON.stringify({ session: SESSION }),
   });
   $("log").textContent = "";
-  $("subtitle").textContent = "";
-  $("you").textContent = "";
+  $("answer-card").hidden = true;
+  $("answer-empty").hidden = false;
+  hideCards();
   showSource("");
 }
 
@@ -958,14 +1172,15 @@ function flushNotices() {
   if (state !== "idle" && state !== "error") return;
   while (queuedNotices.length) {
     const n = queuedNotices.shift();
-    $("subtitle").textContent = n.text;
+    showAnswer({ q: "", text: n.text, label: `Aviso · ${n.source}` });
+    setAnswerTools([]);
     fire(REGION.thalamus, n.text);
     trace(`Aviso · ${n.source}`, n.text, n.level === "critical" ? [255, 69, 58] : REGIONS[REGION.thalamus].color);
     const turn = document.createElement("div");
     turn.className = `turn notice ${n.level}`;
     const a = document.createElement("div");
     a.className = "a";
-    a.textContent = n.text;
+    renderRich(a, n.text);
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.textContent = `Aviso · ${n.source} · ${n.created.slice(11, 16)}`;
@@ -973,7 +1188,7 @@ function flushNotices() {
     $("log").append(turn);
     $("log").scrollTop = $("log").scrollHeight;
     // Solo habla la pestaña visible (si tienes el HUD abierto en el PC y en el móvil, no suenan los dos).
-    if (n.speak && n.audio_wav_b64 && document.visibilityState === "visible") playWav(n.audio_wav_b64);
+    if (prefs.voice && n.speak && n.audio_wav_b64 && document.visibilityState === "visible") playWav(n.audio_wav_b64);
   }
 }
 
@@ -992,8 +1207,8 @@ async function pollEvents() {
 function onPcEvent(ev) {
   switch (ev.type) {
     case "announce":
-      $("subtitle").textContent = ev.text;
-      if (ev.audio_wav_b64) playWav(ev.audio_wav_b64);
+      showAnswer({ q: "", text: ev.text, label: "Aviso · PC" });
+      if (ev.audio_wav_b64 && prefs.voice) playWav(ev.audio_wav_b64);
       break;
     case "wake":
       if (state !== "idle" && state !== "error") break;
@@ -1324,6 +1539,8 @@ function showOptions(label, cards, note, rgb) {
   }
   $("cards-title").textContent = `${label} · ${cards.length} ${cards.length === 1 ? "opción" : "opciones"}`;
   $("cards").hidden = false;
+  selectView("home");
+  $("cards").scrollIntoView({ block: "nearest", behavior: reducedMotion ? "auto" : "smooth" });
 }
 
 function flowReset() {
@@ -1350,7 +1567,7 @@ function onFlow(ev) {
       break;
     case "heard":
       if (!ev.text) break;
-      $("you").textContent = ev.text;
+      showQuestion(ev.text);
       fire(REGION.auditory, ev.text);
       trace("Tú", ev.text, REGIONS[REGION.auditory].color);
       break;
@@ -1371,6 +1588,7 @@ function onFlow(ev) {
       Object.assign(regionState[idx], { pending: true, fail: false });
       fire(idx, [label, argsSummary(ev.args)].filter(Boolean).join(" · "));
       setState("thinking", label);
+      setAnswerTools([...answerTools, ev.name]);
       trace(label.charAt(0).toUpperCase() + label.slice(1), argsSummary(ev.args), REGIONS[idx].color);
       break;
     }
@@ -1386,7 +1604,7 @@ function onFlow(ev) {
       showCards(ev.cards || []);
       break;
     case "reply":
-      $("subtitle").textContent = ev.text;
+      showAnswer({ text: ev.text });
       fire(REGION.language, ev.text);
       trace(`JARVIS${ev.provider ? ` · ${providerLabel(ev.provider)}${isBackup(ev.provider) ? " (respaldo)" : ""}` : ""}`, ev.text, REGIONS[REGION.language].color);
       showSource(ev.provider);
@@ -2094,43 +2312,27 @@ function renderLeads() {
 
 // --- fichas: los datos clave de cada respuesta, flotando junto al cerebro -----------------------
 
-const MAX_INSIGHTS = 3;
-
+// La ficha llega unos segundos después de la respuesta: si es de la respuesta que se ve, sustituye a los
+// datos sacados a mano (el modelo pone mejores etiquetas). Si no hay respuesta en pantalla, se enseña sola.
 function showInsight(card, quiet = false) {
-  const box = $("insights");
   const idx = card.tools?.length ? toolRegion(card.tools[0]) : REGION.language;
   const rgb = REGIONS[idx].color;
-  const el = document.createElement("article");
-  el.className = "insight";
-  el.style.setProperty("--c", `rgb(${rgb.join(",")})`);
-  const head = document.createElement("header");
-  const title = document.createElement("h3");
-  title.textContent = card.title;
-  const time = document.createElement("time");
-  time.className = "num";
-  time.textContent = (card.ts || "").slice(11, 16);
-  head.append(title, time);
-  const dl = document.createElement("dl");
-  for (const item of card.items || []) {
-    const dt = document.createElement("dt");
-    dt.textContent = item.k;
-    const dd = document.createElement("dd");
-    dd.textContent = item.v;
-    dl.append(dt, dd);
+  const items = (card.items || []).map((i) => ({ k: i.k, v: i.v }));
+  const current = !$("answer-card").hidden && Date.now() - answerAt < 90000;
+  if (current || $("answer-card").hidden) {
+    if (!current) {
+      $("answer-empty").hidden = true;
+      $("answer-card").hidden = false;
+      $("answer-q").textContent = `Última ficha · ${(card.ts || "").slice(11, 16)}`;
+      $("answer-text").textContent = "";
+      $("answer-text").dataset.raw = "";
+    }
+    fillFacts(items, card.title);
   }
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "insight-close";
-  close.setAttribute("aria-label", `Quitar la ficha ${card.title}`);
-  close.innerHTML = '<svg class="icon"><use href="#i-close"/></svg>';
-  close.addEventListener("click", () => el.remove());
-  el.append(head, dl, close);
-  box.prepend(el);
-  while (box.children.length > MAX_INSIGHTS) box.lastChild.remove();
   if (quiet) return;
   regionState[idx].act = Math.max(regionState[idx].act, 0.9);
   pulses.push({ from: REGION.language, to: idx, t: 0, dur: reducedMotion ? 0.01 : 0.6, rgb });
-  trace("Ficha", `${card.title}: ${(card.items || []).map((i) => `${i.k} ${i.v}`).join(" · ")}`, rgb);
+  trace("Ficha", `${card.title}: ${items.map((i) => `${i.k} ${i.v}`).join(" · ")}`, rgb);
 }
 
 async function loadInsights() {
@@ -2139,7 +2341,7 @@ async function loadInsights() {
     const resp = await api("/api/insights");
     if (!resp.ok) return;
     const { insights } = await resp.json();
-    insights.slice(-2).forEach((c) => showInsight(c, true));
+    insights.slice(-1).forEach((c) => showInsight(c, true));
   } catch {
     /* servidor antiguo */
   }
@@ -2190,6 +2392,7 @@ function resize() {
   canvas.height = Math.round(height * dpr);
 }
 addEventListener("resize", resize);
+new ResizeObserver(resize).observe(canvas);
 
 function rgba([r, gr, b], alpha) {
   return `rgba(${r | 0},${gr | 0},${b | 0},${Math.max(0, Math.min(1, alpha))})`;
@@ -2478,7 +2681,7 @@ async function init() {
   loadCalendar();
   loadInsights();
   loadUsage();
-  moveInk();
+  selectView(location.hash.slice(1) || "home");
   if (mode === "server") {
     $("hint").textContent = matchMedia("(pointer: coarse)").matches
       ? "Mantén pulsado el cerebro para hablar"
