@@ -145,7 +145,12 @@ Ejemplos: *"¿Cómo quedó ayer el Barça?"*, *"¿Quién fue Ramón y Cajal?"*, 
 
 ### Agenda (Google Calendar)
 
-JARVIS lee tus calendarios con su **dirección secreta iCal**, sin OAuth ni proyectos en la nube (solo lectura):
+Si has conectado Google Calendar para crear eventos (ver *Crear eventos* más abajo), JARVIS **lee tu agenda de Google
+directamente por su API**, al momento, con ese mismo permiso: no hace falta nada más. Es lo recomendable, porque la
+dirección secreta iCal de Google tarda horas en mostrar los eventos nuevos.
+
+Además (o sin Google conectado) puede leer cualquier calendario con su **dirección secreta iCal** (solo lectura).
+Si un evento llega por los dos caminos, sale una sola vez:
 
 - **Google Calendar**: en la web, ⚙️ → Configuración → (tu calendario) → *Integrar el calendario* →
   **Dirección secreta en formato iCal**.
@@ -240,7 +245,7 @@ origen y confianza.
 - **Qué guarda**: lo que le pides que recuerde, o datos duraderos que cambian respuestas futuras. No guarda charla
   trivial ni duplicados.
 - **Qué nunca guarda**: contraseñas, claves, tokens, tarjetas ni IBAN. Se rechazan aunque el LLM lo intente.
-- **Qué usa en cada respuesta**: como máximo `MEMORY_MAX_ITEMS` (8) recuerdos. Las preferencias entran siempre;
+- **Qué usa en cada respuesta**: como máximo `MEMORY_MAX_ITEMS` (14) recuerdos. Las preferencias entran siempre;
   el resto, por palabras en común con lo que dices (búsqueda FTS5, sin distinguir acentos). El log `jarvis.memory`
   dice por qué eligió cada recuerdo.
 - **Cómo lo gestiona JARVIS**: con las tools `memory_save`, `memory_search`, `memory_update` y `memory_forget`.
@@ -268,6 +273,9 @@ A la izquierda hay un carril de navegación (abajo en el móvil) con cinco secci
   en fichas grandes con su etiqueta («Máxima · 25 °C», «Hora · 17:45»). Se hace en el navegador, sin gastar tokens; si
   llega la ficha del servidor (`/api/insights`), sustituye a las del navegador. Debajo, las herramientas usadas, el modelo
   que ha contestado y los resultados de la búsqueda o de un agente.
+  **Tarjetas visuales** con los datos exactos de cada herramienta (no del texto del modelo): el **tiempo** con iconos
+  (sol, nubes, lluvia...) y la previsión día a día; la **música** de Spotify con su portada; la **agenda** con horas y
+  lugares; los **recordatorios**; las **conversiones** de unidades y divisas; la **hora**; y **Wikipedia** con su imagen.
 - **Agentes**: el encargo directo, el alta de agentes personalizados, las tareas en marcha y el equipo con el modelo de cada uno.
 - **Leads**: los posibles clientes y los perfiles del captador.
 - **Traza**: línea de tiempo de todo lo que pasa (tu turno, herramientas, agentes, Claude, el auditor, avisos).
@@ -438,9 +446,22 @@ Cuando JARVIS responde con datos (usó herramientas o la respuesta es larga), ap
 con los datos clave (*Máxima 22 °C · Cielo soleado · Lista: leche, pan, huevos*). La hace el mismo modelo en segundo
 plano, así que no retrasa la respuesta; gasta una petición más por turno. `INSIGHTS_ENABLED: "false"` las apaga.
 
+**Memoria de conversaciones**: JARVIS guarda lo que habláis en el NAS (`turns.db`, en el dataset) durante 30 días,
+con Groq y con Claude. Así:
+- **tras reiniciar o actualizar** sigue la conversación donde estaba (los últimos turnos de las últimas 12 horas; con
+  Claude, además, retoma la misma sesión);
+- **con Claude, compacta las conversaciones largas**: cuando el contexto pasa de unos 40.000 tokens, la siguiente
+  pregunta empieza una sesión nueva con un resumen de lo último hablado (hecho sin gastar tokens) en vez de arrastrar
+  toda la conversación en cada mensaje;
+- **recuerda conversaciones anteriores**: si preguntas «¿te acuerdas de lo del dentista?», busca en ese registro lo
+  hablado sobre el tema, aunque hayas empezado una conversación nueva u otro día.
+  Los datos que cambian (tiempo, agenda, precios) los vuelve a consultar siempre con las herramientas.
+Aparte están los **recuerdos** (datos sobre ti que guarda con `memory_save`, en *Ajustes → Ver recuerdos*) y tus
+notas de **Obsidian**, que consulta cuando hace falta.
+
 **Resumidor nocturno**: con `SUMMARY_AT: "23:30"` (y Obsidian), cada noche añade a tu nota del día un resumen de lo
-que hablaste con JARVIS: temas, lo que se hizo y lo que quedó pendiente. Para eso guarda las conversaciones del
-día en el NAS (`turns.db`), las borra a los 7 días y omite las líneas que parezcan contraseñas o claves.
+que hablaste con JARVIS: temas, lo que se hizo y lo que quedó pendiente. Lo saca del mismo registro y omite las
+líneas que parezcan contraseñas o claves.
 
 **Modelos gratis y sus límites**: las capas gratuitas tienen tope por minuto y por día, y los agentes gastan mucho
 porque leen páginas enteras. Conviene repartir:

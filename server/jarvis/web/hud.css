@@ -574,3 +574,116 @@ body.no-labels #flow .region { display: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* --- tarjeta del tiempo: iconos dibujados y datos exactos de la herramienta ------------------ */
+.answer-visual { margin: 0 0 18px; }
+.answer-visual[hidden] { display: none; }
+.wx-card { padding: 16px 16px 12px; border-radius: 22px;
+  background: linear-gradient(160deg, rgba(41, 151, 255, .2), rgba(41, 151, 255, .04) 60%), var(--baldosa-2); }
+.wx-now { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 4px 12px; }
+.wx-now .wx { width: 72px; height: 72px; }
+.wx-temp { font-family: var(--sans); font-size: 52px; font-weight: 650; line-height: 1; letter-spacing: -0.04em; }
+.wx-what { display: grid; gap: 1px; min-width: 0; }
+.wx-what b { font-size: 16px; font-weight: 600; }
+.wx-what span { font-size: 13px; color: var(--claro); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wx-what small { font-size: 12.5px; color: var(--apagado); }
+.wx-days { list-style: none; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(50px, 1fr); gap: 4px;
+  margin: 14px -4px 0; padding: 12px 4px 4px; border-top: 1px solid var(--linea); overflow-x: auto; scrollbar-width: none; }
+.wx-days::-webkit-scrollbar { display: none; }
+.wx-days li { display: grid; justify-items: center; gap: 3px; padding: 6px 2px 4px; border-radius: 14px; }
+.wx-days li:first-child { background: rgba(255, 255, 255, .06); }
+.wx-day { font-size: 12px; font-weight: 600; color: var(--claro); white-space: nowrap; }
+.wx-days .wx { width: 34px; height: 34px; }
+.wx-max { font-family: var(--sans); font-size: 16px; font-weight: 650; }
+.wx-min { font-family: var(--sans); font-size: 13px; color: var(--apagado); }
+/* Rango del día frente al de toda la previsión: más alta = más calor ese día. */
+.wx-bar { position: relative; width: 6px; height: 40px; border-radius: 3px; background: rgba(255, 255, 255, .08); overflow: hidden; }
+.wx-bar i { position: absolute; left: 0; right: 0; border-radius: 3px; background: linear-gradient(0deg, #6fdcff, #ffd60a 70%, #ff9f0a); }
+.wx-pop { min-height: 1.2em; font-size: 11.5px; color: var(--apagado); }
+.wx-pop.wet { color: #64b5ff; font-weight: 600; }
+body.big-answers .wx-temp { font-size: 64px; }
+/* Iconos */
+.wx { overflow: visible; }
+.wx-sun circle { fill: #ffd60a; }
+.wx-rays line { stroke: #ffd60a; stroke-width: 3.4; stroke-linecap: round; }
+.wx-moon path { fill: #dfe6ff; }
+.wx-cloud { fill: #e9edf5; }
+.wxi-partly .wx-cloud, .wxi-rain .wx-cloud, .wxi-storm .wx-cloud, .wxi-snow .wx-cloud { fill: #cdd4e0; }
+.wxi-drops line { stroke: #64b5ff; stroke-width: 3.2; stroke-linecap: round; }
+.wx-snow circle { fill: #fff; }
+.wx-fog line { stroke: #aeb4c0; stroke-width: 3.2; stroke-linecap: round; }
+.wx-bolt { fill: #ffd60a; }
+.wx-now .wxi-clear .wx-rays { transform-origin: 0 0; animation: rayos 24s linear infinite; }
+@keyframes rayos { to { transform: rotate(360deg); } }
+
+/* --- tarjetas visuales de la respuesta (música, agenda, recordatorios, conversión, hora, Wikipedia) --- */
+.answer-visual { display: grid; gap: 10px; }
+.vis-card { display: block; padding: 14px 16px; border-radius: 20px; background: var(--baldosa-2); color: var(--texto);
+  text-decoration: none; }
+a.vis-card { transition: background .2s, transform .3s var(--sale); }
+a.vis-card:hover { background: #333336; transform: translateY(-1px); }
+.vis-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.vis-head .icon { color: var(--azul); }
+.vis-head b { flex: 1; font-size: 14.5px; font-weight: 600; }
+.vis-head span { font-size: 12.5px; color: var(--apagado); }
+.vis-empty { margin: 0; font-size: 14px; color: var(--apagado); }
+
+/* Música: portada grande y lo que suena */
+.vis-music { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 14px; align-items: center;
+  background: linear-gradient(135deg, rgba(48, 209, 88, .18), rgba(48, 209, 88, .03) 70%), var(--baldosa-2); }
+.vis-art { position: relative; display: grid; place-items: center; width: 88px; aspect-ratio: 1; border-radius: 12px;
+  background: var(--relleno-2); overflow: hidden; box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+.vis-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.vis-art .icon { width: 30px; height: 30px; color: var(--apagado); }
+.vis-music-body { display: grid; gap: 2px; min-width: 0; }
+.vis-music-body b { font-size: 18px; font-weight: 650; letter-spacing: -0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vis-music-body span:not(.vis-state) { font-size: 14px; color: var(--claro); }
+.vis-music-body small { font-size: 12.5px; color: var(--apagado); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vis-state { justify-self: start; display: inline-flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 12px;
+  font-weight: 600; color: var(--apagado); }
+.vis-state.on { color: var(--verde); }
+.vis-state.on::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--verde);
+  animation: late 1.4s var(--sale) infinite; --live: var(--verde); }
+
+/* Agenda: hora a la izquierda y evento a la derecha */
+.vis-events { list-style: none; display: grid; gap: 6px; margin: 0; padding: 0; }
+.vis-day { margin: 6px 0 0; font-size: 12.5px; font-weight: 600; color: var(--morado-dato); }
+.vis-day:first-child { margin-top: 0; }
+.vis-event { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 12px; padding: 10px 12px; border-radius: 14px;
+  background: rgba(255, 255, 255, .05); }
+.vis-when { display: grid; align-content: start; white-space: nowrap; font-family: var(--sans); font-size: 15px; font-weight: 650; color: var(--azul-dato); }
+.vis-when small { font-size: 12px; font-weight: 500; color: var(--apagado); }
+.vis-what { display: grid; gap: 2px; min-width: 0; }
+.vis-what b { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.vis-what span { font-size: 13px; color: var(--claro); }
+
+/* Recordatorios */
+.vis-list { list-style: none; display: grid; gap: 6px; margin: 0; padding: 0; }
+.vis-list li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 9px 12px;
+  border-radius: 14px; background: rgba(255, 255, 255, .05); }
+.vis-list li.new { background: color-mix(in srgb, var(--azul) 18%, transparent); }
+.vis-list .vis-when { display: inline; font-size: 13px; white-space: nowrap; }
+.vis-list b { font-size: 14.5px; font-weight: 500; }
+.vis-list .vis-empty { display: block; background: none; padding: 0; }
+
+/* Conversión: de -> a */
+.vis-convert { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 12px; }
+.vis-convert .vis-from { font-family: var(--sans); font-size: 18px; color: var(--claro); }
+.vis-convert .icon { color: var(--azul); }
+.vis-convert .vis-to { font-family: var(--sans); font-size: 28px; font-weight: 650; letter-spacing: -0.02em; color: var(--verde-dato); }
+.vis-convert small { grid-column: 1 / -1; font-size: 12px; color: var(--apagado); }
+
+/* Hora */
+.vis-clock { display: grid; gap: 2px; }
+.vis-clock b { font-family: var(--sans); font-size: 56px; font-weight: 650; line-height: 1; letter-spacing: -0.04em; color: var(--azul-dato); }
+.vis-clock span { font-size: 15px; color: var(--claro); }
+
+/* Wikipedia: imagen y resumen */
+.vis-wiki { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 14px; }
+.vis-wiki img { width: 96px; height: 96px; object-fit: cover; border-radius: 12px; }
+.vis-wiki:not(:has(img)) { grid-template-columns: minmax(0, 1fr); }
+.vis-wiki-body { display: grid; gap: 2px; min-width: 0; }
+.vis-src { font-size: 12px; color: var(--apagado); }
+.vis-wiki-body b { font-size: 16px; font-weight: 650; }
+.vis-wiki-body p { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--claro); display: -webkit-box;
+  -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }

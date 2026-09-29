@@ -81,8 +81,13 @@ def when_text(due: datetime, now: datetime) -> str:
     return f"{label} a las {due:%H:%M}"
 
 
+def reminders_card(ctx: ToolContext, store: ReminderStore, now: datetime, new_id: int | None = None) -> None:
+    ctx.cards.append({"kind": "reminders", "items": [
+        {"id": r.id, "when": when_text(r.due, now), "text": r.text, "new": r.id == new_id} for r in store.pending()[:12]]})
+
+
 def reminder_tools(store: ReminderStore) -> list[Tool]:
-    def set_(_ctx: ToolContext, text: str, minutes: int | None = None, at: str = "", day: str = "") -> str:
+    def set_(ctx: ToolContext, text: str, minutes: int | None = None, at: str = "", day: str = "") -> str:
         now = datetime.now(store.tz)
         if minutes is not None:
             due = now + timedelta(minutes=minutes)
@@ -106,11 +111,13 @@ def reminder_tools(store: ReminderStore) -> list[Tool]:
         else:
             raise ToolError("indica 'minutes' o una hora 'at'")
         r = store.add(due.replace(second=0, microsecond=0), text)
+        reminders_card(ctx, store, now, r.id)
         return f"Recordatorio {r.id} para {when_text(r.due, now)}: {r.text}"
 
-    def list_(_ctx: ToolContext) -> str:
+    def list_(ctx: ToolContext) -> str:
         now = datetime.now(store.tz)
         pending = store.pending()
+        reminders_card(ctx, store, now)
         if not pending:
             return "No hay recordatorios pendientes."
         return "\n".join(f"[{r.id}] {when_text(r.due, now)}: {r.text}" for r in pending)

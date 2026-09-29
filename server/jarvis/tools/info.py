@@ -508,14 +508,21 @@ class Currency:
 
 
 def convert_tool(currency: Currency) -> Tool:
-    def run(_ctx: ToolContext, value: float, from_unit: str, to_unit: str) -> str:
+    def card(ctx: ToolContext, left: str, right: str, note: str = "") -> None:
+        ctx.cards.append({"kind": "convert", "from": left[:60], "to": right[:60], "note": note[:80]})
+
+    def run(ctx: ToolContext, value: float, from_unit: str, to_unit: str) -> str:
         if re.fullmatch(r"[A-Za-z]{3}", from_unit.strip()) and re.fullmatch(r"[A-Za-z]{3}", to_unit.strip()) and (
             _key(from_unit) not in UNITS and _key(to_unit) not in UNITS
         ):
             result, date = currency.convert(value, from_unit, to_unit)
             when = f" (cambio del BCE del {date})" if date else ""
-            return f"{_fmt(value)} {from_unit.upper()} = {_fmt(round(result, 2))} {to_unit.upper()}{when}"
-        return f"{_fmt(value)} {from_unit} = {_fmt(convert_units(value, from_unit, to_unit))} {to_unit}"
+            left, right = f"{_fmt(value)} {from_unit.upper()}", f"{_fmt(round(result, 2))} {to_unit.upper()}"
+            card(ctx, left, right, f"Cambio del BCE del {date}" if date else "")
+            return f"{left} = {right}{when}"
+        left, right = f"{_fmt(value)} {from_unit}", f"{_fmt(convert_units(value, from_unit, to_unit))} {to_unit}"
+        card(ctx, left, right)
+        return f"{left} = {right}"
 
     return Tool(
         name="convert",

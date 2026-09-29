@@ -463,3 +463,93 @@ def test_music_always_goes_to_spotify_when_it_is_configured(monkeypatch):
         monkeypatch.setenv(var, "v")
     names = build_registry(config.load_settings()).names()
     assert "spotify_control" in names and "pc_media" not in names
+
+
+def test_weather_for_the_whole_week():
+    asked = []
+
+    def handler(request):
+        asked.append(request.url.params["forecast_days"])
+        days = int(request.url.params["forecast_days"])
+        return httpx.Response(200, json={
+            "current": {"temperature_2m": 20.0, "apparent_temperature": 20.0, "weather_code": 0, "wind_speed_10m": 5.0},
+            "daily": {"time": [f"2026-09-{28 + i:02d}" if 28 + i <= 30 else f"2026-10-{28 + i - 30:02d}" for i in range(days)],
+                      "weather_code": [0] * days, "temperature_2m_min": [15.0] * days,
+                      "temperature_2m_max": [25.0] * days, "precipitation_probability_max": [10] * days},
+        })
+
+    api = OpenMeteo(httpx.Client(transport=httpx.MockTransport(handler)))
+    tool = weather_tool("", api, home_coords=(41.5, 2.1))
+    out = tool.fn(ToolContext(), days=7)
+    lines = out.splitlines()
+    assert len(lines) == 8 and lines[1].startswith("Hoy:") and lines[2].startswith("Mañana:")
+    assert lines[3].startswith("Miércoles 30:") and lines[4].startswith("Jueves 1:")
+    tool.fn(ToolContext())
+    tool.fn(ToolContext(), days=99)
+    assert asked == ["7", "3", "14"]
+    assert tool.parameters["properties"]["days"]["maximum"] == 14 and "esta semana" in tool.description
+
+
+def test_weather_sends_an_exact_card_to_the_hud():
+    def handler(request):
+        return httpx.Response(200, json={
+            "current": {"temperature_2m": 21.6, "apparent_temperature": 22.2, "weather_code": 2, "wind_speed_10m": 9.4,
+                        "is_day": 0},
+            "daily": {"time": ["2026-09-29", "2026-09-30"], "weather_code": [2, 61], "temperature_2m_min": [15.4, 14.6],
+                      "temperature_2m_max": [24.5, 19.2], "precipitation_probability_max": [5, 80]},
+        })
+
+    ctx = ToolContext()
+    weather_tool("", OpenMeteo(httpx.Client(transport=httpx.MockTransport(handler))), home_coords=(1, 2)).fn(ctx, days=2)
+    card = ctx.cards[0]
+    assert card["kind"] == "weather" and card["title"] == "casa"
+    assert card["now"] == {"temp": 22, "feels": 22, "code": 2, "text": "parcialmente nublado", "wind": 9, "day": False}
+    assert card["days"][1] == {"date": "2026-09-30", "label": "Mañana", "code": 61, "text": "lluvia débil",
+                               "min": 15, "max": 19, "rain": 80}
+
+
+def test_tools_send_visual_cards():
+    from datetime import date as _date
+
+    from jarvis.tools.basic import datetime_tool
+    from jarvis.tools.calendar import Calendars, calendar_tool
+    from jarvis.tools.info import Currency, convert_tool
+    from jarvis.tools.reminders import ReminderStore, reminder_tools
+    from jarvis.tools.spotify import music_card
+
+    ctx = ToolContext()
+    datetime_tool("Europe/Madrid").fn(ctx)
+    assert ctx.cards[0]["kind"] == "clock" and ":" in ctx.cards[0]["time"]
+
+    ctx = ToolContext()
+    convert_tool(Currency()).fn(ctx, value=10, from_unit="km", to_unit="m")
+    assert ctx.cards[0] == {"kind": "convert", "from": "10 km", "to": "10.000 m", "note": ""}
+
+    import tempfile
+    store = ReminderStore(tempfile.mktemp(suffix=".db"))
+    set_, list_ = reminder_tools(store)[:2]
+    ctx = ToolContext()
+    set_.fn(ctx, text="Llamar a mamá", minutes=30)
+    items = ctx.cards[0]["items"]
+    assert ctx.cards[0]["kind"] == "reminders" and items[0]["text"] == "Llamar a mamá" and items[0]["new"]
+
+    class OneEvent(Calendars):
+        def events(self, start, days, only=""):
+            from jarvis.tools.calendar import Event
+            s = datetime(start.year, start.month, start.day, 10, 0, tzinfo=self.tz)
+            return [Event(s, s.replace(hour=11), "Dentista", "Sabadell", "google", False)]
+
+    ctx = ToolContext()
+    calendar_tool(OneEvent({})).fn(ctx, day="mañana")
+    ev = ctx.cards[0]["events"][0]
+    assert ctx.cards[0]["kind"] == "agenda" and ctx.cards[0]["title"] == "Mañana"
+    assert (ev["time"], ev["end"], ev["title"], ev["location"]) == ("10:00", "11:00", "Dentista", "Sabadell")
+    assert _date.fromisoformat(ev["date"])
+
+    ctx = ToolContext()
+    music_card(ctx, {"name": "Yellow", "artists": [{"name": "Coldplay"}], "album": {
+        "name": "Parachutes", "images": [{"url": "https://i.scdn.co/image/abc"}]},
+        "external_urls": {"spotify": "https://open.spotify.com/track/1"}}, "sonando")
+    assert ctx.cards[0] == {"kind": "music", "title": "Yellow", "artist": "Coldplay", "album": "Parachutes",
+                            "image": "https://i.scdn.co/image/abc", "url": "https://open.spotify.com/track/1",
+                            "state": "sonando"}

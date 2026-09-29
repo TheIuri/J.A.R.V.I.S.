@@ -8,7 +8,7 @@ from ..config import Settings
 from ..memory import MemoryStore
 from ..obsidian import Vault
 from .basic import datetime_tool, weather_tool
-from .calendar import Calendars, calendar_tool, parse_calendars
+from .calendar import Calendars, calendar_agenda_missing_tool, calendar_tool, parse_calendars
 from .calendar_write import GoogleCalendar, calendar_add_tool, calendar_missing_tool
 from .delegate import delegate_tool
 from .homeassistant import HomeAssistant, ha_tools
@@ -53,10 +53,9 @@ def build_registry(
     registry.register(audit_tool(_snapshot(settings)))  # Claude en el PC; siempre con confirmacion
     if vision:
         registry.register(camera_tool(vision))  # solo se ofrece si el HUD manda foto
-    if calendars is None and settings.calendars:
-        calendars = Calendars(parse_calendars(settings.calendars), settings.timezone)
-    if calendars:
-        registry.register(calendar_tool(calendars))
+    if calendars is None:
+        calendars = make_calendars(settings)
+    registry.register(calendar_tool(calendars) if calendars else calendar_agenda_missing_tool())
     writers = _calendar_writers(settings)
     if writers:
         registry.register(calendar_add_tool(writers, settings.timezone))
@@ -94,15 +93,33 @@ def build_registry(
     return registry
 
 
+_GOOGLE: dict[tuple, GoogleCalendar] = {}
+
+
+def google_calendar(settings: Settings) -> GoogleCalendar | None:
+    """Google Calendar conectado (el mismo para leer la agenda y crear eventos: comparten el access token)."""
+    if not (settings.google_client_id and settings.google_client_secret and settings.google_refresh_token):
+        return None
+    key = (settings.google_client_id, settings.google_refresh_token, settings.google_calendar_id)
+    if key not in _GOOGLE:
+        _GOOGLE[key] = GoogleCalendar(settings.google_client_id, settings.google_client_secret,
+                                      settings.google_refresh_token, settings.google_calendar_id)
+    return _GOOGLE[key]
+
+
+def make_calendars(settings: Settings) -> Calendars | None:
+    """Agenda para leer: Google Calendar por su API (si esta conectado) y los enlaces iCal de CALENDARS."""
+    ics = parse_calendars(settings.calendars) if settings.calendars else {}
+    google = google_calendar(settings)
+    if not ics and not google:
+        return None
+    return Calendars(ics, settings.timezone, google=google)
+
+
 def _calendar_writers(settings: Settings) -> dict:
     """Calendarios donde JARVIS puede crear eventos (cada uno con su inicio de sesion)."""
-    writers: dict = {}
-    if settings.google_client_id and settings.google_client_secret and settings.google_refresh_token:
-        writers["google"] = GoogleCalendar(
-            settings.google_client_id, settings.google_client_secret, settings.google_refresh_token,
-            settings.google_calendar_id,
-        )
-    return writers
+    google = google_calendar(settings)
+    return {"google": google} if google else {}
 
 
 def spotify_configured(settings: Settings) -> bool:

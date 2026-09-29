@@ -95,6 +95,30 @@ class GoogleCalendar(_OAuth):
         url = f"{GOOGLE_API}/calendars/{quote(self.calendar_id, safe='')}/events"
         return self._post_json(url, body).get("htmlLink", "")
 
+    def list_events(self, begin: datetime, end: datetime) -> list[dict[str, Any]]:
+        """Eventos entre dos instantes, al momento (el enlace iCal secreto de Google tarda horas en ponerse al dia).
+        Las repeticiones ya vienen expandidas (singleEvents)."""
+        url = f"{GOOGLE_API}/calendars/{quote(self.calendar_id, safe='')}/events"
+        params: dict[str, Any] = {"timeMin": begin.isoformat(), "timeMax": end.isoformat(), "singleEvents": "true",
+                                  "orderBy": "startTime", "maxResults": 250}
+        items: list[dict[str, Any]] = []
+        for _ in range(4):  # como mucho 1000 eventos
+            try:
+                resp = self._client.get(url, params=params,
+                                        headers={"Authorization": f"Bearer {self.access_token()}"})
+            except httpx.HTTPError as exc:
+                raise ToolError(f"no puedo conectar con {self.name} ({type(exc).__name__})") from exc
+            if resp.status_code in (401, 403):
+                raise ToolError(f"{self.name} no me deja leer la agenda; vuelve a ejecutar calendar_login.py google")
+            if resp.status_code >= 400:
+                raise ToolError(f"{self.name} respondió {resp.status_code}")
+            data = resp.json()
+            items += data.get("items", [])
+            if not data.get("nextPageToken"):
+                break
+            params["pageToken"] = data["nextPageToken"]
+        return items
+
 
 def _when(args: dict[str, Any], tz: ZoneInfo, now: datetime) -> tuple[datetime | date, datetime | date, str]:
     """(inicio, fin, texto para decir). Sin hora = todo el dia."""

@@ -14,11 +14,26 @@ import unicodedata
 
 import httpx
 
-from .registry import Tool, ToolError
+from .registry import Tool, ToolContext, ToolError
 
 API = "https://api.spotify.com/v1"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 KINDS = {"cancion": "track", "artista": "artist", "album": "album", "playlist": "playlist"}
+
+
+def music_card(ctx: ToolContext | None, item: dict, state: str) -> None:
+    """Tarjeta para el HUD: portada, titulo, artista y enlace a Spotify."""
+    if ctx is None or not item:
+        return
+    images = (item.get("album") or {}).get("images") or item.get("images") or []
+    image = next((i.get("url", "") for i in images if str(i.get("url", "")).startswith("https://")), "")
+    url = (item.get("external_urls") or {}).get("spotify", "")
+    ctx.cards.append({
+        "kind": "music", "title": str(item.get("name", ""))[:160],
+        "artist": ", ".join(a.get("name", "") for a in item.get("artists", [])[:3])[:160],
+        "album": str((item.get("album") or {}).get("name", ""))[:160],
+        "image": image, "url": url if url.startswith("https://open.spotify.com/") else "", "state": state,
+    })
 
 
 def _norm(text: str) -> str:
@@ -82,7 +97,7 @@ class Spotify:
         wanted = [d for d in devices if self.device and _norm(self.device) in _norm(d.get("name", ""))]
         return (wanted or devices)[0]["id"]
 
-    def play(self, query: str, kind: str) -> str:
+    def play(self, query: str, kind: str, ctx: ToolContext | None = None) -> str:
         stype = KINDS[kind]
         found = self._api("GET", "/search", params={"q": query, "type": stype, "limit": 1, "market": "ES"}).json()
         items = found.get(f"{stype}s", {}).get("items") or []
@@ -93,6 +108,7 @@ class Spotify:
         body = {"uris": [item["uri"]]} if stype == "track" else {"context_uri": item["uri"]}
         device = self._device_id()
         self._api("PUT", "/me/player/play", params={"device_id": device} if device else None, json=body)
+        music_card(ctx, item, "sonando")
         who = ", ".join(a["name"] for a in item.get("artists", [])[:2])
         return f"Sonando {kind} {item['name']}" + (f" de {who}" if who and stype != "artist" else "") + "."
 
@@ -114,7 +130,7 @@ class Spotify:
             self._api("PUT", "/me/player/shuffle", params={"state": str(action == "aleatorio_si").lower()})
         return f"Hecho: {action.replace('_', ' ')}" + (f" {value}%" if action == "volumen" else "") + "."
 
-    def now_playing(self) -> str:
+    def now_playing(self, ctx: ToolContext | None = None) -> str:
         resp = self._api("GET", "/me/player/currently-playing")
         if resp.status_code == 204 or not resp.content:
             return "No está sonando nada en Spotify."
@@ -124,6 +140,7 @@ class Spotify:
             return "No está sonando nada en Spotify."
         who = ", ".join(a["name"] for a in item.get("artists", []))
         state = "sonando" if data.get("is_playing") else "en pausa"
+        music_card(ctx, item, state)
         return f"{item.get('name', '?')} de {who} ({state})."
 
 
@@ -143,7 +160,7 @@ def spotify_tools(spotify: Spotify) -> list[Tool]:
                 },
                 "required": ["query", "kind"],
             },
-            fn=lambda _ctx, query, kind: spotify.play(query, kind),
+            fn=lambda ctx, query, kind: spotify.play(query, kind, ctx),
         ),
         Tool(
             name="spotify_control",
@@ -165,6 +182,6 @@ def spotify_tools(spotify: Spotify) -> list[Tool]:
             name="spotify_now_playing",
             description="Qué canción está sonando ahora en Spotify.",
             parameters={"type": "object", "properties": {}},
-            fn=lambda _ctx: spotify.now_playing(),
+            fn=lambda ctx: spotify.now_playing(ctx),
         ),
     ]

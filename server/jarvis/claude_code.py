@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Callable
 
 log = logging.getLogger(__name__)
+COMPACT_TOKENS = 40_000
 
 # Versiones que se ofrecen en el HUD (CLAUDE_MODELS las cambia). El id es el nombre del modelo que se
 # pasa a Claude Code con --model; el primero es el de por defecto.
@@ -125,7 +126,17 @@ class ClaudeCode:
         self.home = Path(home)  # config y sesiones de Claude Code (en el dataset: sobreviven a reinicios)
         self.memories = memories
         self.timezone = timezone
-        self.sessions: dict[str, str] = {}  # sesion del HUD -> sesion de Claude Code
+        # Sesion del HUD -> sesion de Claude Code. Se guarda en el dataset: tras reiniciar o actualizar JARVIS,
+        # Claude sigue la misma conversacion (--resume; sus ficheros de sesion tambien estan en self.home).
+        self.sessions: dict[str, str] = self._load_sessions()
+        # (sesion, texto) -> contexto para una conversacion nueva: lo ultimo hablado y conversaciones relacionadas.
+        self.context: Callable[..., str] = lambda session, text, fresh=False: ""
+        # Compactar: cuando el contexto de una conversacion pasa de este tamano (tokens), la siguiente pregunta
+        # empieza una sesion nueva con un resumen hecho sin LLM (lo ultimo hablado + recuerdos): gasta mucho menos
+        # que arrastrar toda la conversacion en cada mensaje.
+        self.compact_at = COMPACT_TOKENS
+        self.context_tokens: dict[str, int] = {}
+        self.compacted: set[str] = set()
         self._lock = threading.Lock()  # una conversacion a la vez (las sesiones son compartidas)
         self._stats_lock = threading.Lock()
 
@@ -180,6 +191,25 @@ class ClaudeCode:
 
     def reset(self, session: str) -> None:
         self.sessions.pop(session, None)
+        self._save_sessions()
+
+    def _load_sessions(self) -> dict[str, str]:
+        try:
+            data = json.loads((self.home / "sessions.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return {str(k)[:40]: v for k, v in data.items() if isinstance(v, str) and SESSION_RE.match(v)} \
+            if isinstance(data, dict) else {}
+
+    def _save_sessions(self) -> None:
+        try:
+            self.home.mkdir(parents=True, exist_ok=True)
+            tmp = self.home / "sessions.json.tmp"
+            tmp.write_text(json.dumps(self.sessions), encoding="utf-8")
+            tmp.chmod(0o600)
+            tmp.replace(self.home / "sessions.json")
+        except OSError:
+            log.warning("no se pudieron guardar las sesiones de Claude")
 
     def command(self, alias: str, resume: str | None, max_turns: int = MAX_TURNS,
                 tools: tuple[str, ...] = ALLOWED, extra: list[str] | None = None) -> list[str]:
@@ -214,19 +244,30 @@ class ClaudeCode:
             raise ValueError(f"modelo desconocido: {model}")
         with self._lock:  # una conversacion con Claude a la vez
             resume = self.sessions.get(session)
-            prompt = text if resume else self._intro() + text
+            if resume:
+                prompt = text
+            else:
+                fresh = session in self.compacted
+                self.compacted.discard(session)
+                try:
+                    extra = self.context(session, text, fresh=fresh)
+                except Exception:
+                    log.exception("no se pudo preparar el contexto de la conversacion")
+                    extra = ""
+                prompt = self._intro(extra) + text
             if self.full and self.mcp_config:
                 tools = FULL_TOOLS
             else:
                 tools = ALLOWED + (MCP_TOOLS if self.mcp_config else ())
             return self._run(model, resume, prompt, session, emit, tools=tools, mcp=True)
 
-    def _intro(self) -> str:
+    def _intro(self, extra: str = "") -> str:
         try:
             mem = self.memories()
         except Exception:
             mem = []
-        memories = ("\nLo que sabes del usuario:\n" + "\n".join(f"- {m}" for m in mem[:30])) if mem else ""
+        memories = ("\nLo que sabes del usuario:\n" + "\n".join(f"- {m}" for m in mem[:60])) if mem else ""
+        memories += extra.rstrip()
         now = datetime.now().strftime("%A %d/%m/%Y %H:%M")
         if self.full and self.system:
             return FULL_INTRO.format(system=self.system, now=now, memories=memories)
@@ -256,6 +297,7 @@ class ClaudeCode:
              raw: bool = False) -> tuple[str, list[str]]:
         names: dict[str, str] = {}
         used: list[str] = []
+        context = 0  # tokens de contexto de la ultima llamada al modelo
         session_id = None
         started: dict[str, float] = {}
         result = None
@@ -282,9 +324,14 @@ class ClaudeCode:
                 kind = msg.get("type")
                 if msg.get("session_id") and SESSION_RE.match(str(msg["session_id"])):
                     session_id = msg["session_id"]
-                    if session:
+                    if session and self.sessions.get(session) != session_id:
                         self.sessions[session] = session_id
+                        self._save_sessions()
                 if kind == "assistant":
+                    u = msg.get("message", {}).get("usage") or {}
+                    size = sum(int(u.get(k) or 0) for k in
+                               ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+                    context = max(context, size)
                     for item in msg.get("message", {}).get("content", []):
                         if item.get("type") == "tool_use":
                             name = TOOL_NAMES.get(item.get("name"), item.get("name", "?"))
@@ -316,12 +363,22 @@ class ClaudeCode:
         failed = not result or result.get("is_error") or not str(result.get("result", "")).strip()
         self._count(alias, result, bool(failed))
         if failed:
-            if session:
-                self.sessions.pop(session, None)  # empezar limpio la proxima vez
+            if session and self.sessions.pop(session, None):  # empezar limpio la proxima vez
+                self._save_sessions()
             detail = (result or {}).get("result") or stderr.strip().splitlines()[-1:] or ["sin respuesta"]
             detail = detail if isinstance(detail, str) else detail[0]
             log.warning("Claude Code fallo: %s", _short(detail, 300))
             if (result or {}).get("subtype") == "error_max_turns":
                 raise MaxTurns(session_id)
             raise RuntimeError(f"Claude no ha respondido: {_short(detail, 200)}")
+        if session:
+            self._maybe_compact(session, context)
         return str(result["result"]).strip(), used
+
+    def _maybe_compact(self, session: str, context: int) -> None:
+        self.context_tokens[session] = context
+        if context >= self.compact_at and self.sessions.pop(session, None):
+            log.info("Claude: la conversacion %s ocupa %d tokens; la siguiente empieza compactada", session, context)
+            self.compacted.add(session)
+            self.context_tokens.pop(session, None)
+            self._save_sessions()

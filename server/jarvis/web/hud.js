@@ -836,6 +836,247 @@ function fillFacts(items, title = "") {
 
 let answerAt = 0;
 let answerTools = [];
+let answerVisual = false; // la respuesta tiene tarjeta visual (tiempo...): sus datos exactos mandan sobre el texto
+
+// --- tarjeta del tiempo: iconos dibujados y datos exactos de la herramienta (no del texto del modelo) -----
+
+function weatherKind(code) {
+  if (code <= 1) return "clear";
+  if (code === 2) return "partly";
+  if (code === 3) return "cloudy";
+  if (code === 45 || code === 48) return "fog";
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return "snow";
+  if (code >= 95) return "storm";
+  return "rain";
+}
+
+const WX_CLOUD = '<path class="wx-cloud" d="M19 50h27a10 10 0 0 0 1.5-19.9A14 14 0 0 0 20.2 33 8.6 8.6 0 0 0 19 50z"/>';
+const WX_SUN_RAYS = [0, 45, 90, 135, 180, 225, 270, 315]
+  .map((a) => `<line x1="0" y1="-17" x2="0" y2="-22" transform="rotate(${a})"/>`).join("");
+
+function weatherIcon(code, isDay = true) {
+  const kind = weatherKind(code);
+  const sun = (x, y, s) => isDay
+    ? `<g class="wx-sun" transform="translate(${x} ${y}) scale(${s})"><circle r="11"/><g class="wx-rays">${WX_SUN_RAYS}</g></g>`
+    : `<g class="wx-moon" transform="translate(${x} ${y}) scale(${s})"><path d="M6 -13a14 14 0 1 0 7 20 11 11 0 0 1-7-20z"/></g>`;
+  const up = (svg) => `<g transform="translate(0 -7)">${svg}</g>`;
+  let body;
+  if (kind === "clear") body = sun(32, 32, 1);
+  else if (kind === "partly") body = sun(24, 24, 0.72) + WX_CLOUD;
+  else if (kind === "cloudy") body = WX_CLOUD;
+  else if (kind === "fog") body = up(WX_CLOUD) + '<g class="wx-fog"><line x1="14" y1="52" x2="50" y2="52"/><line x1="20" y1="58" x2="44" y2="58"/></g>';
+  else if (kind === "snow") body = up(WX_CLOUD) + '<g class="wx-snow"><circle cx="22" cy="52" r="2.4"/><circle cx="32" cy="57" r="2.4"/><circle cx="42" cy="52" r="2.4"/></g>';
+  else if (kind === "storm") body = up(WX_CLOUD) + '<path class="wx-bolt" d="M34 42l-8 11h7l-4 9 11-13h-7l4-7z"/>';
+  else body = up(WX_CLOUD) + '<g class="wxi-drops"><line x1="22" y1="49" x2="19" y2="57"/><line x1="32" y1="49" x2="29" y2="59"/><line x1="42" y1="49" x2="39" y2="57"/></g>';
+  return `<svg class="wx wxi-${kind}" viewBox="0 0 64 64" aria-hidden="true">${body}</svg>`;
+}
+
+function showWeather(card) {
+  const box = $("answer-visual");
+  const now = card.now || {};
+  const days = (card.days || []).filter((d) => d.min != null && d.max != null);
+  const lo = Math.min(...days.map((d) => d.min));
+  const hi = Math.max(...days.map((d) => d.max));
+  const span = Math.max(1, hi - lo);
+  const el = document.createElement("section");
+  el.className = "wx-card";
+  el.setAttribute("aria-label", `El tiempo en ${card.title}`);
+  // Solo números y textos fijos de la herramienta; aun así, todo lo de fuera va como texto.
+  el.innerHTML = `
+    <div class="wx-now">
+      ${weatherIcon(now.code, now.day !== false)}
+      <div class="wx-temp num"></div>
+      <div class="wx-what"><b></b><span></span><small></small></div>
+    </div>
+    <ol class="wx-days"></ol>`;
+  el.querySelector(".wx-temp").textContent = now.temp != null ? `${now.temp}°` : "—";
+  el.querySelector(".wx-what b").textContent = now.text ? now.text.charAt(0).toUpperCase() + now.text.slice(1) : "";
+  el.querySelector(".wx-what span").textContent = card.title || "";
+  el.querySelector(".wx-what small").textContent = [now.feels != null ? `Sensación ${now.feels}°` : "",
+    now.wind != null ? `Viento ${now.wind} km/h` : ""].filter(Boolean).join(" · ");
+  const list = el.querySelector(".wx-days");
+  for (const d of days) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="wx-day"></span>${weatherIcon(d.code)}<span class="wx-max num"></span>
+      <span class="wx-bar"><i></i></span><span class="wx-min num"></span><span class="wx-pop num"></span>`;
+    li.title = d.text;
+    li.querySelector(".wx-day").textContent = d.label.replace(/^(\p{L}{3})\p{L}+ (\d+)$/u, "$1 $2"); // Jueves 1 -> Jue 1
+    li.querySelector(".wx-max").textContent = `${d.max}°`;
+    li.querySelector(".wx-min").textContent = `${d.min}°`;
+    const bar = li.querySelector(".wx-bar i");
+    bar.style.bottom = `${((d.min - lo) / span) * 100}%`;
+    bar.style.height = `${Math.max(10, ((d.max - d.min) / span) * 100)}%`;
+    const rain = li.querySelector(".wx-pop");
+    rain.textContent = d.rain != null && d.rain >= 20 ? `${d.rain}%` : "";
+    rain.classList.toggle("wet", (d.rain || 0) >= 50);
+    list.append(li);
+  }
+  list.dataset.n = String(days.length);
+  addVisual(el);
+}
+
+// Añade una tarjeta visual a la respuesta (puede haber varias: el resumen de buenos días trae tiempo y agenda).
+function addVisual(el) {
+  const box = $("answer-visual");
+  box.append(el);
+  box.hidden = false;
+  answerVisual = true;
+  $("answer-empty").hidden = true;
+  $("answer-card").hidden = false;
+  fillFacts([]); // los datos ya están en las tarjetas, exactos
+}
+
+function node(tag, cls = "", text = "") {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text) n.textContent = text;
+  return n;
+}
+
+function httpsUrl(url) {
+  return /^https:\/\//.test(url || "") ? url : "";
+}
+
+// Iconos de un solo trazo para las tarjetas (mismo estilo que el resto del HUD).
+const VIS_ICON = {
+  calendar: '<svg class="icon" viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v10a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5zM4 10h16M8.5 3v4M15.5 3v4"/></svg>',
+  bell: '<svg class="icon" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15zM10 20.5a2.2 2.2 0 0 0 4 0"/></svg>',
+  swap: '<svg class="icon" viewBox="0 0 24 24"><path d="M5 8.5h13l-3.5-3.5M19 15.5H6l3.5 3.5"/></svg>',
+  music: '<svg class="icon" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>',
+};
+
+function visHead(icon, title, sub = "") {
+  const h = node("header", "vis-head");
+  h.insertAdjacentHTML("afterbegin", VIS_ICON[icon] || "");
+  h.append(node("b", "", title));
+  if (sub) h.append(node("span", "", sub));
+  return h;
+}
+
+function showMusic(c) {
+  const el = node(c.url ? "a" : "section", "vis-card vis-music");
+  if (c.url) {
+    el.href = c.url;
+    el.target = "_blank";
+    el.rel = "noopener noreferrer";
+  }
+  const art = node("div", "vis-art");
+  if (httpsUrl(c.image)) {
+    const img = node("img");
+    img.src = c.image;
+    img.alt = `Portada de ${c.album || c.title}`;
+    img.referrerPolicy = "no-referrer";
+    img.onerror = () => img.remove();
+    art.append(img);
+  }
+  art.insertAdjacentHTML("beforeend", VIS_ICON.music);
+  const body = node("div", "vis-music-body");
+  body.append(node("span", `vis-state${c.state === "sonando" ? " on" : ""}`, c.state === "sonando" ? "Sonando en Spotify" : "En pausa"),
+    node("b", "", c.title), node("span", "", c.artist));
+  if (c.album) body.append(node("small", "", c.album));
+  el.append(art, body);
+  addVisual(el);
+}
+
+function showAgenda(c) {
+  const el = node("section", "vis-card vis-agenda");
+  const events = c.events || [];
+  el.append(visHead("calendar", `Agenda · ${c.title}`, events.length ? `${events.length} ${events.length === 1 ? "evento" : "eventos"}` : ""));
+  if (!events.length) {
+    el.append(node("p", "vis-empty", "Nada en la agenda."));
+    return addVisual(el);
+  }
+  const list = node("ol", "vis-events");
+  let day = null;
+  for (const e of events) {
+    if (e.day !== day && (c.title.startsWith("Próximos") || events.some((x) => x.day !== events[0].day))) {
+      day = e.day;
+      list.append(node("li", "vis-day", e.day));
+    }
+    const li = node("li", "vis-event");
+    const when = node("span", "vis-when num", e.time || "Todo el día");
+    if (e.end) when.append(node("small", "", e.end));
+    const what = node("div", "vis-what");
+    what.append(node("b", "", e.title));
+    if (e.location) what.append(node("span", "", e.location));
+    li.append(when, what);
+    list.append(li);
+  }
+  el.append(list);
+  addVisual(el);
+}
+
+function showReminders(c) {
+  const el = node("section", "vis-card vis-reminders");
+  const items = c.items || [];
+  el.append(visHead("bell", "Recordatorios", items.length ? `${items.length} pendientes` : ""));
+  const list = node("ul", "vis-list");
+  for (const r of items) {
+    const li = node("li", r.new ? "new" : "");
+    li.append(node("span", "vis-when", r.when), node("b", "", r.text));
+    list.append(li);
+  }
+  if (!items.length) list.append(node("li", "vis-empty", "No hay recordatorios pendientes."));
+  el.append(list);
+  addVisual(el);
+}
+
+function showConvert(c) {
+  const el = node("section", "vis-card vis-convert");
+  el.append(node("span", "vis-from num", c.from));
+  el.insertAdjacentHTML("beforeend", VIS_ICON.swap);
+  el.append(node("b", "vis-to num", c.to));
+  if (c.note) el.append(node("small", "", c.note));
+  addVisual(el);
+}
+
+function showClock(c) {
+  const el = node("section", "vis-card vis-clock");
+  el.append(node("b", "num", c.time), node("span", "", c.date));
+  addVisual(el);
+}
+
+function showWiki(c) {
+  const url = httpsUrl(c.url);
+  const el = node(url ? "a" : "section", "vis-card vis-wiki");
+  if (url) {
+    el.href = url;
+    el.target = "_blank";
+    el.rel = "noopener noreferrer";
+  }
+  if (httpsUrl(c.image)) {
+    const img = node("img");
+    img.src = c.image;
+    img.alt = c.title;
+    img.loading = "lazy";
+    img.referrerPolicy = "no-referrer";
+    img.onerror = () => img.remove();
+    el.append(img);
+  }
+  const body = node("div", "vis-wiki-body");
+  body.append(node("span", "vis-src", "Wikipedia"), node("b", "", c.title), node("p", "", c.text));
+  el.append(body);
+  addVisual(el);
+}
+
+const VISUALS = { weather: showWeather, music: showMusic, agenda: showAgenda, reminders: showReminders,
+  convert: showConvert, clock: showClock, wiki: showWiki };
+
+function clearVisual() {
+  answerVisual = false;
+  $("answer-visual").hidden = true;
+  $("answer-visual").textContent = "";
+}
+
+// Tarjetas que llegan de las herramientas: las del tiempo van a la respuesta; el resto, a Resultados.
+function routeCards(cards) {
+  const rest = [];
+  for (const c of cards || []) {
+    if (VISUALS[c.kind]) VISUALS[c.kind](c);
+    else rest.push(c);
+  }
+  if (rest.length) showCards(rest);
+}
 
 // Muestra una respuesta (o un aviso) en el panel de la derecha.
 function showAnswer({ q, text, label = "" }) {
@@ -843,10 +1084,11 @@ function showAnswer({ q, text, label = "" }) {
   $("answer-empty").hidden = true;
   $("answer-card").hidden = false;
   $("answer-card").classList.toggle("is-notice", !!label);
+  if (label) clearVisual(); // un aviso no es la respuesta del tiempo
   if (q !== undefined) $("answer-q").textContent = q ? `› ${q}` : label;
   const same = $("answer-text").dataset.raw === (text || "");
   renderRich($("answer-text"), text || "");
-  fillFacts(factsOf(text || ""));
+  if (!answerVisual) fillFacts(factsOf(text || ""));
   if (same) return; // la misma respuesta que ya llegó en directo: sin repetir la entrada
   const card = $("answer-card");
   card.classList.remove("fresh");
@@ -862,6 +1104,7 @@ function showQuestion(q) {
   $("answer-text").textContent = "";
   $("answer-text").dataset.raw = "";
   fillFacts([]);
+  clearVisual();
   setAnswerTools([]);
 }
 
@@ -1028,7 +1271,7 @@ async function ask(path, init) {
     setState("idle");
     return;
   }
-  if (body.cards?.length && $("cards").hidden) showCards(body.cards); // servidor sin directo
+  if (body.cards?.length && $("cards").hidden && !answerVisual) routeCards(body.cards); // servidor sin directo
   showTurn(body);
   if (body.audio_wav_b64 && prefs.voice) await playWav(body.audio_wav_b64);
   else setState("idle");
@@ -1141,6 +1384,7 @@ async function resetConversation() {
   $("log").textContent = "";
   $("answer-card").hidden = true;
   $("answer-empty").hidden = false;
+  clearVisual();
   hideCards();
   showSource("");
 }
@@ -1601,7 +1845,7 @@ function onFlow(ev) {
       break;
     }
     case "cards":
-      showCards(ev.cards || []);
+      routeCards(ev.cards);
       break;
     case "reply":
       showAnswer({ text: ev.text });
@@ -2139,7 +2383,7 @@ async function loadCalendar() {
   }
   $("calendar-box").hidden = false;
   $("calendar-state").textContent = data.google
-    ? "Google Calendar: conectado. Pide «crea un evento…» y te pedirá confirmación antes de crearlo."
+    ? "Google Calendar: conectado. Lee tu agenda al momento y crea eventos (siempre te pide confirmación antes)."
     : "Sin calendario conectado. Para Google Calendar, sigue «Crear eventos» en el README.";
 }
 
@@ -2284,7 +2528,7 @@ function showInsight(card, quiet = false) {
   const rgb = REGIONS[idx].color;
   const items = (card.items || []).map((i) => ({ k: i.k, v: i.v }));
   const current = !$("answer-card").hidden && Date.now() - answerAt < 90000;
-  if (current || $("answer-card").hidden) {
+  if ((current && !answerVisual) || $("answer-card").hidden) {
     if (!current) {
       $("answer-empty").hidden = true;
       $("answer-card").hidden = false;
