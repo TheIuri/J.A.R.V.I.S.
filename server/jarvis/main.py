@@ -37,6 +37,7 @@ from .notes_index import NotesIndex
 from .notify import NoticeBoard, NtfyPush, parse_quiet
 from .obsidian import Vault
 from .pipeline import PENDING_TTL_S, Assistant, TurnResult, is_affirmative, is_negative
+from .plans import Planner, plan_tool
 from .prices import PriceStore
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
@@ -162,6 +163,9 @@ def build_assistant(settings: Settings) -> Assistant:
         if assistant.prices is not None:
             for tool in price_tools(assistant.prices, lambda: [a for a in team.available if a in PRICE_AGENTS]):
                 tools.register(tool)
+        # Planes de varios pasos: reparte un encargo grande entre varios agentes y junta un solo informe.
+        assistant.planner = Planner(team, agent_llm, settings.timezone)
+        tools.register(plan_tool(assistant.planner))
         log.info("Agentes: %s (informes en %s)", ", ".join(team.available), "Obsidian" if vault else "memoria")
     if settings.claude_token:
         store = assistant.memory
@@ -253,6 +257,7 @@ class ChatRequest(BaseModel):
     speak: bool = True
     pc_apps: list[str] | None = None  # apps que el cliente de PC permite abrir; None = sin acciones de PC
     model: str | None = None  # proveedor elegido en el HUD (groq, gemini...); None = el orden configurado
+    about: int | None = None  # id de un encargo: la pregunta es sobre ese informe, no se busca nada nuevo
     image: str | None = None  # foto de la camara del HUD (JPEG/PNG en base64), solo si esta encendida
 
 
@@ -353,7 +358,7 @@ def _image(b64: str | None) -> str | None:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def _stream(fn, *args, model: str | None = None, image: str | None = None) -> StreamingResponse:
+def _stream(fn, *args, model: str | None = None, image: str | None = None, about: str = "") -> StreamingResponse:
     """Ejecuta el turno en un hilo y manda cada evento del pipeline como una linea JSON (NDJSON).
 
     La ultima linea es {"type": "done", ...respuesta completa} o {"type": "error", "detail": ...}.
@@ -362,7 +367,9 @@ def _stream(fn, *args, model: str | None = None, image: str | None = None) -> St
 
     def work() -> None:
         try:
-            events.put({"type": "done", **_to_json(fn(*args, on_event=events.put, model=model, image=image))})
+            extra = {"about": about} if about else {}  # solo handle_text lo entiende
+            events.put({"type": "done",
+                        **_to_json(fn(*args, on_event=events.put, model=model, image=image, **extra))})
         except LLMError as exc:
             log.error("%s", exc)
             events.put({"type": "error", "detail": str(exc)})
@@ -521,9 +528,9 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         team = web_team()
         return {"status": team.status_text(only=team.is_web)}
 
-    def run(fn, *args) -> dict:
+    def run(fn, *args, **kw) -> dict:
         try:
-            return _to_json(fn(*args))
+            return _to_json(fn(*args, **{k: v for k, v in kw.items() if v}))
         except LLMError as exc:
             log.error("%s", exc)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -549,11 +556,15 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
     ) -> dict:
         return run(state["assistant"].handle_audio, _read_audio(audio), session, speak, _parse_apps(pc_apps))
 
+    def _about(req: ChatRequest) -> str:
+        return state["assistant"].about_job(req.about) if req.about else ""
+
     @app.post("/api/chat", dependencies=[Depends(require_token)])
     def chat(req: ChatRequest) -> dict:
         if not req.text.strip():
             raise HTTPException(status_code=400, detail="Texto vacio")
-        return run(state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps)
+        return run(state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps,
+                   about=_about(req))
 
     # Igual que /api/voice y /api/chat, pero en directo: el HUD dibuja cada paso según ocurre.
     @app.post("/api/voice/stream", dependencies=[Depends(require_token)])
@@ -577,7 +588,7 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             raise HTTPException(status_code=400, detail="Texto vacio")
         return _stream(
             state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps,
-            model=req.model, image=_image(req.image),
+            model=req.model, image=_image(req.image), about=_about(req),
         )
 
     @app.post("/api/agent_event", dependencies=[Depends(require_token)])
@@ -871,7 +882,9 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             # Sin un "si" claro pero tampoco un "no": si Claude vuelve a pedir la misma accion, se hace.
             again = waiting[0] if waiting and time.monotonic() < waiting[1] and not is_negative(text) else None
             news = a.take_news()  # informes de agentes terminados desde el ultimo mensaje
-            prompt = f"{news}\n\nMensaje del usuario: {text}" if news else text
+            about = a.about_job(req.about) if req.about else ""
+            head = "\n\n".join(p for p in (news, about) if p)
+            prompt = f"{head}\n\nMensaje del usuario: {text}" if head else text
             try:
                 with state["claude_lock"]:  # las herramientas saben a que conversacion responder
                     state["claude_session"], state["claude_cards"] = session, []

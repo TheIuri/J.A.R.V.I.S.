@@ -946,6 +946,8 @@ const VIS_ICON = {
   report: '<svg class="icon"><use href="#i-report"/></svg>',
   music: '<svg class="icon" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>',
   price: '<svg class="icon" viewBox="0 0 24 24"><path d="M4 18.5 9.5 13l3.5 3 6.5-7.5M20 5v5h-5"/></svg>',
+  ask: '<svg class="icon"><use href="#i-ask"/></svg>',
+  plan: '<svg class="icon" viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9"/><circle cx="19" cy="18" r="2"/></svg>',
 };
 
 function visHead(icon, title, sub = "") {
@@ -1196,6 +1198,7 @@ function showReport(c) {
   const more = iconButton("expand", "Ver completo", () => openReportViewer(c, slug));
   tools.append(
     more,
+    iconButton("ask", "Preguntar", () => askAboutReport(c.job, c.task)),
     iconButton("report", "PDF", () => printReport(el)),
     iconButton("copy", "Copiar", (e) => copyText(c.report, e.currentTarget)),
     iconButton("download", "Descargar", () => download(`${slug || "informe"}.md`, c.report, "text/markdown")),
@@ -1227,6 +1230,8 @@ function openReportViewer(c, slug) {
   paper.append(head, renderMarkdown(c.report));
   if (c.note) paper.append(node("p", "paper-note", `Guardado en Obsidian: ${c.note}`));
   $("viewer-title").textContent = `Informe · ${c.label || "agente"}`;
+  $("viewer-ask").hidden = !c.job;
+  $("viewer-ask").onclick = () => askAboutReport(c.job, c.task);
   $("viewer-pdf").onclick = () => printReport(paper);
   $("viewer-copy").onclick = (e) => copyText(c.report, e.currentTarget);
   $("viewer-download").onclick = () => download(`${slug || "informe"}.md`, c.report, "text/markdown");
@@ -1302,6 +1307,41 @@ function showPrices(c) {
     now.classList.toggle("is-low", !!item.down);
     li.append(now);
     if (item.best && item.best !== item.price) li.append(node("span", "price-best num", `mín. ${item.best}`));
+    list.append(li);
+  }
+  if (list.children.length) el.append(list);
+  addVisual(el);
+}
+
+// Le falta un dato al encargo: se pregunta antes de gastar un agente, con opciones de un toque.
+function showAsk(label, question, options, task) {
+  const el = node("section", "vis-card vis-ask");
+  el.append(visHead("ask", label || "Antes de empezar", ""));
+  el.append(node("p", "vis-ask-q", question));
+  const chips = node("div", "vis-chips");
+  for (const opt of options || []) {
+    const b = node("button", "chip-btn", opt);
+    b.type = "button";
+    b.addEventListener("click", () => {
+      chips.querySelectorAll("button").forEach((x) => (x.disabled = true));
+      ensureAudio();
+      sendText(task ? `${task} · ${opt}` : opt);
+    });
+    chips.append(b);
+  }
+  el.append(chips);
+  addVisual(el);
+}
+
+// Un plan repartido entre varios agentes: se ven los pasos y, al final, el informe único.
+function showPlan(ev, done) {
+  const el = node("section", "vis-card vis-plan");
+  el.append(visHead("plan", "Plan", done ? "terminado" : `${(ev.steps || []).length} pasos`));
+  if (ev.task) el.append(node("p", "vis-task", ev.task));
+  const list = node("ol", "plan-steps");
+  for (const s of ev.steps || []) {
+    const li = node("li", s.state === "terminado" ? "done" : "");
+    li.append(node("b", "", s.agent), node("span", "", s.task));
     list.append(li);
   }
   if (list.children.length) el.append(list);
@@ -1423,11 +1463,35 @@ async function askVoice(wav) {
   return askClaude(text);
 }
 
+// La siguiente pregunta va sobre un informe ya hecho: se contesta con él, sin lanzar agentes ni buscar.
+let askAbout = null;
+
+function askAboutReport(job, task) {
+  askAbout = job || null;
+  const chip = $("about-chip");
+  chip.hidden = !askAbout;
+  chip.querySelector("span").textContent = task ? `Sobre: ${task}` : "Sobre el informe";
+  closeReportViewer();
+  const box = $("text");
+  box.placeholder = askAbout ? "Pregunta sobre el informe (ordénalo, fíltralo, resúmelo…)" : "…o escribe aquí y pulsa Enter";
+  box.focus();
+}
+
+function clearAbout() {
+  askAbout = null;
+  $("about-chip").hidden = true;
+  $("text").placeholder = "…o escribe aquí y pulsa Enter";
+}
+
+$("about-chip").addEventListener("click", clearAbout);
+
 function askClaude(text) {
+  const about = askAbout;
+  clearAbout();
   return ask("/claude/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, session: SESSION, model: selectedModel() }),
+    body: JSON.stringify({ text, session: SESSION, model: selectedModel(), about }),
   });
 }
 
@@ -1586,7 +1650,8 @@ function showTurn(body) {
 
 async function sendText(text) {
   if (isClaude()) return askClaude(text);
-  const payload = { text, session: SESSION, pc_apps: pcApps, model: selectedModel() || null, image: snapshot() };
+  const payload = { text, session: SESSION, pc_apps: pcApps, model: selectedModel() || null, image: snapshot(), about: askAbout };
+  clearAbout();
   await ask("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2222,7 +2287,7 @@ function onActivity(ev) {
       if (ev.report) {
         // El informe entero en la respuesta: tabla, enlaces, PDF.
         if (state === "idle" || state === "error") showQuestion(ev.task || label);
-        showReport({ label, task: ev.task, report: ev.report, note: ev.note });
+        showReport({ label, task: ev.task, report: ev.report, note: ev.note, job: ev.job });
       }
       if (ev.cards?.length) showOptions(label, ev.cards, ev.note, rgb);
       retireSatellite(sat, 6000);
@@ -2236,6 +2301,29 @@ function onActivity(ev) {
       trace(label, `reutiliza el informe del ${fmtDay(ev.date)} (0 tokens): ${ev.summary || ""}`, rgb);
       if (ev.cards?.length) showOptions(label, ev.cards, ev.note, rgb);
       retireSatellite(sat, 5000);
+      break;
+    case "agent_ask":
+      trace(label, `pregunta antes de empezar: ${ev.question}`, rgb);
+      if (state === "idle" || state === "error") showQuestion(ev.task || "");
+      showAsk(label, ev.question, ev.options, ev.task);
+      retireSatellite(sat, 1000);
+      break;
+    case "plan_start":
+      sat.span.textContent = `${(ev.steps || []).length} pasos`;
+      trace(label, `reparte el encargo en ${(ev.steps || []).length} pasos`, rgb);
+      showPlan(ev, false);
+      break;
+    case "plan_done":
+      sat.state = "done";
+      sat.el.classList.add("done");
+      sat.span.textContent = ev.summary || "terminado";
+      trace(label, `plan terminado: ${ev.summary || ""}`, [48, 209, 88]);
+      if (ev.report) showReport({ label: "El plan", task: ev.task, report: ev.report, note: ev.note });
+      retireSatellite(sat, 6000);
+      break;
+    case "plan_error":
+      trace(label, `el plan ha fallado: ${ev.detail || ""}`, [255, 69, 58]);
+      retireSatellite(sat, 4000);
       break;
     case "price_drop":
       // Ha bajado algo que vigilabas: la gráfica y el aviso van a la respuesta.
@@ -2509,7 +2597,7 @@ async function loadAgents() {
       view.addEventListener("click", () => {
         selectView("home");
         showQuestion(j.task);
-        showReport({ label: j.label, task: j.task, report: j.report, note: j.note });
+        showReport({ label: j.label, task: j.task, report: j.report, note: j.note, job: j.id });
         $("answer").scrollIntoView({ block: "start", behavior: reducedMotion ? "auto" : "smooth" });
       });
       li.append(view);

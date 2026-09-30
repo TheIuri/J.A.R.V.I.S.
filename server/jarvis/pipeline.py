@@ -142,6 +142,9 @@ class Assistant:
         self.turn_log = None  # turnlog.TurnLog: conversaciones del dia para el resumen nocturno
         self.activity = None  # activity.ActivityLog: trazabilidad de agentes para el HUD
         self.team = None  # agents.AgentTeam
+        self.planner = None  # plans.Planner: encargos grandes repartidos en varios pasos
+        self.prices = None  # prices.PriceStore: historico de precios
+        self.notes = None  # notes_index.NotesIndex: busqueda por significado en las notas
         self.insights = None  # insights.Insights: fichas con los datos clave de cada respuesta (HUD)
         self.learner = None  # learn.PrefLearner: apunta las preferencias que se cuelan en la conversacion
         self.watcher = None
@@ -182,12 +185,14 @@ class Assistant:
         on_event: EventSink | None = None,
         model: str | None = None,
         image: str | None = None,
+        about: str = "",
     ) -> TurnResult:
         emit = on_event or _no_events
         with self._lock:
             text = text.strip()
             emit({"type": "heard", "text": text, "ms": 0})
-            return self._respond(text, session, speak, {}, ToolContext(pc_apps=pc_apps, image=image), emit, model)
+            return self._respond(text, session, speak, {}, ToolContext(pc_apps=pc_apps, image=image), emit, model,
+                                 about)
 
     def transcribe(self, audio: bytes) -> str:
         """Solo STT (modo Claude: el PC transcribe aqui y piensa con Claude Code)."""
@@ -227,6 +232,20 @@ class Assistant:
             self._news.append(f"{label} ha terminado el encargo «{job.topic}»{where}. Su informe:\n"
                               f"{job.report[:NEWS_REPORT_CHARS]}")
             del self._news[:-3]
+
+    def about_job(self, job_id: int) -> str:
+        """Contexto para preguntar sobre un informe que ya esta hecho: se contesta con el, sin volver a buscar."""
+        from .agents import NEWS_REPORT_CHARS
+
+        team = getattr(self, "team", None)
+        job = team.jobs.get(job_id) if team is not None else None
+        if job is None or not job.report:
+            return ""
+        label = team.specs[job.agent].label if job.agent in team.specs else job.agent
+        return (f"El usuario pregunta sobre este informe de {label} (encargo: «{job.topic}»). Contesta SOLO con lo "
+                f"que pone aqui: no lances ningun agente, no busques en internet y no inventes datos que no esten. "
+                f"Si te piden ordenarlo, filtrarlo o resumirlo, hazlo con estas filas. Si algo no esta en el informe, "
+                f"dilo.\n\nInforme:\n{job.report[:NEWS_REPORT_CHARS]}")
 
     def take_news(self) -> str:
         with self._news_lock:
@@ -327,8 +346,9 @@ class Assistant:
 
     def _respond(
         self, text: str, session: str, speak: bool, timings: dict[str, int], ctx: ToolContext, emit: EventSink,
-        model: str | None = None,
+        model: str | None = None, about: str = "",
     ) -> TurnResult:
+        # about: un informe de agente sobre el que pregunta el usuario ("ordénalo por precio"); ver about_job().
         waiting = self._pending.pop(session, None)
         if waiting and self.tools and time.monotonic() < waiting[1]:
             if is_affirmative(text):
@@ -338,7 +358,7 @@ class Assistant:
                 # accion en este turno, se hace (sin volver a preguntar y quedarse en bucle).
                 ctx.preconfirmed = waiting[0]
             log.info("[%s] sin 'si' claro para: %s", session, waiting[0].summary)
-        if self.direct_answers and not ctx.preconfirmed:
+        if self.direct_answers and not ctx.preconfirmed and not about:
             hit = self._direct(text, session, speak, timings, ctx, emit)
             if hit:
                 return hit
@@ -350,6 +370,8 @@ class Assistant:
         news = self.take_news()
         if news:
             system += "\n\n" + news
+        if about:
+            system += "\n\n" + about
         if self.memory:
             with _timed(timings, "memory"):
                 recalled = self.memory.recall(text)

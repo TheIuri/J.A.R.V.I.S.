@@ -18,6 +18,7 @@
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-ask" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-3.2-6.4M12 8.5v.2M12 12v3.5"/></symbol>
     <symbol id="i-agents" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="4.5" cy="6" r="2"/><circle cx="19.5" cy="6" r="2"/><circle cx="12" cy="20.5" r="2"/><path d="M6.2 7.1l3.3 3M17.8 7.1l-3.3 3M12 15v3.5"/></symbol>
     <symbol id="i-trace" viewBox="0 0 24 24"><path d="M4 5h3M4 12h3M4 19h3"/><circle cx="11" cy="5" r="1.6"/><circle cx="11" cy="12" r="1.6"/><circle cx="11" cy="19" r="1.6"/><path d="M11 6.6v3.8M11 13.6v3.8M15 5h5M15 12h5M15 19h5"/></symbol>
     <symbol id="i-session" viewBox="0 0 24 24"><path d="M4 19V11M10 19V5M16 19v-6M22 19H2"/></symbol>
@@ -81,6 +82,7 @@
         <p id="state">En espera</p>
         <p id="hint" class="hint">Mantén pulsado el cerebro o la barra espaciadora</p>
         <form id="ask" autocomplete="off">
+          <button type="button" id="about-chip" class="about-chip" hidden title="Quitar el informe de la pregunta"><svg class="icon"><use href="#i-ask"/></svg><span></span><svg class="icon"><use href="#i-close"/></svg></button>
           <input id="text" placeholder="…o escribe aquí y pulsa Enter" aria-label="Mensaje">
         </form>
       </div>
@@ -246,6 +248,7 @@
     <div class="viewer-window">
       <header class="viewer-bar">
         <b id="viewer-title">Informe</b>
+        <button type="button" id="viewer-ask" class="pill-btn" aria-label="Preguntar sobre el informe" hidden><svg class="icon"><use href="#i-ask"/></svg><span>Preguntar</span></button>
         <button type="button" id="viewer-pdf" class="pill-btn" aria-label="Guardar como PDF"><svg class="icon"><use href="#i-report"/></svg><span>PDF</span></button>
         <button type="button" id="viewer-copy" class="pill-btn" aria-label="Copiar el informe"><svg class="icon"><use href="#i-copy"/></svg><span>Copiar</span></button>
         <button type="button" id="viewer-download" class="pill-btn" aria-label="Descargar en Markdown"><svg class="icon"><use href="#i-download"/></svg><span>Descargar</span></button>

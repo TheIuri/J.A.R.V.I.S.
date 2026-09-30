@@ -24,6 +24,7 @@ import json
 import logging
 import re
 import threading
+import time
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -206,6 +207,39 @@ def custom_prompt(name: str, instructions: str) -> str:
     return CUSTOM_PROMPT.replace("@NAME@", name).replace("@INSTRUCTIONS@", instructions) + REPORT_FORMAT + OPTIONS_FORMAT
 
 
+# Preguntar antes de lanzar: un encargo vago gasta un agente entero para devolver algo generico. Si le falta
+# un dato clave, JARVIS pregunta primero (con opciones para responder de un toque). Solo se pregunta una vez:
+# si el encargo vuelve igual, se lanza tal cual.
+ASK_TTL_S = 900
+_BUDGET = re.compile(r"(\d+\s*(?:€|eur)|euros|presupuesto|gastar|barat|econom|gama (?:alta|media|baja)|"
+                     r"menos de \d|hasta \d|sobre \d+\s*€?)", re.I)
+_PURPOSE = re.compile(r"\bpara\b|\buso\b|\busar\b|\bnecesito\b|\bpor que\b|\bporque\b", re.I)
+MIN_TASK_WORDS = 4
+
+CLARIFY = {
+    "compras": (
+        "¿Qué presupuesto tienes y para qué lo vas a usar?",
+        ("Menos de 100 €", "Entre 100 y 300 €", "Más de 300 €", "Lo mejor, sin límite"),
+    ),
+    "investigador": (
+        "¿Qué te interesa exactamente de eso?",
+        ("Un resumen general", "Datos y cifras", "Compararlo con alternativas", "Lo más reciente"),
+    ),
+}
+
+
+def needs_detail(agent: str, task: str) -> tuple[str, tuple[str, ...]] | None:
+    """(pregunta, opciones) si al encargo le falta algo importante; None si ya se puede lanzar."""
+    words = [w for w in re.findall(r"[\wáéíóúñ]+", task.lower()) if len(w) > 2]
+    if agent == "compras":
+        if not _BUDGET.search(task) or not _PURPOSE.search(task):
+            return CLARIFY["compras"]
+        return None
+    if len(words) < MIN_TASK_WORDS:  # "busca impresoras": demasiado poco para gastar un agente
+        return CLARIFY.get(agent) or CLARIFY["investigador"]
+    return None
+
+
 @dataclass
 class Job:
     id: int
@@ -328,6 +362,7 @@ class AgentTeam:
         self.board = board
         self.tz = ZoneInfo(timezone)
         self.jobs: dict[int, Job] = {}
+        self._asked: dict[tuple[str, str], float] = {}  # encargos por los que ya se ha preguntado
         self._ids = itertools.count(1)
         self._lock = threading.Lock()
         # Cada agente, con su propio registro solo con sus tools.
@@ -532,13 +567,39 @@ class AgentTeam:
                 lines.append(f"Informe de la tarea {job.id}:\n{job.report[:NEWS_REPORT_CHARS]}")
         return "\n".join(lines)
 
-    def request(self, agent: str, task: str, refresh: bool = False) -> tuple[Job | None, str]:
+    def clarify(self, agent: str, task: str) -> str:
+        """Si al encargo le falta un dato clave, la pregunta que hay que hacerle al usuario (si no, "")."""
+        if agent not in self.registries:
+            return ""
+        key = (agent, " ".join(sorted(set(re.findall(r"[a-z0-9]+", task.lower())))))
+        now = time.monotonic()
+        self._asked = {k: v for k, v in self._asked.items() if v > now}
+        if key in self._asked:  # ya se pregunto por esto: se lanza tal cual
+            return ""
+        missing = needs_detail(agent, task)
+        if missing is None:
+            return ""
+        question, options = missing
+        self._asked[key] = now + ASK_TTL_S
+        if self.activity:
+            self.activity.emit("agent_ask", agent=agent, label=self.specs[agent].label, task=task,
+                               question=question, options=list(options))
+        return (f"Antes de lanzarlo, pregúntale al usuario: {question} Opciones: {', '.join(options)}. "
+                "Cuando conteste, vuelve a llamar a agent_run con el encargo completo.")
+
+    def request(self, agent: str, task: str, refresh: bool = False, ask: bool = False) -> tuple[Job | None, str]:
         """Un encargo (de la conversacion o del boton del HUD): reutiliza un informe parecido si lo hay
-        y no se pide actualizar; si no, lanza el agente. Devuelve (tarea o None si se reutilizo, mensaje)."""
+        y no se pide actualizar; si no, lanza el agente. Devuelve (tarea o None si se reutilizo, mensaje).
+
+        ask=True (solo desde la conversacion): si al encargo le falta un dato clave, pregunta antes de gastar
+        un agente. Desde el boton del HUD no se pregunta: el usuario ya ha dicho que lo lance."""
+        # Primero, lo ya investigado: contestar con un informe de hace poco no gasta nada y no hay que preguntar.
         if agent in SPECS and self.history is not None and not refresh:
             done = self.history.find(agent, task)
             if done:
                 return None, self.reuse(agent, task, done)
+        if ask and not refresh and (question := self.clarify(agent, task)):
+            return None, question
         job = self.start(agent, task)
         where = " y lo guardará en Obsidian" if self.vault else ""
         return job, f"{self.specs[agent].label} se ha puesto con ello (tarea {job.id}). Avisará al terminar{where}."
@@ -702,7 +763,7 @@ class AgentTeam:
 
 def agent_tools(team: AgentTeam) -> list[Tool]:
     def run(_ctx: ToolContext, agent: str, task: str, refresh: bool = False) -> str:
-        return team.request(agent, task, refresh)[1]
+        return team.request(agent, task, refresh, ask=True)[1]
 
     def status(_ctx: ToolContext) -> str:
         return team.status_text()
