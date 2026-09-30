@@ -159,6 +159,24 @@ def summary_check(llm, turn_log, vault, at: str, timezone: str, seen: Callable[[
     return Check("resumen nocturno", 60, fn)
 
 
+def prices_check(store, request: Callable[[str, str], Any], interval_s: float = 1800) -> Check:
+    """Vigilancia de precios: relanza los encargos guardados a los que les toca.
+
+    El aviso no sale de aqui: cuando el agente termina, su informe deja los precios en el historico
+    y, si algo ha bajado, avisa el propio equipo de agentes (ver AgentTeam._prices)."""
+
+    def fn() -> list[Alert]:
+        for watch in store.due():
+            try:
+                request(watch.agent, watch.task)
+                log.info("precios: relanzo la vigilancia %d (%s)", watch.id, watch.task)
+            except Exception as exc:  # no hay hueco de agentes, el agente no existe...: se reintenta luego
+                log.warning("precios: no se pudo lanzar la vigilancia %d: %s", watch.id, exc)
+        return []
+
+    return Check("precios", interval_s, fn)
+
+
 def truenas_check(
     connect: Callable[[], Any], temp_warn: float = 50, interval_s: float = 300
 ) -> Check:
@@ -216,4 +234,4 @@ def truenas_check(
     return Check("truenas", interval_s, fn)
 
 
-__all__ = ["Check", "Watcher", "briefing_check", "summary_check", "calendar_check", "reminders_check", "truenas_check", "OK_STATES"]
+__all__ = ["Check", "Watcher", "briefing_check", "summary_check", "calendar_check", "reminders_check", "truenas_check", "prices_check", "OK_STATES"]

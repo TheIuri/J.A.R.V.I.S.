@@ -133,13 +133,20 @@ class Assistant:
         self.tool_filter = True
         self.direct_answers = True
         self._last_groups: dict[str, set[str]] = {}
+        # Informes de agentes que han terminado y la conversacion aun no ha visto (se pasan en el siguiente turno).
+        self._news: list[str] = []
+        self._news_lock = threading.Lock()
         self._pending: dict[str, tuple[PendingAction, float]] = {}  # accion esperando un "si", por sesion
         self.board = None  # tablon de avisos proactivos (notify.NoticeBoard), si esta activo
         self.vault = None  # boveda de Obsidian, si esta configurada
         self.turn_log = None  # turnlog.TurnLog: conversaciones del dia para el resumen nocturno
         self.activity = None  # activity.ActivityLog: trazabilidad de agentes para el HUD
         self.team = None  # agents.AgentTeam
+        self.planner = None  # plans.Planner: encargos grandes repartidos en varios pasos
+        self.prices = None  # prices.PriceStore: historico de precios
+        self.notes = None  # notes_index.NotesIndex: busqueda por significado en las notas
         self.insights = None  # insights.Insights: fichas con los datos clave de cada respuesta (HUD)
+        self.learner = None  # learn.PrefLearner: apunta las preferencias que se cuelan en la conversacion
         self.watcher = None
         # Un turno cada vez: evita pelearse por la GPU y mantiene el orden del historial.
         self._lock = threading.Lock()
@@ -178,12 +185,14 @@ class Assistant:
         on_event: EventSink | None = None,
         model: str | None = None,
         image: str | None = None,
+        about: str = "",
     ) -> TurnResult:
         emit = on_event or _no_events
         with self._lock:
             text = text.strip()
             emit({"type": "heard", "text": text, "ms": 0})
-            return self._respond(text, session, speak, {}, ToolContext(pc_apps=pc_apps, image=image), emit, model)
+            return self._respond(text, session, speak, {}, ToolContext(pc_apps=pc_apps, image=image), emit, model,
+                                 about)
 
     def transcribe(self, audio: bytes) -> str:
         """Solo STT (modo Claude: el PC transcribe aqui y piensa con Claude Code)."""
@@ -213,6 +222,38 @@ class Assistant:
         for user, reply in self.turn_log.recent(session, self._history_turns):
             history.append({"role": "user", "content": user})
             history.append({"role": "assistant", "content": reply})
+
+    def note_agent_done(self, label: str, job) -> None:
+        """Un agente ha terminado: su informe (tablas, enlaces...) pasa al siguiente turno de la conversacion."""
+        from .agents import NEWS_REPORT_CHARS
+
+        where = f" (guardado en Obsidian: {job.note})" if job.note else ""
+        with self._news_lock:
+            self._news.append(f"{label} ha terminado el encargo «{job.topic}»{where}. Su informe:\n"
+                              f"{job.report[:NEWS_REPORT_CHARS]}")
+            del self._news[:-3]
+
+    def about_job(self, job_id: int) -> str:
+        """Contexto para preguntar sobre un informe que ya esta hecho: se contesta con el, sin volver a buscar."""
+        from .agents import NEWS_REPORT_CHARS
+
+        team = getattr(self, "team", None)
+        job = team.jobs.get(job_id) if team is not None else None
+        if job is None or not job.report:
+            return ""
+        label = team.specs[job.agent].label if job.agent in team.specs else job.agent
+        return (f"El usuario pregunta sobre este informe de {label} (encargo: «{job.topic}»). Contesta SOLO con lo "
+                f"que pone aqui: no lances ningun agente, no busques en internet y no inventes datos que no esten. "
+                f"Si te piden ordenarlo, filtrarlo o resumirlo, hazlo con estas filas. Si algo no esta en el informe, "
+                f"dilo.\n\nInforme:\n{job.report[:NEWS_REPORT_CHARS]}")
+
+    def take_news(self) -> str:
+        with self._news_lock:
+            news, self._news = self._news, []
+        if not news:
+            return ""
+        return ("Novedades desde el ultimo mensaje (ya estan terminadas: no digas que sigues esperando). Si el usuario "
+                "pide datos, enlaces o una tabla de esto, sacalos de aqui:\n\n" + "\n\n".join(news))
 
     def direct(self, text: str, session: str, speak: bool, emit: EventSink) -> TurnResult | None:
         """Respuesta directa sin LLM (modo Claude: se intenta antes de despertar a Claude)."""
@@ -305,8 +346,9 @@ class Assistant:
 
     def _respond(
         self, text: str, session: str, speak: bool, timings: dict[str, int], ctx: ToolContext, emit: EventSink,
-        model: str | None = None,
+        model: str | None = None, about: str = "",
     ) -> TurnResult:
+        # about: un informe de agente sobre el que pregunta el usuario ("ordénalo por precio"); ver about_job().
         waiting = self._pending.pop(session, None)
         if waiting and self.tools and time.monotonic() < waiting[1]:
             if is_affirmative(text):
@@ -316,7 +358,7 @@ class Assistant:
                 # accion en este turno, se hace (sin volver a preguntar y quedarse en bucle).
                 ctx.preconfirmed = waiting[0]
             log.info("[%s] sin 'si' claro para: %s", session, waiting[0].summary)
-        if self.direct_answers and not ctx.preconfirmed:
+        if self.direct_answers and not ctx.preconfirmed and not about:
             hit = self._direct(text, session, speak, timings, ctx, emit)
             if hit:
                 return hit
@@ -325,6 +367,11 @@ class Assistant:
         system = self.system_prompt
         in_context = {m["content"] for m in history if m["role"] == "user"}
         system += self.conversation_context(session, text, skip=in_context)
+        news = self.take_news()
+        if news:
+            system += "\n\n" + news
+        if about:
+            system += "\n\n" + about
         if self.memory:
             with _timed(timings, "memory"):
                 recalled = self.memory.recall(text)
@@ -404,6 +451,8 @@ class Assistant:
             self.turn_log.add(session, text, reply.text)
         if self.insights and emit is not _no_events:  # solo turnos del HUD (en directo)
             self.insights.submit(text, reply.text, used, model)
+        if self.learner:  # si ha dicho algo que valga para siempre, se guarda como preferencia
+            self.learner.submit(text, model)
 
         audio = None
         if speak:

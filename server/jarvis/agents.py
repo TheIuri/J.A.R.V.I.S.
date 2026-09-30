@@ -24,6 +24,7 @@ import json
 import logging
 import re
 import threading
+import time
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -48,14 +49,20 @@ log = logging.getLogger("jarvis.agents")
 MAX_ROUNDS = 10
 MAX_JOBS = 2
 REPORT_FOLDER = "JARVIS/Investigaciones"
-MAX_REPORT_CHARS = 3800  # + cabecera < limite de escritura de la boveda
+MAX_REPORT_CHARS = 7000  # tablas con enlaces ocupan; la nota se guarda con un limite mayor (MAX_NOTE_CHARS)
+MAX_NOTE_CHARS = 9000
+NEWS_REPORT_CHARS = 3500  # lo que se pasa a la conversacion del informe de un agente que acaba de terminar
 
 REPORT_FORMAT = """Cuando tengas suficiente, responde SOLO con el informe, sin llamar a mas herramientas, con este
 formato exacto:
 RESUMEN: <una o dos frases cortas (maximo 200 caracteres) que se puedan decir en voz alta, sin markdown>
 # <titulo>
 <informe en markdown>
-Maximo 3500 caracteres. Todo en espanol de Espana."""
+Entrega exactamente lo que se pidio. Si el encargo pide una tabla, un listado, precios, marcas o enlaces, pon una
+tabla markdown completa (una fila por producto u opcion, sin resumir filas) con una columna "Enlace" con la URL
+directa de la pagina donde lo has visto. Cada precio o dato, de una fuente que hayas leido; si no lo encontraste,
+pon "no visto" en vez de inventarlo.
+Maximo 6000 caracteres. Todo en espanol de Espana."""
 
 OPTIONS_FORMAT = """
 Si comparas productos, servicios u opciones, al FINAL del informe anade este bloque exacto (JSON valido, de 2 a 5
@@ -112,7 +119,7 @@ Al FINAL del informe anade este bloque exacto (JSON valido, sin comentarios), qu
 [{"nombre": "...", "tipo": "sector", "zona": "ciudad", "web": "https://...", "contacto": "email o telefono publico",
   "encaje": "evidencia concreta de su web de que lo necesita", "mensaje": "primer mensaje corto y personalizado"}]
 ```
-""" + REPORT_FORMAT.replace("Maximo 3500 caracteres.", "Maximo 3500 caracteres sin contar el bloque leads.")
+""" + REPORT_FORMAT.replace("Maximo 6000 caracteres.", "Maximo 6000 caracteres sin contar el bloque leads.")
 
 WRITER_PROMPT = """Eres el escritor del usuario. Redacta el texto que te pida (correo, carta, reclamacion, resumen,
 documento...) con el tono adecuado. Busca en sus notas de Obsidian y en sus recuerdos los datos que necesites
@@ -170,8 +177,8 @@ SPECS = {
 # Agentes que pueden trabajar con Claude (membresia): solo buscan y leen en internet, que es lo unico que
 # Claude Code puede hacer aqui. Los que usan datos privados (NAS, agenda, notas) no.
 CLAUDE_AGENTS = ("investigador", "compras", "captador")
-CLAUDE_TOOLS_NOTE = ("\n\nTrabajas con Claude Code: en lugar de web_search usa WebSearch y en lugar de web_read usa WebFetch "
-                     "(wikipedia y news no estan: buscalas con WebSearch). Tienes un presupuesto de {budget} usos de "
+CLAUDE_TOOLS_NOTE = ("\n\nTrabajas con Claude Code: en lugar de web_search usa WebSearch y para leer paginas usa "
+                     "web_read (mcp__jarvis__web_read; wikipedia y news no estan: buscalas con WebSearch). Tienes un presupuesto de {budget} usos de "
                      "herramientas en total: reparte bien (pocas busquedas buenas y lee solo las webs mas prometedoras) "
                      "y, al llegar a unos {stop}, deja de buscar y escribe el informe con lo que tengas. "
                      "Responde solo con el informe final.")
@@ -200,6 +207,39 @@ def custom_prompt(name: str, instructions: str) -> str:
     return CUSTOM_PROMPT.replace("@NAME@", name).replace("@INSTRUCTIONS@", instructions) + REPORT_FORMAT + OPTIONS_FORMAT
 
 
+# Preguntar antes de lanzar: un encargo vago gasta un agente entero para devolver algo generico. Si le falta
+# un dato clave, JARVIS pregunta primero (con opciones para responder de un toque). Solo se pregunta una vez:
+# si el encargo vuelve igual, se lanza tal cual.
+ASK_TTL_S = 900
+_BUDGET = re.compile(r"(\d+\s*(?:€|eur)|euros|presupuesto|gastar|barat|econom|gama (?:alta|media|baja)|"
+                     r"menos de \d|hasta \d|sobre \d+\s*€?)", re.I)
+_PURPOSE = re.compile(r"\bpara\b|\buso\b|\busar\b|\bnecesito\b|\bpor que\b|\bporque\b", re.I)
+MIN_TASK_WORDS = 4
+
+CLARIFY = {
+    "compras": (
+        "¿Qué presupuesto tienes y para qué lo vas a usar?",
+        ("Menos de 100 €", "Entre 100 y 300 €", "Más de 300 €", "Lo mejor, sin límite"),
+    ),
+    "investigador": (
+        "¿Qué te interesa exactamente de eso?",
+        ("Un resumen general", "Datos y cifras", "Compararlo con alternativas", "Lo más reciente"),
+    ),
+}
+
+
+def needs_detail(agent: str, task: str) -> tuple[str, tuple[str, ...]] | None:
+    """(pregunta, opciones) si al encargo le falta algo importante; None si ya se puede lanzar."""
+    words = [w for w in re.findall(r"[\wáéíóúñ]+", task.lower()) if len(w) > 2]
+    if agent == "compras":
+        if not _BUDGET.search(task) or not _PURPOSE.search(task):
+            return CLARIFY["compras"]
+        return None
+    if len(words) < MIN_TASK_WORDS:  # "busca impresoras": demasiado poco para gastar un agente
+        return CLARIFY.get(agent) or CLARIFY["investigador"]
+    return None
+
+
 @dataclass
 class Job:
     id: int
@@ -215,6 +255,7 @@ class Job:
     cards: list[dict] = field(default_factory=list)  # opciones para ver como tarjetas en el HUD
     evidence: list[str] = field(default_factory=list)  # lo que devolvieron sus herramientas (para verificar)
     check: dict = field(default_factory=dict)  # resultado de la vigilancia de alucinaciones
+    drops: list[str] = field(default_factory=list)  # bajadas de precio detectadas en este informe
 
 
 MAX_SUMMARY = 220
@@ -291,6 +332,8 @@ class AgentTeam:
         self.llm = llm  # por defecto
         self.history = history  # lo ya investigado, para no repetirlo
         self.claude = None  # ClaudeCode (membresia): lo pone main.py si esta configurado
+        self.prices = None  # PriceStore: historico de precios de los informes (main.py)
+        self.on_done = None  # (etiqueta, tarea) -> None: la conversacion se entera del informe (main.py)
         self.prefs = Path(prefs) if prefs else None  # modelo elegido en el HUD para cada agente
         self.prefer: dict[str, str] = {}
         if self.prefs:
@@ -319,6 +362,7 @@ class AgentTeam:
         self.board = board
         self.tz = ZoneInfo(timezone)
         self.jobs: dict[int, Job] = {}
+        self._asked: dict[tuple[str, str], float] = {}  # encargos por los que ya se ha preguntado
         self._ids = itertools.count(1)
         self._lock = threading.Lock()
         # Cada agente, con su propio registro solo con sus tools.
@@ -507,13 +551,55 @@ class AgentTeam:
             self._run(job)
         return job
 
-    def request(self, agent: str, task: str, refresh: bool = False) -> tuple[Job | None, str]:
+    def status_text(self, only=None) -> str:
+        """Estado de los encargos recientes; de los ultimos terminados, el informe entero (tablas, enlaces...)."""
+        jobs = [j for j in self.jobs.values() if only is None or only(j.agent)][-5:]
+        if not jobs:
+            return "No hay tareas de agentes."
+        lines = []
+        done = [j for j in jobs if j.state == "terminado" and j.report][-2:]
+        for job in jobs:
+            label = self.specs[job.agent].label if job.agent in self.specs else job.agent
+            extra = f" ({len(job.steps)} pasos)" if job.state == "trabajando" else f": {job.summary}"
+            model = f" [{job.model}]" if job.model else ""
+            lines.append(f"[{job.id}] {label} · {job.topic}: {job.state}{model}{extra}")
+            if job in done:
+                lines.append(f"Informe de la tarea {job.id}:\n{job.report[:NEWS_REPORT_CHARS]}")
+        return "\n".join(lines)
+
+    def clarify(self, agent: str, task: str) -> str:
+        """Si al encargo le falta un dato clave, la pregunta que hay que hacerle al usuario (si no, "")."""
+        if agent not in self.registries:
+            return ""
+        key = (agent, " ".join(sorted(set(re.findall(r"[a-z0-9]+", task.lower())))))
+        now = time.monotonic()
+        self._asked = {k: v for k, v in self._asked.items() if v > now}
+        if key in self._asked:  # ya se pregunto por esto: se lanza tal cual
+            return ""
+        missing = needs_detail(agent, task)
+        if missing is None:
+            return ""
+        question, options = missing
+        self._asked[key] = now + ASK_TTL_S
+        if self.activity:
+            self.activity.emit("agent_ask", agent=agent, label=self.specs[agent].label, task=task,
+                               question=question, options=list(options))
+        return (f"Antes de lanzarlo, pregúntale al usuario: {question} Opciones: {', '.join(options)}. "
+                "Cuando conteste, vuelve a llamar a agent_run con el encargo completo.")
+
+    def request(self, agent: str, task: str, refresh: bool = False, ask: bool = False) -> tuple[Job | None, str]:
         """Un encargo (de la conversacion o del boton del HUD): reutiliza un informe parecido si lo hay
-        y no se pide actualizar; si no, lanza el agente. Devuelve (tarea o None si se reutilizo, mensaje)."""
+        y no se pide actualizar; si no, lanza el agente. Devuelve (tarea o None si se reutilizo, mensaje).
+
+        ask=True (solo desde la conversacion): si al encargo le falta un dato clave, pregunta antes de gastar
+        un agente. Desde el boton del HUD no se pregunta: el usuario ya ha dicho que lo lance."""
+        # Primero, lo ya investigado: contestar con un informe de hace poco no gasta nada y no hay que preguntar.
         if agent in SPECS and self.history is not None and not refresh:
             done = self.history.find(agent, task)
             if done:
                 return None, self.reuse(agent, task, done)
+        if ask and not refresh and (question := self.clarify(agent, task)):
+            return None, question
         job = self.start(agent, task)
         where = " y lo guardará en Obsidian" if self.vault else ""
         return job, f"{self.specs[agent].label} se ha puesto con ello (tarea {job.id}). Avisará al terminar{where}."
@@ -546,6 +632,7 @@ class AgentTeam:
             # Vigilancia de alucinaciones: cada web, email, telefono y precio, contra lo que leyo (sin tokens).
             job.check = verify(job.report, job.cards, found, job.evidence)
             job.report += verify_section(job.check)
+            job.drops = self._prices(job)
             job.note = self._save(job, spec)
             if found and self.leads is not None:
                 new = self.leads.add(found, source=job.note or job.topic)
@@ -556,11 +643,19 @@ class AgentTeam:
             # El aviso se dice en voz alta: corto, sin repetir el encargo ni la ruta (esa va en la tarjeta).
             doubt = len(job.check.get("unverified", []))
             warn = f" Ojo: {doubt} dato{'s' if doubt != 1 else ''} sin verificar." if doubt else ""
-            self._notify(job, "info", f"{spec.label} ha terminado. {job.summary}{warn}")
+            if job.drops:  # ha bajado algo que vigilabas: eso es lo importante del aviso
+                self._notify(job, "info", "Ha bajado de precio. " + " ".join(job.drops[:2]))
+            else:
+                self._notify(job, "info", f"{spec.label} ha terminado. {job.summary}{warn}")
             if not job.check.get("skipped"):
                 self._trace("agent_verify", job, checked=job.check["checked"], unverified=job.check["unverified"][:10])
             self._trace("agent_done", job, summary=job.summary, note=job.note, model=job.model, steps=len(job.steps),
-                        cards=job.cards, unverified=doubt)
+                        cards=job.cards, unverified=doubt, report=job.report, task=job.topic)
+            if self.on_done:  # la conversacion se entera: a "sacame los links" contesta con el informe
+                try:
+                    self.on_done(spec.label, job)
+                except Exception:
+                    log.exception("no se pudo pasar el informe a la conversacion")
         except Exception as exc:  # el hilo nunca debe morir en silencio
             job.state = "error"
             job.summary = str(exc) if isinstance(exc, (ToolError, LLMError)) else type(exc).__name__
@@ -585,7 +680,7 @@ class AgentTeam:
                 + (self._offer(job.topic) if job.agent == "captador" else ""))
 
     def _work_claude(self, job: Job, spec: AgentSpec, model: str) -> str:
-        """El agente con Claude Code (membresia): mismo encargo y formato de informe, con WebSearch/WebFetch."""
+        """El agente con Claude Code (membresia): mismo encargo y formato de informe, con WebSearch y web_read."""
         job.model = claude_label(model)
 
         def emit(event: dict) -> None:
@@ -634,13 +729,29 @@ class AgentTeam:
         job.model = reply.provider or job.model
         return reply.text
 
+    def _prices(self, job: Job) -> list[str]:
+        """Guarda en el historico los precios del informe y devuelve las bajadas, para avisar."""
+        if self.prices is None:
+            return []
+        try:
+            drops = self.prices.record_report(job.report, job.cards, job.agent)
+        except Exception:  # un fallo guardando precios no puede tumbar el encargo
+            log.exception("no se pudieron guardar los precios del encargo %d", job.id)
+            return []
+        if drops:
+            from .prices import prices_card
+            card = prices_card(self.prices, self.prices.products(), drops, "Ha bajado de precio")
+            self._trace("price_drop", job, card=card, drops=[d.text() for d in drops])
+        return [d.text() for d in drops]
+
     def _save(self, job: Job, spec: AgentSpec) -> str:
         if not self.vault:
             return ""
         title = f"{job.started:%Y-%m-%d} {job.topic}"[:120]
         header = f"> {spec.label} de JARVIS · {job.started:%d/%m/%Y %H:%M} · {len(job.steps)} pasos\n\n"
         try:
-            return self.vault.create(title, header + job.report, spec.folder, check_secrets=False)
+            return self.vault.create(title, header + job.report, spec.folder, check_secrets=False,
+                                     max_chars=MAX_NOTE_CHARS)
         except VaultError as exc:
             log.warning("agente %d: no se pudo guardar el informe: %s", job.id, exc)
             return ""
@@ -652,18 +763,10 @@ class AgentTeam:
 
 def agent_tools(team: AgentTeam) -> list[Tool]:
     def run(_ctx: ToolContext, agent: str, task: str, refresh: bool = False) -> str:
-        return team.request(agent, task, refresh)[1]
+        return team.request(agent, task, refresh, ask=True)[1]
 
     def status(_ctx: ToolContext) -> str:
-        if not team.jobs:
-            return "No hay tareas de agentes."
-        lines = []
-        for job in list(team.jobs.values())[-5:]:
-            label = team.specs[job.agent].label
-            extra = f" ({len(job.steps)} pasos)" if job.state == "trabajando" else f": {job.summary}"
-            model = f" [{job.model}]" if job.model else ""
-            lines.append(f"[{job.id}] {label} · {job.topic}: {job.state}{model}{extra}")
-        return "\n".join(lines)
+        return team.status_text()
 
     def run_description() -> str:
         agents = "; ".join(f"{k}: {team.specs[k].description}" for k in team.available)

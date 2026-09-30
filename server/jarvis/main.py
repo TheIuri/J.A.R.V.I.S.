@@ -30,23 +30,29 @@ from .claude_code import ClaudeCode, label
 from .config import Settings, load_settings
 from .insights import Insights
 from .leads import STATUSES as LEAD_STATUSES, LeadStore, lead_tools
+from .learn import PrefLearner
 from .llm import FallbackLLM, LLMError, OpenAICompatLLM, usage_report
 from .memory import MemoryRejected, MemoryStore, RuleRetriever
+from .notes_index import NotesIndex
 from .notify import NoticeBoard, NtfyPush, parse_quiet
 from .obsidian import Vault
 from .pipeline import PENDING_TTL_S, Assistant, TurnResult, is_affirmative, is_negative
+from .plans import Planner, plan_tool
+from .prices import PriceStore
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
 from .tools import build_registry, make_calendars, spotify_configured, truenas_snapshot
-from .tools.info import research_tools
+from .tools.info import PageReader, research_tools, web_read_tool
 from .tools.calendar import Calendars
-from .tools.registry import ToolContext, ToolError
+from .tools.prices import AGENTS as PRICE_AGENTS, price_tools
+from .tools.registry import ToolContext, ToolError, ToolRegistry
 from .tools.reminders import ReminderStore
 from .tools.truenas import _default_connect
 from .tools.vision import Vision, check_image
 from .tts import EdgeTTS, NullTTS, PiperTTS
 from .turnlog import TurnLog
-from .watch import Watcher, briefing_check, calendar_check, reminders_check, summary_check, truenas_check
+from .watch import (Watcher, briefing_check, calendar_check, prices_check, reminders_check, summary_check,
+                    truenas_check)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # evita loguear URLs firmadas y ruido
@@ -97,7 +103,9 @@ def build_assistant(settings: Settings) -> Assistant:
         if settings.vision_providers
         else None
     )
-    tools = build_registry(settings, store, vault, reminders, calendars, vision)
+    # Busqueda por significado en las notas (local, sin tokens): la usan el chat y los agentes.
+    notes = NotesIndex(vault) if vault else None
+    tools = build_registry(settings, store, vault, reminders, calendars, vision, notes)
     retriever = RuleRetriever(store, settings.memory_max_items) if store else None
 
     log.info("STT=%s | LLM=%s | TTS=%s | memoria=%s", stt.name, llm.name, tts.name, "si" if store else "no")
@@ -112,12 +120,17 @@ def build_assistant(settings: Settings) -> Assistant:
         retriever,
     )
     assistant.vault = vault
+    assistant.notes = notes
     # Registro de conversaciones (siempre): seguir tras reiniciar y recordar lo hablado otros dias.
     data.mkdir(parents=True, exist_ok=True)
     assistant.turn_log = TurnLog(data / "turns.db", settings.timezone)
     assistant.activity = ActivityLog()  # trazabilidad de agentes para el HUD
     if settings.insights_enabled:
         assistant.insights = Insights(llm, assistant.activity)
+    if settings.learn_prefs and store is not None:
+        assistant.learner = PrefLearner(llm, store, assistant.activity)
+    # Historico de precios: lo llenan los informes de los agentes (ver AgentTeam._prices).
+    assistant.prices = PriceStore(data / "prices.db", settings.timezone) if settings.agents_enabled else None
     if reminders:
         assistant.board, assistant.watcher = build_watcher(settings, assistant, reminders, calendars)
     if tools and settings.agents_enabled:
@@ -142,9 +155,17 @@ def build_assistant(settings: Settings) -> Assistant:
             data / "agent_models.json", data / "lead_profiles.json", data / "custom_agents.json",
         )
         assistant.team = team
+        team.on_done = assistant.note_agent_done
         assistant.leads = leads
+        team.prices = assistant.prices
         for tool in agent_tools(team) + lead_tools(leads):
             tools.register(tool)
+        if assistant.prices is not None:
+            for tool in price_tools(assistant.prices, lambda: [a for a in team.available if a in PRICE_AGENTS]):
+                tools.register(tool)
+        # Planes de varios pasos: reparte un encargo grande entre varios agentes y junta un solo informe.
+        assistant.planner = Planner(team, agent_llm, settings.timezone)
+        tools.register(plan_tool(assistant.planner))
         log.info("Agentes: %s (informes en %s)", ", ".join(team.available), "Obsidian" if vault else "memoria")
     if settings.claude_token:
         store = assistant.memory
@@ -202,6 +223,15 @@ def build_watcher(
                 settings.truenas_watch_minutes * 60,
             )
         )
+    if getattr(assistant, "prices", None) is not None:
+        # Relanzar las vigilancias de precio a su hora. El equipo aun no existe aqui: se mira al vuelo.
+        def run_watch(agent: str, task: str) -> None:
+            team = getattr(assistant, "team", None)
+            if team is None:
+                raise RuntimeError("los agentes no están disponibles todavía")
+            team.request(agent, task, refresh=True)
+
+        checks.append(prices_check(assistant.prices, run_watch))
     if settings.briefing_at:
 
         def ask(text: str) -> str:
@@ -227,7 +257,12 @@ class ChatRequest(BaseModel):
     speak: bool = True
     pc_apps: list[str] | None = None  # apps que el cliente de PC permite abrir; None = sin acciones de PC
     model: str | None = None  # proveedor elegido en el HUD (groq, gemini...); None = el orden configurado
+    about: int | None = None  # id de un encargo: la pregunta es sobre ese informe, no se busca nada nuevo
     image: str | None = None  # foto de la camara del HUD (JPEG/PNG en base64), solo si esta encendida
+
+
+class WebReadRequest(BaseModel):
+    url: str
 
 
 class SpeakRequest(BaseModel):
@@ -323,7 +358,7 @@ def _image(b64: str | None) -> str | None:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def _stream(fn, *args, model: str | None = None, image: str | None = None) -> StreamingResponse:
+def _stream(fn, *args, model: str | None = None, image: str | None = None, about: str = "") -> StreamingResponse:
     """Ejecuta el turno en un hilo y manda cada evento del pipeline como una linea JSON (NDJSON).
 
     La ultima linea es {"type": "done", ...respuesta completa} o {"type": "error", "detail": ...}.
@@ -332,7 +367,9 @@ def _stream(fn, *args, model: str | None = None, image: str | None = None) -> St
 
     def work() -> None:
         try:
-            events.put({"type": "done", **_to_json(fn(*args, on_event=events.put, model=model, image=image))})
+            extra = {"about": about} if about else {}  # solo handle_text lo entiende
+            events.put({"type": "done",
+                        **_to_json(fn(*args, on_event=events.put, model=model, image=image, **extra))})
         except LLMError as exc:
             log.error("%s", exc)
             events.put({"type": "error", "detail": str(exc)})
@@ -372,24 +409,35 @@ def wire_claude_tools(assistant: Assistant, internal_token: str) -> None:
     claude = getattr(assistant, "claude", None)
     if claude is None or not claude.available:
         return
-    if not claude.full and getattr(assistant, "team", None) is None:
-        return  # modo web: solo sirve para lanzar agentes
     claude.home.mkdir(parents=True, exist_ok=True)
-    path = claude.home / "mcp.json"
     port = os.environ.get("JARVIS_PORT", "8765")
-    config = {"mcpServers": {"jarvis": {
-        "command": sys.executable, "args": ["-m", "jarvis.mcp_agents"],
-        "env": {"JARVIS_INTERNAL_URL": f"http://127.0.0.1:{port}", "JARVIS_INTERNAL_TOKEN": internal_token,
-                "JARVIS_MCP_MODE": "full" if claude.full else "agents",
-                "PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
-    }}}
-    path.write_text(json.dumps(config), encoding="utf-8")
-    path.chmod(0o600)
-    claude.mcp_config = path
+
+    def write(name: str, mode: str) -> Path:
+        path = claude.home / name
+        config = {"mcpServers": {"jarvis": {
+            "command": sys.executable, "args": ["-m", "jarvis.mcp_agents"],
+            "env": {"JARVIS_INTERNAL_URL": f"http://127.0.0.1:{port}", "JARVIS_INTERNAL_TOKEN": internal_token,
+                    "JARVIS_MCP_MODE": mode, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
+        }}}
+        path.write_text(json.dumps(config), encoding="utf-8")
+        path.chmod(0o600)
+        return path
+
+    # Los encargos de los agentes leen webs con web_read de JARVIS (nunca con WebFetch, que no filtra la red de casa).
+    claude.web_mcp_config = write("mcp-web.json", "web")
+    if claude.full or getattr(assistant, "team", None) is not None:
+        claude.mcp_config = write("mcp.json", "full" if claude.full else "agents")
+
+
+def _web_reader() -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register(web_read_tool(PageReader()))
+    return registry
 
 
 def create_app(assistant: Assistant | None = None, api_token: str | None = None) -> FastAPI:
     state: dict = {"assistant": assistant, "token": api_token, "internal": secrets.token_urlsafe(32),
+                   "web_read": _web_reader(),
                    "claude_session": "default", "claude_cards": [], "claude_lock": threading.Lock()}
     if assistant is not None:
         wire_claude_tools(assistant, state["internal"])
@@ -470,17 +518,19 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         state["claude_cards"].extend(ctx.cards)
         return {"result": result}
 
+    @app.post("/internal/web_read", dependencies=[Depends(require_internal)], include_in_schema=False)
+    def internal_web_read(req: WebReadRequest) -> dict:
+        """Leer una web para Claude: la misma lectura segura que usan los agentes de JARVIS (sin red privada)."""
+        return {"result": state["web_read"].execute("web_read", json.dumps({"url": req.url[:2000]}), ToolContext())}
+
     @app.get("/internal/agents/status", dependencies=[Depends(require_internal)], include_in_schema=False)
     def internal_agent_status() -> dict:
         team = web_team()
-        jobs = [j for j in team.jobs.values() if team.is_web(j.agent)][-5:]
-        lines = [f"[{j.id}] {team.specs[j.agent].label} · {j.topic}: {j.state}"
-                 + (f": {j.summary}" if j.summary and j.state != "trabajando" else "") for j in jobs]
-        return {"status": "\n".join(lines) or "No hay encargos a estos agentes."}
+        return {"status": team.status_text(only=team.is_web)}
 
-    def run(fn, *args) -> dict:
+    def run(fn, *args, **kw) -> dict:
         try:
-            return _to_json(fn(*args))
+            return _to_json(fn(*args, **{k: v for k, v in kw.items() if v}))
         except LLMError as exc:
             log.error("%s", exc)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -506,11 +556,15 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
     ) -> dict:
         return run(state["assistant"].handle_audio, _read_audio(audio), session, speak, _parse_apps(pc_apps))
 
+    def _about(req: ChatRequest) -> str:
+        return state["assistant"].about_job(req.about) if req.about else ""
+
     @app.post("/api/chat", dependencies=[Depends(require_token)])
     def chat(req: ChatRequest) -> dict:
         if not req.text.strip():
             raise HTTPException(status_code=400, detail="Texto vacio")
-        return run(state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps)
+        return run(state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps,
+                   about=_about(req))
 
     # Igual que /api/voice y /api/chat, pero en directo: el HUD dibuja cada paso según ocurre.
     @app.post("/api/voice/stream", dependencies=[Depends(require_token)])
@@ -534,7 +588,7 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             raise HTTPException(status_code=400, detail="Texto vacio")
         return _stream(
             state["assistant"].handle_text, req.text, req.session, req.speak, req.pc_apps,
-            model=req.model, image=_image(req.image),
+            model=req.model, image=_image(req.image), about=_about(req),
         )
 
     @app.post("/api/agent_event", dependencies=[Depends(require_token)])
@@ -647,7 +701,7 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             "jobs": [
                 {"id": j.id, "agent": j.agent, "task": j.topic, "state": j.state, "model": j.model,
                  "steps": len(j.steps), "summary": j.summary, "note": j.note, "started": j.started.isoformat(),
-                 "cards": j.cards}
+                 "cards": j.cards, "report": j.report if j.state == "terminado" else ""}
                 for j in list(team.jobs.values())[-10:]
             ],
         }
@@ -827,12 +881,16 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
             start = time.perf_counter()
             # Sin un "si" claro pero tampoco un "no": si Claude vuelve a pedir la misma accion, se hace.
             again = waiting[0] if waiting and time.monotonic() < waiting[1] and not is_negative(text) else None
+            news = a.take_news()  # informes de agentes terminados desde el ultimo mensaje
+            about = a.about_job(req.about) if req.about else ""
+            head = "\n\n".join(p for p in (news, about) if p)
+            prompt = f"{head}\n\nMensaje del usuario: {text}" if head else text
             try:
                 with state["claude_lock"]:  # las herramientas saben a que conversacion responder
                     state["claude_session"], state["claude_cards"] = session, []
                     state["claude_preconfirmed"] = again
                     try:
-                        reply, used = c.ask(text, req.model, session, events.put)
+                        reply, used = c.ask(prompt, req.model, session, events.put)
                     finally:
                         state["claude_preconfirmed"] = None
                     cards = list(state["claude_cards"])

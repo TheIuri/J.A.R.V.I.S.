@@ -943,7 +943,11 @@ const VIS_ICON = {
   calendar: '<svg class="icon" viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v10a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5zM4 10h16M8.5 3v4M15.5 3v4"/></svg>',
   bell: '<svg class="icon" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15zM10 20.5a2.2 2.2 0 0 0 4 0"/></svg>',
   swap: '<svg class="icon" viewBox="0 0 24 24"><path d="M5 8.5h13l-3.5-3.5M19 15.5H6l3.5 3.5"/></svg>',
+  report: '<svg class="icon"><use href="#i-report"/></svg>',
   music: '<svg class="icon" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>',
+  price: '<svg class="icon" viewBox="0 0 24 24"><path d="M4 18.5 9.5 13l3.5 3 6.5-7.5M20 5v5h-5"/></svg>',
+  ask: '<svg class="icon"><use href="#i-ask"/></svg>',
+  plan: '<svg class="icon" viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9"/><circle cx="19" cy="18" r="2"/></svg>',
 };
 
 function visHead(icon, title, sub = "") {
@@ -1060,8 +1064,292 @@ function showWiki(c) {
   addVisual(el);
 }
 
+// --- informes de los agentes: markdown (tablas, listas, enlaces) pintado sin HTML del modelo ---------------
+
+// Texto con **negrita**, `codigo` y enlaces ([texto](https://...) o https://... suelto); todo como nodos de texto.
+function mdInline(parent, text) {
+  const re = /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https:\/\/[^\s)]+)\)|(https:\/\/[^\s<>()|]+[^\s<>()|.,;:!?'"»])/g;
+  let at = 0;
+  for (const m of text.matchAll(re)) {
+    if (m.index > at) parent.append(text.slice(at, m.index));
+    if (m[1]) parent.append(node("strong", "", m[1]));
+    else if (m[2]) parent.append(node("code", "", m[2]));
+    else {
+      const a = node("a", "", m[3] || m[5].replace(/^https:\/\/(www\.)?/, "").slice(0, 60));
+      a.href = m[4] || m[5];
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      parent.append(a);
+    }
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) parent.append(text.slice(at));
+}
+
+function mdCells(line) {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+}
+
+function renderMarkdown(md) {
+  const root = node("div", "md");
+  const lines = String(md || "").replace(/\r/g, "").split("\n");
+  let list = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const t = line.trim();
+    if (!t) {
+      list = null;
+      continue;
+    }
+    // Tabla: fila de cabecera + |---|---| + filas.
+    if (t.startsWith("|") && /^\|?\s*:?-{2,}/.test((lines[i + 1] || "").trim())) {
+      const wrap = node("div", "md-table");
+      const table = node("table");
+      const head = node("tr");
+      mdCells(t).forEach((c) => { const th = node("th"); mdInline(th, c); head.append(th); });
+      const thead = node("thead");
+      thead.append(head);
+      const tbody = node("tbody");
+      i += 2;
+      while (i < lines.length && lines[i].trim().startsWith("|")) {
+        const tr = node("tr");
+        mdCells(lines[i]).forEach((c) => { const td = node("td"); mdInline(td, c); tr.append(td); });
+        tbody.append(tr);
+        i++;
+      }
+      i--;
+      table.append(thead, tbody);
+      wrap.append(table);
+      root.append(wrap);
+      list = null;
+      continue;
+    }
+    const h = /^(#{1,4})\s+(.*)$/.exec(t);
+    if (h) {
+      const el = node(`h${Math.min(6, h[1].length + 2)}`);
+      mdInline(el, h[2]);
+      root.append(el);
+      list = null;
+      continue;
+    }
+    const li = /^([-*•]|\d+[.)])\s+(.*)$/.exec(t);
+    if (li) {
+      const ordered = /\d/.test(li[1]);
+      if (!list || list.tagName !== (ordered ? "OL" : "UL")) {
+        list = node(ordered ? "ol" : "ul");
+        root.append(list);
+      }
+      const item = node("li");
+      mdInline(item, li[2]);
+      list.append(item);
+      continue;
+    }
+    list = null;
+    const p = node(t.startsWith(">") ? "blockquote" : "p");
+    mdInline(p, t.replace(/^>\s?/, ""));
+    root.append(p);
+  }
+  return root;
+}
+
+function download(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = node("a");
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// Imprimir solo el informe (en el móvil: Imprimir -> Guardar como PDF).
+function printReport(el) {
+  // Una copia del informe fuera de los paneles (que tienen scroll y la recortarian) y solo eso en la impresion.
+  document.getElementById("print-area")?.remove();
+  const area = node("div");
+  area.id = "print-area";
+  const copy = el.cloneNode(true);
+  copy.removeAttribute("id");
+  copy.classList.add("open");
+  area.append(copy);
+  document.body.append(area);
+  document.body.classList.add("print-report");
+  const done = () => {
+    area.remove();
+    document.body.classList.remove("print-report");
+    removeEventListener("afterprint", done);
+  };
+  addEventListener("afterprint", done);
+  window.print();
+  setTimeout(done, 60000); // por si el navegador no avisa al cerrar el dialogo
+}
+
+function showReport(c) {
+  const el = node("section", "vis-card vis-report");
+  const head = visHead("report", `Informe · ${c.label || "agente"}`, c.date || "");
+  el.append(head);
+  if (c.task) el.append(node("p", "vis-task", c.task));
+  const body = renderMarkdown(c.report);
+  body.classList.add("vis-report-body");
+  el.append(body);
+  const tools = node("div", "vis-actions");
+  const slug = (c.task || c.label || "informe").toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").slice(0, 60);
+  const more = iconButton("expand", "Ver completo", () => openReportViewer(c, slug));
+  tools.append(
+    more,
+    iconButton("ask", "Preguntar", () => askAboutReport(c.job, c.task)),
+    iconButton("report", "PDF", () => printReport(el)),
+    iconButton("copy", "Copiar", (e) => copyText(c.report, e.currentTarget)),
+    iconButton("download", "Descargar", () => download(`${slug || "informe"}.md`, c.report, "text/markdown")),
+  );
+  if (c.note) tools.append(node("span", "vis-note", `En Obsidian: ${c.note.split("/").pop().replace(/\.md$/, "")}`));
+  el.append(tools);
+  addVisual(el);
+}
+
+// Visor del informe dentro de la ventana: una hoja clara, como un PDF, con su barra (PDF, copiar, descargar).
+let viewerReturn = null;
+
+function closeReportViewer() {
+  const v = $("report-viewer");
+  if (!v || v.hidden) return;
+  v.hidden = true;
+  $("report-paper").textContent = "";
+  document.body.classList.remove("viewer-open");
+  viewerReturn?.focus?.();
+}
+
+function openReportViewer(c, slug) {
+  viewerReturn = document.activeElement;
+  const paper = $("report-paper");
+  paper.textContent = "";
+  const head = node("header", "paper-head");
+  head.append(node("span", "paper-kicker", `${c.label || "Agente"}${c.date ? ` · ${c.date}` : ""}`));
+  if (c.task) head.append(node("p", "paper-task", c.task));
+  paper.append(head, renderMarkdown(c.report));
+  if (c.note) paper.append(node("p", "paper-note", `Guardado en Obsidian: ${c.note}`));
+  $("viewer-title").textContent = `Informe · ${c.label || "agente"}`;
+  $("viewer-ask").hidden = !c.job;
+  $("viewer-ask").onclick = () => askAboutReport(c.job, c.task);
+  $("viewer-pdf").onclick = () => printReport(paper);
+  $("viewer-copy").onclick = (e) => copyText(c.report, e.currentTarget);
+  $("viewer-download").onclick = () => download(`${slug || "informe"}.md`, c.report, "text/markdown");
+  $("report-viewer").hidden = false;
+  document.body.classList.add("viewer-open");
+  paper.scrollTop = 0;
+  $("viewer-close").focus();
+}
+
+$("viewer-close").addEventListener("click", closeReportViewer);
+$("report-viewer").addEventListener("click", (e) => {
+  if (e.target.id === "report-viewer") closeReportViewer(); // clic fuera de la hoja
+});
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeReportViewer();
+});
+
+// Gráfica de la evolución de un precio: una línea por producto, dibujada con SVG (sin librerías).
+function sparkline(series) {
+  const NS = "http://www.w3.org/2000/svg";
+  const w = 240;
+  const h = 44;
+  const pad = 3;
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.setAttribute("class", "spark");
+  svg.setAttribute("aria-hidden", "true");
+  const values = series.map((p) => p.cents);
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const span = hi - lo || 1;
+  const x = (i) => (series.length < 2 ? w / 2 : pad + (i * (w - 2 * pad)) / (series.length - 1));
+  const y = (v) => h - pad - ((v - lo) / span) * (h - 2 * pad);
+  const points = series.map((p, i) => `${x(i).toFixed(1)},${y(p.cents).toFixed(1)}`);
+  const area = document.createElementNS(NS, "polygon");
+  area.setAttribute("points", `${x(0).toFixed(1)},${h} ${points.join(" ")} ${x(series.length - 1).toFixed(1)},${h}`);
+  area.setAttribute("class", "spark-area");
+  const line = document.createElementNS(NS, "polyline");
+  line.setAttribute("points", points.join(" "));
+  line.setAttribute("class", "spark-line");
+  const dot = document.createElementNS(NS, "circle");
+  dot.setAttribute("cx", x(series.length - 1).toFixed(1));
+  dot.setAttribute("cy", y(values[values.length - 1]).toFixed(1));
+  dot.setAttribute("r", "2.6");
+  dot.setAttribute("class", "spark-dot");
+  svg.append(area, line, dot);
+  return svg;
+}
+
+function showPrices(c) {
+  const el = node("section", "vis-card vis-prices");
+  el.append(visHead("price", c.title || "Precios", c.items?.length ? `${c.items.length} producto${c.items.length > 1 ? "s" : ""}` : ""));
+  for (const d of c.drops || []) {
+    const drop = node("p", "price-drop");
+    drop.append(node("b", "", d.product), node("span", "price-now", d.price));
+    drop.append(node("span", "price-was", `antes ${d.before}`));
+    if (d.pct) drop.append(node("span", "price-pct", `-${d.pct}%`));
+    el.append(drop);
+  }
+  const list = node("ul", "price-list");
+  for (const item of c.items || []) {
+    const li = node("li");
+    const url = httpsUrl(item.url);
+    const name = node(url ? "a" : "b", "price-name", item.product);
+    if (url) {
+      name.href = url;
+      name.target = "_blank";
+      name.rel = "noopener noreferrer";
+    }
+    li.append(name);
+    if (item.series?.length > 1) li.append(sparkline(item.series));
+    const now = node("span", "price-now num", item.price);
+    now.classList.toggle("is-low", !!item.down);
+    li.append(now);
+    if (item.best && item.best !== item.price) li.append(node("span", "price-best num", `mín. ${item.best}`));
+    list.append(li);
+  }
+  if (list.children.length) el.append(list);
+  addVisual(el);
+}
+
+// Le falta un dato al encargo: se pregunta antes de gastar un agente, con opciones de un toque.
+function showAsk(label, question, options, task) {
+  const el = node("section", "vis-card vis-ask");
+  el.append(visHead("ask", label || "Antes de empezar", ""));
+  el.append(node("p", "vis-ask-q", question));
+  const chips = node("div", "vis-chips");
+  for (const opt of options || []) {
+    const b = node("button", "chip-btn", opt);
+    b.type = "button";
+    b.addEventListener("click", () => {
+      chips.querySelectorAll("button").forEach((x) => (x.disabled = true));
+      ensureAudio();
+      sendText(task ? `${task} · ${opt}` : opt);
+    });
+    chips.append(b);
+  }
+  el.append(chips);
+  addVisual(el);
+}
+
+// Un plan repartido entre varios agentes: se ven los pasos y, al final, el informe único.
+function showPlan(ev, done) {
+  const el = node("section", "vis-card vis-plan");
+  el.append(visHead("plan", "Plan", done ? "terminado" : `${(ev.steps || []).length} pasos`));
+  if (ev.task) el.append(node("p", "vis-task", ev.task));
+  const list = node("ol", "plan-steps");
+  for (const s of ev.steps || []) {
+    const li = node("li", s.state === "terminado" ? "done" : "");
+    li.append(node("b", "", s.agent), node("span", "", s.task));
+    list.append(li);
+  }
+  if (list.children.length) el.append(list);
+  addVisual(el);
+}
+
 const VISUALS = { weather: showWeather, music: showMusic, agenda: showAgenda, reminders: showReminders,
-  convert: showConvert, clock: showClock, wiki: showWiki };
+  convert: showConvert, clock: showClock, wiki: showWiki, prices: showPrices };
 
 function clearVisual() {
   answerVisual = false;
@@ -1175,11 +1463,35 @@ async function askVoice(wav) {
   return askClaude(text);
 }
 
+// La siguiente pregunta va sobre un informe ya hecho: se contesta con él, sin lanzar agentes ni buscar.
+let askAbout = null;
+
+function askAboutReport(job, task) {
+  askAbout = job || null;
+  const chip = $("about-chip");
+  chip.hidden = !askAbout;
+  chip.querySelector("span").textContent = task ? `Sobre: ${task}` : "Sobre el informe";
+  closeReportViewer();
+  const box = $("text");
+  box.placeholder = askAbout ? "Pregunta sobre el informe (ordénalo, fíltralo, resúmelo…)" : "…o escribe aquí y pulsa Enter";
+  box.focus();
+}
+
+function clearAbout() {
+  askAbout = null;
+  $("about-chip").hidden = true;
+  $("text").placeholder = "…o escribe aquí y pulsa Enter";
+}
+
+$("about-chip").addEventListener("click", clearAbout);
+
 function askClaude(text) {
+  const about = askAbout;
+  clearAbout();
   return ask("/claude/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, session: SESSION, model: selectedModel() }),
+    body: JSON.stringify({ text, session: SESSION, model: selectedModel(), about }),
   });
 }
 
@@ -1338,7 +1650,8 @@ function showTurn(body) {
 
 async function sendText(text) {
   if (isClaude()) return askClaude(text);
-  const payload = { text, session: SESSION, pc_apps: pcApps, model: selectedModel() || null, image: snapshot() };
+  const payload = { text, session: SESSION, pc_apps: pcApps, model: selectedModel() || null, image: snapshot(), about: askAbout };
+  clearAbout();
   await ask("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1926,6 +2239,12 @@ function retireSatellite(sat, ms) {
 
 function onActivity(ev) {
   if (ev.type === "insight") return showInsight(ev);
+  if (ev.type === "learned") {
+    // Ha aprendido una preferencia: se ve en la traza y en Ajustes > Memoria.
+    trace("Memoria", `aprende que ${ev.content}`, [211, 140, 255]);
+    if (!$("memory-list").textContent.includes("Cargando")) showMemories();
+    return;
+  }
   const rgb = agentRgb(ev.agent);
   const label = ev.label || ev.agent;
   const sat = satellite(ev);
@@ -1965,6 +2284,11 @@ function onActivity(ev) {
       pulses.push({ fromSat: sat.key, to: REGION.thalamus, t: 0, dur: reducedMotion ? 0.01 : 0.9, rgb: [48, 209, 88] });
       trace(label, `terminado${ev.model ? ` con ${providerLabel(ev.model)}` : ""}: ${ev.summary || ""}`, [48, 209, 88]);
       if (!ev.job && externalJobs.has(ev.agent)) Object.assign(externalJobs.get(ev.agent), { state: "terminado", summary: ev.summary, note: ev.note, cards: ev.cards });
+      if (ev.report) {
+        // El informe entero en la respuesta: tabla, enlaces, PDF.
+        if (state === "idle" || state === "error") showQuestion(ev.task || label);
+        showReport({ label, task: ev.task, report: ev.report, note: ev.note, job: ev.job });
+      }
       if (ev.cards?.length) showOptions(label, ev.cards, ev.note, rgb);
       retireSatellite(sat, 6000);
       break;
@@ -1977,6 +2301,37 @@ function onActivity(ev) {
       trace(label, `reutiliza el informe del ${fmtDay(ev.date)} (0 tokens): ${ev.summary || ""}`, rgb);
       if (ev.cards?.length) showOptions(label, ev.cards, ev.note, rgb);
       retireSatellite(sat, 5000);
+      break;
+    case "agent_ask":
+      trace(label, `pregunta antes de empezar: ${ev.question}`, rgb);
+      if (state === "idle" || state === "error") showQuestion(ev.task || "");
+      showAsk(label, ev.question, ev.options, ev.task);
+      retireSatellite(sat, 1000);
+      break;
+    case "plan_start":
+      sat.span.textContent = `${(ev.steps || []).length} pasos`;
+      trace(label, `reparte el encargo en ${(ev.steps || []).length} pasos`, rgb);
+      showPlan(ev, false);
+      break;
+    case "plan_done":
+      sat.state = "done";
+      sat.el.classList.add("done");
+      sat.span.textContent = ev.summary || "terminado";
+      trace(label, `plan terminado: ${ev.summary || ""}`, [48, 209, 88]);
+      if (ev.report) showReport({ label: "El plan", task: ev.task, report: ev.report, note: ev.note });
+      retireSatellite(sat, 6000);
+      break;
+    case "plan_error":
+      trace(label, `el plan ha fallado: ${ev.detail || ""}`, [255, 69, 58]);
+      retireSatellite(sat, 4000);
+      break;
+    case "price_drop":
+      // Ha bajado algo que vigilabas: la gráfica y el aviso van a la respuesta.
+      trace(label, `ha bajado de precio: ${(ev.drops || []).join(" ")}`, [48, 209, 88]);
+      if (ev.card) {
+        if (state === "idle" || state === "error") showQuestion("Vigilancia de precios");
+        showPrices(ev.card);
+      }
       break;
     case "leads":
       sat.span.textContent = ev.new ? `${ev.new} leads nuevos` : "sin leads nuevos";
@@ -2233,6 +2588,19 @@ async function loadAgents() {
       sum.className = "summary";
       sum.textContent = j.summary;
       li.append(sum);
+    }
+    if (j.report && j.state === "terminado") {
+      const view = document.createElement("button");
+      view.type = "button";
+      view.className = "pill-btn";
+      view.textContent = "Ver informe";
+      view.addEventListener("click", () => {
+        selectView("home");
+        showQuestion(j.task);
+        showReport({ label: j.label, task: j.task, report: j.report, note: j.note, job: j.id });
+        $("answer").scrollIntoView({ block: "start", behavior: reducedMotion ? "auto" : "smooth" });
+      });
+      li.append(view);
     }
     if (j.cards?.length && j.state === "terminado") {
       const open = document.createElement("button");
@@ -2844,12 +3212,46 @@ addEventListener("keyup", (e) => {
   e.preventDefault();
   stopRecording();
 });
+// En el móvil el cerebro ocupa casi toda la pantalla: deslizar sobre él tiene que hacer scroll. Por eso con el dedo
+// se habla al mantenerlo quieto un momento; si se mueve (o el navegador empieza a desplazar), no se graba nada.
+const HOLD_MS = 220;
+const HOLD_SLOP = 10; // px que puede moverse el dedo sin que cuente como deslizar
+let hold = null;
+
+function cancelHold() {
+  if (hold) clearTimeout(hold.timer);
+  hold = null;
+}
+
 canvas.addEventListener("pointerdown", (e) => {
-  canvas.setPointerCapture(e.pointerId);
-  startRecording();
+  if (e.pointerType !== "touch") {
+    canvas.setPointerCapture(e.pointerId);
+    startRecording();
+    return;
+  }
+  cancelHold();
+  const timer = setTimeout(() => {
+    hold = null;
+    startRecording();
+  }, HOLD_MS);
+  hold = { x: e.clientX, y: e.clientY, timer };
 });
-canvas.addEventListener("pointerup", stopRecording);
-canvas.addEventListener("pointercancel", stopRecording);
+canvas.addEventListener("pointermove", (e) => {
+  if (hold && (Math.abs(e.clientY - hold.y) > HOLD_SLOP || Math.abs(e.clientX - hold.x) > HOLD_SLOP)) cancelHold();
+});
+// Ya grabando, el dedo no debe desplazar la página (cortaría la grabación a medias).
+canvas.addEventListener("touchmove", (e) => {
+  if (recorder) e.preventDefault();
+}, { passive: false });
+canvas.addEventListener("pointerup", () => {
+  cancelHold();
+  stopRecording();
+});
+canvas.addEventListener("pointercancel", () => {
+  cancelHold();
+  stopRecording(); // el navegador ha tomado el gesto (scroll): lo grabado, si algo, se descarta por corto
+});
+canvas.addEventListener("contextmenu", (e) => e.preventDefault()); // mantener pulsado no abre el menú
 
 $("ask").addEventListener("submit", (e) => {
   e.preventDefault();

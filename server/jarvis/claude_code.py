@@ -5,7 +5,8 @@ desde el movil. Se autentica con el token de larga duracion de la membresia (`cl
 el PC -> CLAUDE_CODE_OAUTH_TOKEN en la app de TrueNAS): sin API de pago.
 
 Protecciones:
-- Solo WebSearch y WebFetch: sin comandos, sin leer ni escribir archivos, sin MCP.
+- Solo WebSearch y, para leer paginas, la lectura de webs de JARVIS (web_read por MCP, que no entra en la red de
+  casa): sin WebFetch, sin comandos, sin leer ni escribir archivos.
 - Carpeta temporal vacia; lo que dice el usuario va por la entrada estandar, nunca en la linea de comandos.
 - El proceso recibe un entorno minimo: ni el token de JARVIS ni las claves de los demas proveedores.
 """
@@ -31,7 +32,11 @@ COMPACT_TOKENS = 40_000
 # pasa a Claude Code con --model; el primero es el de por defecto.
 DEFAULT_MODELS = ("claude-sonnet-5", "claude-opus-5-5", "claude-fable-5-1", "claude-haiku-4-5")
 MODEL_RE = re.compile(r"^claude-[a-z0-9][a-z0-9.-]{0,60}$")
-ALLOWED = ("WebSearch", "WebFetch")
+ALLOWED = ("WebSearch",)
+# Leer paginas: la herramienta de JARVIS (por MCP), no WebFetch. WebFetch corre dentro del contenedor del NAS sin
+# ningun filtro y podria llegar a la red de casa (router, TrueNAS, Home Assistant) si una web se lo pidiera; web_read
+# rechaza direcciones privadas, comprueba cada redireccion y la IP a la que de verdad se conecta.
+WEB_READ = "mcp__jarvis__web_read"
 EVERYTHING = ("Bash", "Edit", "MultiEdit", "Write", "NotebookEdit", "Read", "Glob", "Grep", "LS", "Task", "TodoWrite",
               "WebSearch", "WebFetch")
 DISALLOWED = tuple(t for t in EVERYTHING if t not in ALLOWED)
@@ -44,9 +49,9 @@ TASK_TOOL_BUDGET = 20  # lo que se le pide que no pase (busquedas + lecturas); e
 WRAP_UP = ("Se acabo el tiempo de buscar: NO uses mas herramientas. Escribe ahora el informe final completo, con el "
            "formato pedido, usando solo lo que ya has encontrado.")
 SESSION_RE = re.compile(r"^[A-Za-z0-9-]{8,80}$")
-TOOL_NAMES = {"WebSearch": "web_search", "WebFetch": "web_read", "mcp__jarvis__agent_run": "agent_run",
-              "mcp__jarvis__agent_status": "agent_status"}
-MCP_TOOLS = ("mcp__jarvis__agent_run", "mcp__jarvis__agent_status")  # solo en la conversacion (mcp_agents.py)
+TOOL_NAMES = {"WebSearch": "web_search", "WebFetch": "web_read", WEB_READ: "web_read",
+              "mcp__jarvis__agent_run": "agent_run", "mcp__jarvis__agent_status": "agent_status"}
+MCP_TOOLS = ("mcp__jarvis__agent_run", "mcp__jarvis__agent_status", WEB_READ)  # conversacion web (mcp_agents.py)
 # Modo "cerebro completo": Claude usa TODAS las herramientas de JARVIS (musica, agenda, recordatorios, notas, casa,
 # agentes...). Sin WebFetch, igual que JARVIS: con tus datos a mano, nunca lee paginas web (una web podria intentar
 # que los sacara). Para leer webs estan los agentes.
@@ -120,6 +125,7 @@ class ClaudeCode:
         self.stats: dict[str, dict] = {}  # uso de hoy por modelo
         self.day = ""
         self.mcp_config: Path | None = None  # config MCP con las herramientas de JARVIS
+        self.web_mcp_config: Path | None = None  # config MCP solo con web_read (los encargos de los agentes)
         self.full = False  # cerebro completo: todas las herramientas de JARVIS (ver FULL_TOOLS)
         self.system = ""  # el prompt de sistema de JARVIS, para el modo completo
         self.limits: dict = {}  # ultimo aviso de limites de la membresia (ventana de 5 h, semanal...)
@@ -213,7 +219,8 @@ class ClaudeCode:
             log.warning("no se pudieron guardar las sesiones de Claude")
 
     def command(self, alias: str, resume: str | None, max_turns: int = MAX_TURNS,
-                tools: tuple[str, ...] = ALLOWED, extra: list[str] | None = None) -> list[str]:
+                tools: tuple[str, ...] = ALLOWED, mcp: Path | None = None) -> list[str]:
+        extra = ["--mcp-config", str(mcp)] if mcp else []
         cmd = [
             self.exe, "-p",
             "--output-format", "stream-json", "--verbose",
@@ -222,15 +229,11 @@ class ClaudeCode:
             "--allowedTools", ",".join(tools),
             "--disallowedTools", ",".join(t for t in EVERYTHING if t not in tools),
             "--strict-mcp-config",
-            *(extra or []),
+            *extra,
         ]
         if resume:
             cmd += ["--resume", resume]
         return cmd
-
-    def mcp_args(self) -> list[str]:
-        """Herramientas de JARVIS para Claude (lanzar agentes), si estan activadas (ver mcp_agents.py)."""
-        return ["--mcp-config", str(self.mcp_config)] if self.mcp_config else []
 
     def env(self) -> dict[str, str]:
         env = {k: os.environ[k] for k in PASS_ENV if k in os.environ}
@@ -260,7 +263,7 @@ class ClaudeCode:
                 tools = FULL_TOOLS
             else:
                 tools = ALLOWED + (MCP_TOOLS if self.mcp_config else ())
-            return self._run(model, resume, prompt, session, emit, tools=tools, mcp=True)
+            return self._run(model, resume, prompt, session, emit, tools=tools, mcp=self.mcp_config)
 
     def _intro(self, extra: str = "") -> str:
         try:
@@ -274,7 +277,7 @@ class ClaudeCode:
             return FULL_INTRO.format(system=self.system, now=now, memories=memories)
         return INTRO.format(now=now, memories=memories)
 
-    def task(self, prompt: str, model: str, emit: Callable[[dict], None], tools: tuple[str, ...] = ALLOWED,
+    def task(self, prompt: str, model: str, emit: Callable[[dict], None], tools: tuple[str, ...] | None = None,
              cwd: Path | None = None, max_turns: int = TASK_MAX_TURNS) -> str:
         """Encargo suelto de un agente (sin conversacion): mas turnos y mas tiempo que el chat.
         tools: lo que puede usar (por defecto buscar y leer webs); cwd: carpeta en la que trabaja (el auditor de
@@ -283,18 +286,21 @@ class ClaudeCode:
             raise RuntimeError("Claude no está configurado en el servidor")
         if model not in self.model_ids:
             raise ValueError(f"modelo desconocido: {model}")
+        if tools is None:  # encargo web: buscar y leer paginas con la lectura segura de JARVIS
+            tools = ("WebSearch", WEB_READ) if self.web_mcp_config else ALLOWED
+        mcp = self.web_mcp_config if WEB_READ in tools else None
         try:
-            text, _ = self._run(model, None, prompt, None, emit, max_turns, TASK_TIMEOUT_S, tools, cwd, raw=True)
+            text, _ = self._run(model, None, prompt, None, emit, max_turns, TASK_TIMEOUT_S, tools, cwd, mcp, raw=True)
         except MaxTurns as exc:
             if not exc.session_id:
                 raise
             # No tirar lo investigado: se retoma la misma sesion solo para que escriba el informe.
             log.info("Claude llego al tope de pasos; le pido el informe con lo que tiene")
-            text, _ = self._run(model, exc.session_id, WRAP_UP, None, emit, 3, TIMEOUT_S, tools, cwd)
+            text, _ = self._run(model, exc.session_id, WRAP_UP, None, emit, 3, TIMEOUT_S, tools, cwd, mcp)
         return text
 
     def _run(self, alias, resume, prompt, session, emit, max_turns=MAX_TURNS, timeout=TIMEOUT_S,
-             tools: tuple[str, ...] = ALLOWED, cwd: Path | None = None, mcp: bool = False,
+             tools: tuple[str, ...] = ALLOWED, cwd: Path | None = None, mcp: Path | None = None,
              raw: bool = False) -> tuple[str, list[str]]:
         names: dict[str, str] = {}
         used: list[str] = []
@@ -308,7 +314,7 @@ class ClaudeCode:
         workdir = Path(cwd) if cwd else self.home / "work"
         workdir.mkdir(parents=True, exist_ok=True)
         proc = subprocess.Popen(
-            self.command(alias, resume, max_turns, tools, self.mcp_args() if mcp else None),
+            self.command(alias, resume, max_turns, tools, mcp),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", cwd=workdir, env=self.env(),
         )

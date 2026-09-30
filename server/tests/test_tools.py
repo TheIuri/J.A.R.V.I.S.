@@ -555,3 +555,30 @@ def test_tools_send_visual_cards():
     assert ctx.cards[0] == {"kind": "music", "title": "Yellow", "artist": "Coldplay", "album": "Parachutes",
                             "image": "https://i.scdn.co/image/abc", "url": "https://open.spotify.com/track/1",
                             "state": "sonando"}
+
+
+def test_page_reader_checks_the_ip_it_really_connects_to(monkeypatch):
+    # DNS rebinding: el dominio parecia publico al comprobarlo, pero la conexion acaba en la red de casa.
+    from jarvis.tools import info
+    from jarvis.tools.info import PageReader
+    from jarvis.tools.registry import ToolError
+
+    class Stream:
+        def __init__(self, ip):
+            self.ip = ip
+
+        def get_extra_info(self, key):
+            return (self.ip, 443) if key == "server_addr" else None
+
+    def reader(ip):
+        def handler(request):
+            return httpx.Response(200, html="<title>x</title><p>hola mundo</p>",
+                                  extensions={"network_stream": Stream(ip)})
+        return PageReader(httpx.Client(transport=httpx.MockTransport(handler)), is_public=lambda host: True)
+
+    monkeypatch.setattr(info, "_PROXIED", False)
+    with pytest.raises(ToolError, match="no es pública"):
+        reader("192.168.1.1").read("https://rebind.example/")
+    with pytest.raises(ToolError, match="no es pública"):
+        reader("::ffff:127.0.0.1").read("https://rebind.example/")
+    assert reader("93.184.216.34").read("https://example.com/")[1] == "hola mundo"

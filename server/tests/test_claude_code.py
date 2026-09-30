@@ -46,7 +46,7 @@ def test_claude_runs_with_only_web_tools_and_a_minimal_env(tmp_path, monkeypatch
     call = json.loads((home / "call.json").read_text())
     argv = call["argv"]
     assert argv[argv.index("--model") + 1] == "claude-sonnet-5"
-    assert argv[argv.index("--allowedTools") + 1] == "WebSearch,WebFetch"
+    assert argv[argv.index("--allowedTools") + 1] == "WebSearch"  # sin WebFetch (no filtra la red de casa)
     assert "Bash" in argv[argv.index("--disallowedTools") + 1] and "--strict-mcp-config" in argv
     assert "¿qué tiempo hace?" not in " ".join(argv)  # lo del usuario va por stdin
     assert call["token"] == "tok-123" and "GROQ_API_KEY" not in call["env"] and "API_TOKEN" not in call["env"]
@@ -218,8 +218,15 @@ def test_claude_chat_can_start_only_web_agents_through_jarvis(tmp_path, monkeypa
     assistant.claude.ask("hola", "claude-sonnet-5", "s", lambda e: None)
     argv = json.loads((tmp_path / "home" / "call.json").read_text())["argv"]
     assert "--mcp-config" in argv and "mcp__jarvis__agent_run" in argv[argv.index("--allowedTools") + 1]
+    assert "mcp__jarvis__web_read" in argv[argv.index("--allowedTools") + 1]
+    assert "WebFetch" in argv[argv.index("--disallowedTools") + 1]
+    # Los encargos de los agentes leen webs solo con web_read de JARVIS (config aparte, sin agent_run).
     assistant.claude.task("x", "claude-sonnet-5", lambda e: None)
-    assert "--mcp-config" not in json.loads((tmp_path / "home" / "call.json").read_text())["argv"]
+    argv = json.loads((tmp_path / "home" / "call.json").read_text())["argv"]
+    assert argv[argv.index("--allowedTools") + 1] == "WebSearch,mcp__jarvis__web_read"
+    assert "WebFetch" in argv[argv.index("--disallowedTools") + 1]
+    web_config = json.loads(open(argv[argv.index("--mcp-config") + 1]).read())["mcpServers"]["jarvis"]
+    assert web_config["env"]["JARVIS_MCP_MODE"] == "web"
 
     client = TestClient(app)
     internal = {"X-Jarvis-Internal": config["env"]["JARVIS_INTERNAL_TOKEN"]}
@@ -232,6 +239,11 @@ def test_claude_chat_can_start_only_web_agents_through_jarvis(tmp_path, monkeypa
                        headers=internal).status_code == 400
     out = client.post("/internal/agents/run", json={"agent": "compras", "task": "monitor"}, headers=internal).json()
     assert "se ha puesto con ello" in out["message"]
+    # Leer webs para Claude: nada de la red de casa ni del propio servidor.
+    for url in ("http://192.168.1.1/", "http://127.0.0.1:8765/internal/agents", "file:///etc/passwd"):
+        out = client.post("/internal/web_read", json={"url": url}, headers=internal).json()["result"]
+        assert out.startswith("ERROR"), url
+    assert client.post("/internal/web_read", json={"url": "http://192.168.1.1/"}).status_code == 403
 
     # El servidor MCP: protocolo y llamada a JARVIS (aqui con la API simulada).
     calls = []
@@ -252,6 +264,16 @@ def test_claude_chat_can_start_only_web_agents_through_jarvis(tmp_path, monkeypa
     assert res["result"]["content"][0]["text"].startswith("El asesor") and not res["result"]["isError"]
     assert calls[-1] == ("POST", "/internal/agents/run", {"agent": "compras", "task": "monitor", "refresh": False})
     assert mcp_agents.handle({"jsonrpc": "2.0", "id": 4, "method": "nada"})["error"]["code"] == -32601
+    # Modo web (encargos de agentes): solo web_read, que va a la lectura segura de JARVIS.
+    monkeypatch.setattr(mcp_agents, "MODE", "web")
+    tools = mcp_agents.handle({"jsonrpc": "2.0", "id": 5, "method": "tools/list"})["result"]["tools"]
+    assert [t["name"] for t in tools] == ["web_read"]
+    mcp_agents.handle({"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+                       "params": {"name": "web_read", "arguments": {"url": "https://example.com"}}})
+    assert calls[-1] == ("POST", "/internal/web_read", {"url": "https://example.com"})
+    res = mcp_agents.handle({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+                             "params": {"name": "agent_run", "arguments": {"agent": "compras", "task": "x"}}})
+    assert res["result"]["isError"]
 
 
 def test_claude_as_full_brain_uses_jarvis_tools_confirms_and_falls_back(tmp_path, monkeypatch):
