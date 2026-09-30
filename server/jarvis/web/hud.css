@@ -713,23 +713,60 @@ a.vis-card:hover { background: #333336; transform: translateY(-1px); }
 .vis-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
 .vis-note { font-size: 12px; color: var(--apagado); }
 
-/* Imprimir / Guardar como PDF: solo la copia del informe (#print-area), en claro */
+/* Imprimir / Guardar como PDF: el informe maquetado como documento (ver printDocument en hud.js).
+   Fuera de la impresion #print-area no existe, asi que estos estilos solo viven en el papel. */
 #print-area { display: none; }
 @media print {
+  @page { size: A4; margin: 18mm 16mm; }
   html, body { overflow: visible !important; height: auto !important; background: #fff !important; }
   body.print-report > :not(#print-area) { display: none !important; }
-  body.print-report #print-area { display: block; color: #111; font: 12pt/1.5 var(--sans); }
-  #print-area .vis-card { padding: 0; background: #fff !important; color: #111; }
-  #print-area .vis-report-body { max-height: none !important; overflow: visible !important; font-size: 11pt; }
-  #print-area .vis-report-body::after, #print-area .vis-actions { display: none !important; }
-  #print-area .vis-head b { font-size: 16pt; color: #111; }
-  #print-area .vis-head span, #print-area .vis-task { color: #555; }
-  #print-area .md a { color: #0645ad; }
-  #print-area .md-table { overflow: visible; border-color: #ccc; }
-  #print-area .md th { background: #f2f2f2 !important; color: #111; white-space: normal; }
-  #print-area .md th, #print-area .md td { border-color: #ccc; }
-  #print-area .md blockquote, #print-area .md code { background: #f4f4f4; color: #333; }
-  #print-area tr { break-inside: avoid; }
+  body.print-report #print-area { display: block; }
+
+  .doc { color: #16181d; font: 10.5pt/1.55 var(--sans); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .doc-head { margin: 0 0 9mm; padding-bottom: 4mm; border-bottom: 2.5pt solid #16181d; }
+  .doc-brand { font-size: 7.5pt; font-weight: 650; letter-spacing: .16em; text-transform: uppercase; color: #6b7280; }
+  .doc-title { margin: 2.5mm 0 0; font-size: 21pt; font-weight: 680; line-height: 1.16; letter-spacing: -0.025em;
+    color: #0b0c0f; text-wrap: balance; }
+  .doc-meta { margin: 2mm 0 0; font-size: 9pt; color: #6b7280; }
+
+  /* Cuerpo: una columna comoda de leer, con los titulos pegados a lo que introducen. */
+  .doc-body { font-size: 10.5pt; }
+  .doc-body > *:first-child { margin-top: 0; }
+  .doc-body h3, .doc-body h4, .doc-body h5 { break-after: avoid; break-inside: avoid; color: #0b0c0f;
+    letter-spacing: -0.012em; }
+  .doc-body h3 { margin: 8mm 0 2.5mm; font-size: 14pt; font-weight: 660; }
+  .doc-body h4 { margin: 7mm 0 2mm; padding-bottom: 1.5mm; border-bottom: .5pt solid #e3e5e9;
+    font-size: 11.5pt; font-weight: 640; }
+  .doc-body h5 { margin: 5mm 0 1.5mm; font-size: 10.5pt; font-weight: 640; }
+  .doc-body p { margin: 0 0 2.6mm; orphans: 3; widows: 3; }
+  .doc-body ul, .doc-body ol { margin: 0 0 3mm; padding-left: 5.5mm; }
+  .doc-body li { margin: 0 0 1.2mm; break-inside: avoid; }
+  .doc-body li::marker { color: #9aa0aa; }
+  .doc-body strong { font-weight: 640; }
+  .doc-body blockquote { margin: 3mm 0; padding: 2mm 0 2mm 4mm; border-radius: 0; border-left: 2pt solid #c9ccd2;
+    background: none; color: #3f444d; font-style: italic; }
+  .doc-body code { padding: .3mm 1mm; border-radius: 1mm; background: #f2f3f5; color: #16181d;
+    font-family: var(--mono); font-size: 9pt; }
+  .doc-body a { color: #16181d; text-decoration: none; border-bottom: .5pt solid #b9bdc5; }
+  .doc-url { font-size: 8pt; color: #7a8089; word-break: break-all; }  /* la direccion, junto al enlace */
+
+  /* Tablas: cabecera que se repite al cambiar de pagina, filas alternas y cifras a la derecha. */
+  .doc-body .md-table { margin: 4mm 0 5mm; overflow: visible; border: 0; border-radius: 0; }
+  .doc-body table { width: 100%; border-collapse: collapse; font-size: 9.5pt;
+    border-top: 1.2pt solid #16181d; border-bottom: 1.2pt solid #16181d; }
+  .doc-body thead { display: table-header-group; }
+  .doc-body th { padding: 2.2mm 2.5mm; background: #f4f5f7; border-bottom: .5pt solid #d6d9de; color: #3f444d;
+    font-size: 8pt; font-weight: 680; letter-spacing: .06em; text-transform: uppercase; text-align: left;
+    white-space: normal; vertical-align: bottom; }
+  .doc-body td { padding: 2.2mm 2.5mm; border-bottom: .5pt solid #e9ebee; vertical-align: top; }
+  .doc-body tbody tr:nth-child(even) td { background: #fafbfc; }
+  .doc-body tbody tr:last-child td { border-bottom: 0; }
+  .doc-body tr { break-inside: avoid; }
+  .doc-body .num-col { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .doc-body td:first-child { font-weight: 600; }
+  .doc-body td a { border: 0; color: #3f444d; font-size: 8.5pt; word-break: break-all; }
+
+  .doc-source { margin: 1.2mm 0 0; font-size: 7.5pt; color: #9aa0aa; }  /* de donde sale el informe */
 }
 .md td a, .md th a { overflow-wrap: normal; white-space: nowrap; } /* la tabla se desliza de lado si no cabe */
 .answer-visual > *, .vis-report, .vis-report-body, .md { min-width: 0; max-width: 100%; }
@@ -772,10 +809,6 @@ body.viewer-open { overflow: hidden; }
   .viewer-bar .pill-btn { padding: 0 10px; }
   .paper { padding: 24px 18px calc(40px + env(safe-area-inset-bottom)); font-size: 15px; }
   .paper-task { font-size: 18px; }
-}
-@media print {
-  #print-area .paper { padding: 0; background: #fff; overflow: visible; }
-  #print-area .paper.md tbody tr:nth-child(even) td { background: #fff; }
 }
 
 /* Precios: la evolución de cada producto, con su gráfica */

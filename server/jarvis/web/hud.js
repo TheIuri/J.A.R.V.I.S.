@@ -1145,8 +1145,18 @@ function renderMarkdown(md) {
       continue;
     }
     list = null;
-    const p = node(t.startsWith(">") ? "blockquote" : "p");
-    mdInline(p, t.replace(/^>\s?/, ""));
+    // Un parrafo son todas las lineas seguidas hasta la siguiente en blanco (el modelo corta los renglones).
+    const quote = t.startsWith(">");
+    const parts = [t.replace(/^>\s?/, "")];
+    while (i + 1 < lines.length) {
+      const next = lines[i + 1].trim();
+      if (!next || next.startsWith("|") || /^(#{1,4})\s/.test(next) || /^([-*•]|\d+[.)])\s/.test(next)
+          || next.startsWith(">") !== quote) break;
+      parts.push(next.replace(/^>\s?/, ""));
+      i++;
+    }
+    const p = node(quote ? "blockquote" : "p");
+    mdInline(p, parts.join(" "));
     root.append(p);
   }
   return root;
@@ -1164,15 +1174,66 @@ function download(name, text, type) {
 }
 
 // Imprimir solo el informe (en el móvil: Imprimir -> Guardar como PDF).
-function printReport(el) {
-  // Una copia del informe fuera de los paneles (que tienen scroll y la recortarian) y solo eso en la impresion.
+// El informe maquetado como documento: portada con título y fecha, cuerpo y pie que se repite en cada página.
+// Se monta fuera de los paneles (que tienen scroll y lo recortarían) y en la impresión solo se ve esto.
+function printDocument(c) {
+  const doc = node("article", "doc");
+  const head = node("header", "doc-head");
+  head.append(node("div", "doc-brand", `JARVIS · ${c.label || "Agente"}`));
+  // El primer "# titulo" del informe es el título del documento: no se repite dentro.
+  const body = renderMarkdown(c.report);
+  const first = body.querySelector("h3, h4, h5");  // renderMarkdown: "#" es h3 y "##" es h4
+  const title = first && first.tagName === "H3" ? first.textContent : "";
+  if (title) first.remove();
+  head.append(node("h1", "doc-title", title || c.task || "Informe"));
+  const meta = [c.date && longDate(c.date), c.task && title ? c.task : ""].filter(Boolean).join(" · ");
+  if (meta) head.append(node("p", "doc-meta", meta));
+  // La procedencia va en la cabecera: un colofon al final se lleva una pagina entera cuando el texto justo cabe.
+  if (c.note) head.append(node("p", "doc-source", c.note));
+  body.classList.add("doc-body");
+  markNumbers(body);
+  showLinks(body);
+  doc.append(head, body);
+  return doc;
+}
+
+// En papel un enlace no se puede pulsar: se imprime su direccion, salvo si el texto ya es esa direccion.
+function showLinks(body) {
+  for (const a of body.querySelectorAll("p a, li a")) {
+    const href = a.getAttribute("href") || "";
+    const text = a.textContent.trim();
+    const plain = href.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    if (!href || text === href || text === plain || plain.startsWith(text.replace(/\/$/, ""))) continue;
+    a.after(node("span", "doc-url", ` (${plain})`));
+  }
+}
+
+// Las columnas de solo cifras (precios, cantidades) se alinean a la derecha, como en cualquier tabla impresa.
+function markNumbers(body) {
+  for (const table of body.querySelectorAll("table")) {
+    const rows = [...table.querySelectorAll("tbody tr")];
+    const columns = table.querySelectorAll("thead th").length;
+    for (let i = 0; i < columns; i++) {
+      const cells = rows.map((r) => r.children[i]).filter(Boolean);
+      const numeric = cells.length && cells.every((td) => /^[^a-zA-Z]*\d[\d.,\s]*(?:[€$£%]|kg|g|mm|cm|h)?[^a-zA-Z]*$/.test(td.textContent.trim()));
+      if (!numeric) continue;
+      cells.forEach((td) => td.classList.add("num-col"));
+      table.querySelectorAll("thead th")[i]?.classList.add("num-col");
+    }
+  }
+}
+
+function longDate(date) {
+  const d = new Date(String(date).replace(" ", "T"));
+  if (isNaN(d)) return String(date);
+  return d.toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" });
+}
+
+function printReport(c) {
   document.getElementById("print-area")?.remove();
   const area = node("div");
   area.id = "print-area";
-  const copy = el.cloneNode(true);
-  copy.removeAttribute("id");
-  copy.classList.add("open");
-  area.append(copy);
+  area.append(printDocument(c));
   document.body.append(area);
   document.body.classList.add("print-report");
   const done = () => {
@@ -1199,7 +1260,7 @@ function showReport(c) {
   tools.append(
     more,
     iconButton("ask", "Preguntar", () => askAboutReport(c.job, c.task)),
-    iconButton("report", "PDF", () => printReport(el)),
+    iconButton("report", "PDF", () => printReport(c)),
     iconButton("copy", "Copiar", (e) => copyText(c.report, e.currentTarget)),
     iconButton("download", "Descargar", () => download(`${slug || "informe"}.md`, c.report, "text/markdown")),
   );
@@ -1209,7 +1270,7 @@ function showReport(c) {
   // Han pedido el informe en PDF: se abre el visor y, con él, el diálogo de guardar como PDF.
   if (c.print) {
     openReportViewer(c, slug);
-    setTimeout(() => printReport($("report-paper")), 400);
+    setTimeout(() => printReport(c), 400);
   }
 }
 
@@ -1237,7 +1298,7 @@ function openReportViewer(c, slug) {
   $("viewer-title").textContent = `Informe · ${c.label || "agente"}`;
   $("viewer-ask").hidden = !c.job;
   $("viewer-ask").onclick = () => askAboutReport(c.job, c.task);
-  $("viewer-pdf").onclick = () => printReport(paper);
+  $("viewer-pdf").onclick = () => printReport(c);
   $("viewer-copy").onclick = (e) => copyText(c.report, e.currentTarget);
   $("viewer-download").onclick = () => download(`${slug || "informe"}.md`, c.report, "text/markdown");
   $("report-viewer").hidden = false;
