@@ -177,6 +177,32 @@ def prices_check(store, request: Callable[[str, str], Any], interval_s: float = 
     return Check("precios", interval_s, fn)
 
 
+def review_check(reviewer, routes, at: str = "03:40", weekday: int = 6, timezone: str = "Europe/Madrid",
+                 seen: Callable[[str], bool] = lambda k: False) -> Check:
+    """El repaso semanal, de madrugada (weekday 0=lunes ... 6=domingo). Una vez por semana."""
+    from datetime import time as dtime
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo(timezone)
+    hour = dtime.fromisoformat(at)
+
+    def fn() -> list[Alert]:
+        now = datetime.now(tz)
+        start = datetime.combine(now.date(), hour, tz)
+        if now.weekday() != weekday or not start <= now < start + timedelta(hours=2):
+            return []
+        key = f"review:{now.isocalendar().year}-{now.isocalendar().week}"
+        if seen(key):
+            return []
+        out = reviewer.run(routes() if callable(routes) else routes)
+        pending = len(out.get("proposals") or [])
+        if not pending:
+            return [(key, "info", "repaso", "")]  # hecho, pero sin nada que contar
+        return []  # el aviso lo pone el propio repaso, con su clave
+
+    return Check("repaso semanal", 900, fn)
+
+
 def truenas_check(
     connect: Callable[[], Any], temp_warn: float = 50, interval_s: float = 300
 ) -> Check:
@@ -234,4 +260,4 @@ def truenas_check(
     return Check("truenas", interval_s, fn)
 
 
-__all__ = ["Check", "Watcher", "briefing_check", "summary_check", "calendar_check", "reminders_check", "truenas_check", "prices_check", "OK_STATES"]
+__all__ = ["Check", "Watcher", "briefing_check", "summary_check", "calendar_check", "reminders_check", "truenas_check", "prices_check", "review_check", "OK_STATES"]

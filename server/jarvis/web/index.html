@@ -19,6 +19,8 @@
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
     <symbol id="i-ask" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-3.2-6.4M12 8.5v.2M12 12v3.5"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M7 21V10l5-7 1.2.8a2 2 0 0 1 .8 2.2L13 10h5.2a2 2 0 0 1 2 2.5l-1.6 6.5a2.5 2.5 0 0 1-2.4 2H7zM3.5 21h3.5V10H3.5z"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M7 3v11l5 7 1.2-.8a2 2 0 0 0 .8-2.2L13 14h5.2a2 2 0 0 0 2-2.5l-1.6-6.5A2.5 2.5 0 0 0 16.2 3H7zM3.5 3h3.5v11H3.5z"/></symbol>
     <symbol id="i-agents" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="4.5" cy="6" r="2"/><circle cx="19.5" cy="6" r="2"/><circle cx="12" cy="20.5" r="2"/><path d="M6.2 7.1l3.3 3M17.8 7.1l-3.3 3M12 15v3.5"/></symbol>
     <symbol id="i-trace" viewBox="0 0 24 24"><path d="M4 5h3M4 12h3M4 19h3"/><circle cx="11" cy="5" r="1.6"/><circle cx="11" cy="12" r="1.6"/><circle cx="11" cy="19" r="1.6"/><path d="M11 6.6v3.8M11 13.6v3.8M15 5h5M15 12h5M15 19h5"/></symbol>
     <symbol id="i-session" viewBox="0 0 24 24"><path d="M4 19V11M10 19V5M16 19v-6M22 19H2"/></symbol>
@@ -101,6 +103,12 @@
         <p id="answer-text" class="answer-text"></p>
         <div id="answer-meta" class="answer-meta">
           <span id="source" class="source" hidden></span>
+        </div>
+        <div id="answer-rate" class="answer-rate" hidden>
+          <span>¿Te sirve?</span>
+          <button type="button" data-verdict="bien" aria-label="Sí, me sirve"><svg class="icon"><use href="#i-up"/></svg></button>
+          <button type="button" data-verdict="mal" aria-label="No, ha fallado"><svg class="icon"><use href="#i-down"/></svg></button>
+          <input id="answer-why" type="text" maxlength="200" placeholder="¿Qué ha fallado? (Enter)" hidden>
         </div>
       </article>
       <section id="cards" hidden aria-label="Resultados">
@@ -226,6 +234,15 @@
                 <button id="reset" type="button"><svg class="icon"><use href="#i-reset"/></svg><span>Nueva conversación</span></button>
               </div>
               <div id="memory-list"></div>
+            </section>
+            <section class="agent-form" aria-labelledby="h-learn">
+              <h2 id="h-learn">Cómo aprende. <span class="gris">Propone y tú decides.</span></h2>
+              <p class="gris small">Con tus pulgares y lo que repites, JARVIS propone mejoras cada domingo. No aplica nada sin tu visto bueno.</p>
+              <div class="actions">
+                <button id="improve" type="button"><svg class="icon"><use href="#i-up"/></svg><span>Ver propuestas</span></button>
+                <button id="review-now" type="button"><svg class="icon"><use href="#i-reset"/></svg><span>Repasar ahora</span></button>
+              </div>
+              <div id="improve-list"></div>
             </section>
           </div>
           <div class="col">

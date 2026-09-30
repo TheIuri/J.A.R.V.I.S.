@@ -1492,7 +1492,59 @@ function showQuestion(q) {
   fillFacts([]);
   clearVisual();
   setAnswerTools([]);
+  showFeedback(0);
 }
+
+// El pulgar: la señal con la que JARVIS aprende. Con el pulgar abajo se puede decir qué falló, y de ahí
+// sale una regla para no repetirlo.
+let answerTurn = 0;
+
+function showFeedback(turn) {
+  answerTurn = turn || 0;
+  const box = $("answer-rate");
+  box.hidden = !answerTurn;
+  box.querySelectorAll("button").forEach((b) => {
+    b.classList.remove("on");
+    b.disabled = false;
+  });
+  $("answer-why").hidden = true;
+  $("answer-why").value = "";
+}
+
+async function rate(verdict, note = "") {
+  if (!answerTurn) return;
+  const box = $("answer-rate");
+  box.querySelector(`[data-verdict="${verdict}"]`)?.classList.add("on");
+  try {
+    const resp = await api("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ turn: answerTurn, verdict, note }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (body.aprendiendo) trace("Memoria", "aprende de tu corrección", [211, 140, 255]);
+  } catch (e) {
+    /* el pulgar no es crítico: si falla, no se molesta al usuario */
+  }
+}
+
+$("answer-rate").addEventListener("click", (e) => {
+  const verdict = e.target.closest("[data-verdict]")?.dataset.verdict;
+  if (!verdict) return;
+  if (verdict === "mal") {
+    const why = $("answer-why");
+    why.hidden = false;
+    why.focus();
+  }
+  rate(verdict);
+});
+$("answer-why").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  const note = e.currentTarget.value.trim();
+  e.currentTarget.hidden = true;
+  if (note) rate("mal", note);
+});
 
 function setAnswerTools(tools, extra = []) {
   answerTools = tools;
@@ -1683,6 +1735,7 @@ async function ask(path, init) {
   }
   if (body.cards?.length && $("cards").hidden && !answerVisual) routeCards(body.cards); // servidor sin directo
   showTurn(body);
+  showFeedback(body.turn);
   if (body.audio_wav_b64 && prefs.voice) await playWav(body.audio_wav_b64);
   else setState("idle");
   $("flow").classList.add("past");
@@ -3359,6 +3412,90 @@ $("ask").addEventListener("submit", (e) => {
   ensureAudio(); // el clic/Enter cuenta como gesto: permite reproducir la respuesta
   sendText(text);
 });
+// --- cómo aprende: propuestas del repaso y atajos aprendidos ------------------
+
+const PROPOSAL_LABEL = { atajo: "Atajo", regla: "Regla", agente: "Agente", aviso: "Aviso" };
+
+async function showProposals() {
+  const list = $("improve-list");
+  list.textContent = "Cargando…";
+  try {
+    const resp = await api("/api/proposals");
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.detail);
+    list.textContent = "";
+    for (const p of body.proposals) {
+      const row = node("div", "prop");
+      row.append(node("span", "prop-kind", PROPOSAL_LABEL[p.kind] || p.kind));
+      const main = node("div", "prop-main");
+      main.append(node("b", "", p.title));
+      if (p.why) main.append(node("span", "", p.why));
+      if (p.data?.texto) main.append(node("em", "", p.data.texto));
+      row.append(main);
+      const ok = node("button", "pill-btn", "Aprobar");
+      ok.type = "button";
+      const no = node("button", "pill-btn quiet", "Descartar");
+      no.type = "button";
+      const decide = async (approve, button) => {
+        row.querySelectorAll("button").forEach((b) => (b.disabled = true));
+        const r = await api(`/api/proposals/${p.id}`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ approve }),
+        });
+        const out = await r.json().catch(() => ({}));
+        row.replaceChildren(node("span", "prop-kind", PROPOSAL_LABEL[p.kind] || p.kind),
+                            node("div", "prop-main", out.done || out.detail || "Hecho."));
+        if (approve && p.kind === "regla") showMemories();
+      };
+      ok.addEventListener("click", () => decide(true, ok));
+      no.addEventListener("click", () => decide(false, no));
+      row.append(ok, no);
+      list.append(row);
+    }
+    if (!body.proposals.length) list.append(node("p", "gris small", "Nada pendiente. Las propuestas salen del repaso semanal."));
+    if (body.routes.length) {
+      list.append(node("h3", "prop-title", `Atajos activos (${body.routes.length})`));
+      for (const r of body.routes) {
+        const row = node("div", "prop");
+        row.append(node("span", "prop-kind", "0 tokens"));
+        const main = node("div", "prop-main");
+        main.append(node("b", "", `«${r.shape}»`), node("span", "", `llama a ${r.tool} cada vez, así que el dato es del momento`));
+        row.append(main);
+        const off = node("button", "pill-btn quiet", "Quitar");
+        off.type = "button";
+        off.addEventListener("click", async () => {
+          off.disabled = true;
+          await api(`/api/routes/${encodeURIComponent(r.shape)}`, { method: "DELETE" });
+          row.remove();
+        });
+        row.append(off);
+        list.append(row);
+      }
+    }
+  } catch (err) {
+    list.textContent = `No he podido cargarlo: ${err.message}`;
+  }
+}
+
+$("improve").addEventListener("click", showProposals);
+$("review-now").addEventListener("click", async (e) => {
+  const button = e.currentTarget;
+  button.disabled = true;
+  button.querySelector("span").textContent = "Repasando…";
+  try {
+    const resp = await api("/api/review", { method: "POST" });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(body.detail || "no ha podido");
+    await showProposals();
+    if (body.summary) trace("El repaso", body.summary, [211, 140, 255]);
+  } catch (err) {
+    $("improve-list").textContent = `No he podido repasar: ${err.message}`;
+  } finally {
+    button.disabled = false;
+    button.querySelector("span").textContent = "Repasar ahora";
+  }
+});
+
 $("memories").addEventListener("click", showMemories);
 $("reset").addEventListener("click", resetConversation);
 

@@ -155,6 +155,8 @@ class Settings:
     leads_profile: str = ""  # lo que ofreces, para el captador de clientes (p. ej. "taller de impresion 3D en ...")
     insights_enabled: bool = True  # fichas con los datos clave de cada respuesta en el HUD
     learn_prefs: bool = True  # apuntar solo las preferencias que dice el usuario (necesita memoria)
+    review_at: str = "03:40"  # repaso semanal: propone mejoras y las apruebas tu ("" lo apaga)
+    review_day: int = 6  # 0 = lunes ... 6 = domingo
     direct_answers: bool = True  # lo trivial (hora, tiempo, agenda, pausar la musica...) sin LLM: 0 tokens
     tool_filter: bool = True  # mandar al LLM solo las herramientas que vienen a cuento
     wol_broadcast: str = "255.255.255.255"
@@ -307,6 +309,8 @@ def load_settings() -> Settings:
                         if (m := re.fullmatch(r"LEADS_PROFILE_([A-Z0-9]+)", k)) and v.strip()},
         insights_enabled=_env_bool("INSIGHTS_ENABLED", True),
         learn_prefs=_env_bool("LEARN_PREFS", True),
+        review_at=_env("REVIEW_AT", "03:40"),
+        review_day=_env_int("REVIEW_DAY", 6),
         direct_answers=_env_bool("DIRECT_ANSWERS", True),
         tool_filter=_env_bool("TOOL_FILTER", True),
         wol_broadcast=_env("WOL_BROADCAST", "255.255.255.255"),

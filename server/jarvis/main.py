@@ -21,6 +21,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+from dataclasses import asdict
+
 from .activity import ActivityLog
 from .agent_history import AgentHistory
 from .auditor import Auditor, audit_tool, parse_projects
@@ -34,13 +36,15 @@ from .leads import STATUSES as LEAD_STATUSES, LeadStore, lead_tools
 from .learn import PrefLearner
 from .llm import FallbackLLM, LLMError, OpenAICompatLLM, usage_report
 from .memory import MemoryRejected, MemoryStore, RuleRetriever
-from .notes_index import NotesIndex
+from .notes_index import Doc, NotesIndex
 from .notify import NoticeBoard, NtfyPush, parse_quiet
 from .obsidian import Vault
 from .pipeline import PENDING_TTL_S, Assistant, TurnResult, is_affirmative, is_negative
 from .plans import Planner, plan_tool
 from .prices import PriceStore
 from .prompts import system_prompt
+from .review import Proposals, Reviewer, apply_proposal
+from .routes import Routes
 from .stt import FasterWhisperSTT, GroqSTT
 from .tools import build_registry, make_calendars, spotify_configured, truenas_snapshot
 from .tools.info import PageReader, research_tools, web_read_tool
@@ -52,8 +56,8 @@ from .tools.truenas import _default_connect
 from .tools.vision import Vision, check_image
 from .tts import EdgeTTS, NullTTS, PiperTTS
 from .turnlog import TurnLog
-from .watch import (Watcher, briefing_check, calendar_check, prices_check, reminders_check, summary_check,
-                    truenas_check)
+from .watch import (Watcher, briefing_check, calendar_check, prices_check, reminders_check, review_check,
+                    summary_check, truenas_check)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # evita loguear URLs firmadas y ruido
@@ -104,8 +108,8 @@ def build_assistant(settings: Settings) -> Assistant:
         if settings.vision_providers
         else None
     )
-    # Busqueda por significado en las notas (local, sin tokens): la usan el chat y los agentes.
-    notes = NotesIndex(vault) if vault else None
+    # Busqueda por significado (local, sin tokens) en las notas y, mas abajo, en lo hablado y los informes.
+    notes = NotesIndex(vault) if (vault or settings.tools_enabled) else None
     tools = build_registry(settings, store, vault, reminders, calendars, vision, notes)
     retriever = RuleRetriever(store, settings.memory_max_items) if store else None
 
@@ -125,11 +129,14 @@ def build_assistant(settings: Settings) -> Assistant:
     # Registro de conversaciones (siempre): seguir tras reiniciar y recordar lo hablado otros dias.
     data.mkdir(parents=True, exist_ok=True)
     assistant.turn_log = TurnLog(data / "turns.db", settings.timezone)
+    assistant.routes = Routes(data / "routes.json")  # atajos aprendidos y aprobados por el usuario
     assistant.activity = ActivityLog()  # trazabilidad de agentes para el HUD
     if settings.insights_enabled:
         assistant.insights = Insights(llm, assistant.activity)
     if settings.learn_prefs and store is not None:
         assistant.learner = PrefLearner(llm, store, assistant.activity)
+    # Repaso semanal: mira los pulgares y lo que se repite, y propone mejoras que apruebas tu.
+    assistant.proposals = Proposals(data / "proposals.json")
     # Historico de precios: lo llenan los informes de los agentes (ver AgentTeam._prices).
     assistant.prices = PriceStore(data / "prices.db", settings.timezone) if settings.agents_enabled else None
     if reminders:
@@ -193,10 +200,30 @@ def build_assistant(settings: Settings) -> Assistant:
     assistant.direct_answers = settings.direct_answers
     assistant.tool_filter = settings.tool_filter
     assistant.default_model = settings.default_model
+    if notes is not None:
+        # El indice cubre tambien lo que hablasteis y los informes: "¿que me dijiste del PETG?".
+        notes.extra = lambda: memory_docs(assistant)
     if getattr(assistant, "claude", None) is not None:
         assistant.claude.full = settings.claude_tools != "web" and tools is not None
         assistant.claude.system = assistant.system_prompt
     return assistant
+
+
+def memory_docs(assistant: Assistant) -> list[Doc]:
+    """Lo que no son notas pero se busca igual: las conversaciones y los informes de los agentes."""
+    docs: list[Doc] = []
+    log_ = getattr(assistant, "turn_log", None)
+    if log_ is not None:
+        for turn in log_.since(30):
+            when = str(turn.get("ts", ""))[:10]
+            user, reply = turn.get("user") or "", turn.get("reply") or ""
+            if user:
+                docs.append(Doc(f"Conversación del {when}", user[:80], f"{user}\n{reply}", "conversacion"))
+    team = getattr(assistant, "team", None)
+    if team is not None:
+        for report in team.reports(20):
+            docs.append(Doc(f"Informe · {report['task'][:60]}", report["label"], report["report"], "informe"))
+    return docs
 
 
 def build_watcher(
@@ -244,12 +271,28 @@ def build_watcher(
         checks.append(
             briefing_check(ask, settings.briefing_at, settings.timezone, settings.briefing_weekends, board.seen)
         )
+    if settings.review_at and assistant.turn_log and getattr(assistant, "proposals", None) is not None:
+        reviewer = Reviewer(assistant.llm, assistant.turn_log, assistant.proposals, assistant.memory,
+                            assistant.vault, assistant.activity, board, settings.timezone)
+        assistant.reviewer = reviewer
+        checks.append(review_check(reviewer, lambda: assistant.routes.items if assistant.routes else {},
+                                   settings.review_at, settings.review_day, settings.timezone, board.seen))
     if settings.summary_at and assistant.vault and assistant.turn_log:
         checks.append(
             summary_check(assistant.llm, assistant.turn_log, assistant.vault, settings.summary_at, settings.timezone,
                           board.seen)
         )
     return board, Watcher(board, checks)
+
+
+class ProposalDecision(BaseModel):
+    approve: bool = False
+
+
+class FeedbackRequest(BaseModel):
+    turn: int
+    verdict: str = ""  # "bien", "mal" o vacio para quitarlo
+    note: str = ""  # que ha fallado, si lo dices
 
 
 class ChatRequest(BaseModel):
@@ -338,6 +381,7 @@ def _to_json(result: TurnResult) -> dict:
         "tools_used": result.tools_used,
         "pc_actions": result.pc_actions,
         "cards": result.cards,
+        "turn": result.turn,
         "audio_wav_b64": _b64(result.audio),
     }
 
@@ -649,6 +693,69 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         except ToolError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"job": job.id if job else None, "reused": job is None, "message": message}
+
+    @app.get("/api/proposals", dependencies=[Depends(require_token)])
+    def list_proposals() -> dict:
+        """Lo que JARVIS propone para mejorar. Nada se aplica hasta que lo apruebas."""
+        store_ = getattr(state["assistant"], "proposals", None)
+        routes_ = getattr(state["assistant"], "routes", None)
+        return {
+            "proposals": [asdict(p) for p in (store_.pending() if store_ else [])],
+            "routes": [{"shape": r.shape, "tool": r.tool, "times": r.times, "created": r.created}
+                       for r in (routes_.items.values() if routes_ else [])],
+        }
+
+    @app.post("/api/proposals/{ident}", dependencies=[Depends(require_token)])
+    def decide_proposal(ident: str, req: ProposalDecision) -> dict:
+        a: Assistant = state["assistant"]
+        store_ = getattr(a, "proposals", None)
+        if store_ is None or store_.get(ident) is None:
+            raise HTTPException(status_code=404, detail="No existe esa propuesta")
+        if req.approve:
+            try:
+                done = apply_proposal(store_.get(ident), a.routes, a.memory, getattr(a, "team", None))
+            except (ValueError, ToolError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            store_.close(ident, "aprobada")
+            return {"ok": True, "done": done}
+        store_.close(ident, "descartada")
+        return {"ok": True, "done": "Propuesta descartada."}
+
+    @app.delete("/api/routes/{shape}", dependencies=[Depends(require_token)])
+    def drop_route(shape: str) -> dict:
+        routes_ = getattr(state["assistant"], "routes", None)
+        if routes_ is None or not routes_.remove(shape):
+            raise HTTPException(status_code=404, detail="No existe ese atajo")
+        return {"ok": True}
+
+    @app.post("/api/review", dependencies=[Depends(require_token)])
+    def run_review() -> dict:
+        """Lanzar el repaso a mano, sin esperar al domingo."""
+        reviewer = getattr(state["assistant"], "reviewer", None)
+        if reviewer is None:
+            raise HTTPException(status_code=404, detail="El repaso semanal no está activado")
+        routes_ = getattr(state["assistant"], "routes", None)
+        out = reviewer.run(routes_.items if routes_ else {})
+        return {"summary": out["summary"], "proposals": out["proposals"], "note": out["note"]}
+
+    @app.post("/api/feedback", dependencies=[Depends(require_token)])
+    def feedback(req: FeedbackRequest) -> dict:
+        """El pulgar del HUD. Es la senal con la que JARVIS aprende: sin esto no hay de donde."""
+        log_ = getattr(state["assistant"], "turn_log", None)
+        if log_ is None:
+            raise HTTPException(status_code=404, detail="No hay registro de conversaciones")
+        try:
+            turn = log_.rate(req.turn, req.verdict, req.note)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if turn is None:
+            raise HTTPException(status_code=404, detail=f"No existe el turno {req.turn}")
+        learner = getattr(state["assistant"], "learner", None)
+        learned = False
+        if req.verdict == "mal" and req.note and learner is not None:
+            # Con lo que dices que ha fallado se saca una regla para no repetirlo.
+            learned = learner.submit_correction(turn["user"], turn["reply"], req.note)
+        return {"ok": True, "turn": req.turn, "verdict": req.verdict, "aprendiendo": learned}
 
     @app.get("/api/report.pdf", dependencies=[Depends(require_token)])
     def report_pdf(job: int | None = None, about: str = "") -> Response:

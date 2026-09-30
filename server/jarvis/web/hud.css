@@ -852,3 +852,33 @@ a.price-name:hover { color: var(--azul); text-decoration: underline; }
   letter-spacing: .06em; color: var(--apagado); }
 .plan-steps li.done { color: var(--texto); }
 .plan-steps li.done b { color: var(--verde-dato); }
+
+/* El pulgar: la señal con la que JARVIS aprende */
+.answer-rate { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid var(--linea); font-size: 12.5px; color: var(--apagado); }
+.answer-rate button { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 9px;
+  background: var(--relleno); color: var(--claro); cursor: pointer; transition: background .2s, color .2s; }
+.answer-rate button:hover { background: var(--relleno-2); color: var(--texto); }
+.answer-rate button .icon { width: 15px; height: 15px; }
+.answer-rate button[data-verdict="bien"].on { background: rgba(48, 209, 88, .18); color: var(--verde-dato); }
+.answer-rate button[data-verdict="mal"].on { background: rgba(255, 69, 58, .18); color: var(--rojo); }
+.answer-rate button:disabled { opacity: .5; cursor: default; }
+#answer-why { flex: 1 1 160px; min-width: 0; height: 30px; padding: 0 10px; border: 0; border-radius: 9px;
+  background: var(--relleno); color: var(--texto); font: 12.5px var(--sans); }
+#answer-why::placeholder { color: var(--apagado); }
+
+/* Cómo aprende: las propuestas del repaso y los atajos ya activos */
+.prop { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 8px 12px;
+  padding: 12px 0; border-bottom: 1px solid var(--linea); }
+.prop-kind { align-self: start; padding: 3px 9px; border-radius: 999px; background: var(--relleno);
+  color: var(--claro); font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.prop-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 13.5px; }
+.prop-main b { font-size: 14px; }
+.prop-main span { color: var(--claro); font-size: 12.5px; }
+.prop-main em { color: var(--apagado); font-size: 12.5px; font-style: normal; }
+.prop-title { margin: 20px 0 0; font-size: 14px; }
+.small { font-size: 12.5px; }
+@media (max-width: 720px) {
+  .prop { grid-template-columns: auto 1fr; }
+  .prop .pill-btn { grid-column: 2; justify-self: start; }
+}
