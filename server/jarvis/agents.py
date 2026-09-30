@@ -822,8 +822,10 @@ def agent_tools(team: AgentTeam) -> list[Tool]:
     def status(_ctx: ToolContext) -> str:
         return team.status_text()
 
-    def report(ctx: ToolContext, about: str = "") -> str:
-        """Un informe que ya esta hecho: se pone en pantalla (con PDF, copiar y descargar) y se devuelve el texto."""
+    def report(ctx: ToolContext, about: str = "", pdf: bool = False) -> str:
+        """Un informe que ya esta hecho: se pone en pantalla (con PDF, copiar y descargar) y se devuelve el texto.
+
+        pdf=True (el usuario ha pedido un PDF): ademas se abre solo el dialogo de guardar como PDF."""
         found = team.find_report(about)
         if found is None:
             other = team.reports(8)
@@ -832,10 +834,12 @@ def agent_tools(team: AgentTeam) -> list[Tool]:
             lista = "; ".join(f"[{r['job'] or '-'}] {r['task']} ({r['date'][:10]})" for r in other)
             raise ToolError(f"no encuentro un informe sobre eso. Los que hay: {lista}")
         ctx.cards.append({"kind": "report", "label": found["label"], "task": found["task"], "date": found["date"],
-                          "report": found["report"], "note": found["note"], "job": found["job"]})
-        return (f"Informe de {found['label']} del {found['date']} sobre «{found['task']}». Ya lo tiene en pantalla, "
-                "con botones para verlo entero, guardarlo en PDF, copiarlo o descargarlo: dile que está ahí y "
-                "responde a lo que pregunte usando el texto.\n\n" + found["report"][:NEWS_REPORT_CHARS])
+                          "report": found["report"], "note": found["note"], "job": found["job"], "print": bool(pdf)})
+        donde = ("Se le ha abierto el diálogo para guardarlo como PDF: dile que elija «Guardar como PDF» y ya está."
+                 if pdf else "Ya lo tiene en pantalla, con botones para verlo entero, guardarlo en PDF, copiarlo o "
+                 "descargarlo: dile que está ahí.")
+        return (f"Informe de {found['label']} del {found['date']} sobre «{found['task']}». {donde} Responde a lo que "
+                "pregunte usando el texto.\n\n" + found["report"][:NEWS_REPORT_CHARS])
 
     def run_description() -> str:
         agents = "; ".join(f"{k}: {team.specs[k].description}" for k in team.available)
@@ -884,11 +888,13 @@ def agent_tools(team: AgentTeam) -> list[Tool]:
                 "Recupera un informe que un agente YA terminó (aunque fuera otro día) y lo pone en pantalla, donde el "
                 "usuario puede verlo entero, guardarlo en PDF, copiarlo o descargarlo. Úsala siempre que pregunten "
                 "por un informe, pidan verlo, sacarlo en PDF o preguntar sobre lo que encontró; nunca digas que hay "
-                "que esperar sin mirar aquí antes. 'about': unas palabras del tema o el número de la tarea; vacío = "
-                "el más reciente."
+                "que esperar ni mandes al usuario a Obsidian sin mirar aquí antes. 'about': unas palabras del tema o "
+                "el número de la tarea; vacío = el más reciente. Pon pdf=true si han pedido un PDF, y se les abre "
+                "solo el diálogo de guardarlo."
             ),
             parameters={"type": "object", "properties": {
-                "about": {"type": "string", "description": "Palabras del tema (p. ej. 'filamentos') o el número de tarea"}}},
+                "about": {"type": "string", "description": "Palabras del tema (p. ej. 'filamentos') o el número de tarea"},
+                "pdf": {"type": "boolean", "description": "true si el usuario ha pedido el informe en PDF"}}},
             fn=report,
         ),
         Tool(

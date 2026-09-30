@@ -525,3 +525,22 @@ def test_agent_report_lee_la_nota_de_obsidian_de_informes_antiguos(tmp_path):
     out = {t.name: t for t in agent_tools(team)}["agent_report"].fn(ctx, about="filamentos")
     assert "7,20 €" in out
     assert "El asesor de compras de JARVIS ·" not in ctx.cards[0]["report"]  # sin la cabecera de JARVIS
+
+
+def test_agent_report_con_pdf_pide_abrir_el_dialogo(tmp_path):
+    """'sácamelo en PDF' marca la tarjeta para que el HUD abra el diálogo de guardar."""
+    from jarvis.agent_history import AgentHistory
+    from jarvis.agents import AgentTeam, agent_tools
+    from tests.test_tools import ScriptedLLM
+
+    script = ScriptedLLM(["RESUMEN: Listo.\n# Filamentos\nEl PETG cuesta 6,50 €."])
+    team = AgentTeam(script.llm(), {"web_search": fake_search()}, history=AgentHistory(tmp_path / "h.json"))
+    team.start("compras", "precios de filamentos", background=False)
+    tool = {t.name: t for t in agent_tools(team)}["agent_report"]
+
+    ctx = ToolContext()
+    out = tool.fn(ctx, about="filamentos", pdf=True)
+    assert ctx.cards[0]["print"] is True and "Guardar como PDF" in out
+    ctx2 = ToolContext()
+    tool.fn(ctx2, about="filamentos")
+    assert ctx2.cards[0]["print"] is False
