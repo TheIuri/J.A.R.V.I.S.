@@ -79,7 +79,7 @@ def test_research_agent_end_to_end(tmp_path):
     assert "# Paneles solares" in note and "puntos clave" in note  # no lo bloquea el filtro de secretos
     notice = board.since(0)[0]
     assert notice.source == "agente" and notice.text == "El investigador ha terminado. Un panel da unos 400 W. Compensa en 7 años."
-    status = agent_tools(team)[1].fn(ToolContext())
+    status = {t.name: t for t in agent_tools(team)}["agent_status"].fn(ToolContext())
     assert status.startswith("[1] El investigador · paneles solares en casa: terminado [fake:m]: Un panel da unos 400 W.")
     # El agente solo tiene sus tools: el LLM las recibe todas y nada más.
     assert [t["function"]["name"] for t in script.requests[0]["tools"]] == ["web_search"]
@@ -93,7 +93,7 @@ def test_team_offers_only_agents_whose_tools_exist_and_keeps_them_apart(tmp_path
     assert team.registries["investigador"].names() == ["web_search", "web_read"]
     assert "web_read" not in team.registries["escritor"].names()  # datos privados, sin web
     assert team.registries["organizador"].names() == ["get_datetime", "calendar_agenda", "obsidian_search", "memory_search"]
-    run = agent_tools(team)[0]
+    run = {t.name: t for t in agent_tools(team)}["agent_run"]
     assert run.parameters["properties"]["agent"]["enum"] == ["investigador", "organizador", "compras", "captador", "escritor"]
     assert team.registries["compras"].names() == ["web_search", "web_read"]
     with pytest.raises(ToolError, match="no hay ningún agente 'tecnico'"):
@@ -284,7 +284,7 @@ def test_history_reuses_a_similar_task_without_launching_the_agent(tmp_path):
     job = team.start("compras", "impresoras 3D de resina", background=False)
     assert job.state == "terminado" and len(history.entries) == 1
 
-    run = agent_tools(team)[0]
+    run = {t.name: t for t in agent_tools(team)}["agent_run"]
     out = run.fn(ToolContext(), agent="compras", task="compárame impresoras de resina 3D")
     assert "ya investigó algo parecido" in out and "Elegoo Saturn" in out
     assert len(team.jobs) == 1 and len(script.requests) == 1  # no se ha lanzado otro: 0 tokens
@@ -435,7 +435,7 @@ def test_finished_report_reaches_the_conversation_and_status(tmp_path):
     assert "ya estan terminadas" in system and "https://filamentor.es/pla" in system
     a.handle_text("gracias")
     assert "Novedades" not in script.requests[1]["messages"][0]["content"]  # solo una vez
-    status = agent_tools(team)[1].fn(ToolContext())
+    status = {t.name: t for t in agent_tools(team)}["agent_status"].fn(ToolContext())
     assert "Informe de la tarea 1" in status and "https://filamentor.es/tpu" in status
 
 
@@ -444,3 +444,84 @@ def test_report_format_asks_for_complete_tables_with_links():
 
     assert "columna \"Enlace\"" in REPORT_FORMAT and "no visto" in REPORT_FORMAT
     assert "columna \"Enlace\"" in custom_prompt("Vigilante", "precios del filamento")
+
+
+def test_agent_report_recupera_un_informe_y_lo_pone_en_pantalla(tmp_path):
+    """Preguntar por un informe ya hecho no debe contestar 'espera al vigilante'."""
+    from jarvis.agent_history import AgentHistory
+    from jarvis.agents import AgentTeam, agent_tools
+    from tests.test_tools import ScriptedLLM
+
+    history = AgentHistory(tmp_path / "h.json")
+    script = ScriptedLLM(["RESUMEN: El PETG más barato es el de Filamentor.\n# Filamentos\n"
+                          "| Material | Precio |\n|---|---|\n| PETG | 6,50 € |"])
+    team = AgentTeam(script.llm(), {"web_search": fake_search()}, history=history)
+    job = team.start("compras", "materiales y precios de filamentos", background=False)
+    assert job.state == "terminado"
+
+    tool = {t.name: t for t in agent_tools(team)}["agent_report"]
+    ctx = ToolContext()
+    out = tool.fn(ctx, about="filamentos")
+    assert "PETG" in out and "PDF" in out
+    card = ctx.cards[0]
+    assert card["kind"] == "report" and card["job"] == job.id and "6,50 €" in card["report"]
+
+    # Por número de tarea y, sin decir nada, el más reciente.
+    assert "PETG" in tool.fn(ToolContext(), about=str(job.id))
+    assert "PETG" in tool.fn(ToolContext(), about="")
+    # Un tema que no existe: dice cuáles hay, no inventa.
+    with pytest.raises(ToolError, match="materiales y precios"):
+        tool.fn(ToolContext(), about="recetas de cocina")
+
+
+def test_agent_report_sobrevive_a_un_reinicio(tmp_path):
+    """Tras reiniciar, el informe sale del histórico (o de la nota de Obsidian)."""
+    from jarvis.agent_history import AgentHistory
+    from jarvis.agents import AgentTeam, agent_tools
+    from tests.test_tools import ScriptedLLM
+
+    history = AgentHistory(tmp_path / "h.json")
+    script = ScriptedLLM(["RESUMEN: Listo.\n# Filamentos\nEl PETG cuesta 6,50 €."])
+    team = AgentTeam(script.llm(), {"web_search": fake_search()}, history=history)
+    team.start("compras", "precios de filamentos", background=False)
+
+    # Otro arranque: mismos datos en disco, ningún trabajo vivo.
+    nuevo = AgentTeam(ScriptedLLM([]).llm(), {"web_search": fake_search()},
+                      history=AgentHistory(tmp_path / "h.json"))
+    assert not nuevo.jobs
+    tool = {t.name: t for t in agent_tools(nuevo)}["agent_report"]
+    ctx = ToolContext()
+    assert "6,50 €" in tool.fn(ctx, about="filamentos")
+    assert ctx.cards[0]["job"] == 0 and ctx.cards[0]["task"] == "precios de filamentos"
+
+
+def test_agent_report_sin_informes(tmp_path):
+    from jarvis.agents import AgentTeam, agent_tools
+    from tests.test_tools import ScriptedLLM
+
+    team = AgentTeam(ScriptedLLM([]).llm(), {"web_search": fake_search()})
+    tool = {t.name: t for t in agent_tools(team)}["agent_report"]
+    with pytest.raises(ToolError, match="ningún informe"):
+        tool.fn(ToolContext(), about="lo que sea")
+
+
+def test_agent_report_lee_la_nota_de_obsidian_de_informes_antiguos(tmp_path):
+    """Los trabajos guardados antes de esta versión no traen el informe: se lee de su nota."""
+    from jarvis.agent_history import AgentHistory
+    from jarvis.agents import AgentTeam, agent_tools
+    from jarvis.obsidian import Vault
+    from tests.test_tools import ScriptedLLM
+
+    vault = Vault(tmp_path)
+    nota = vault.create("2026-09-01 precios de filamentos",
+                        "> El asesor de compras de JARVIS · 01/09/2026 10:00 · 3 pasos\n\n"
+                        "# Filamentos\nEl PETG estaba a 7,20 €.", "JARVIS/Compras", check_secrets=False)
+    history = AgentHistory(tmp_path / "h.json")
+    history.entries.append({"agent": "compras", "topic": "precios de filamentos", "summary": "Estaba a 7,20 €.",
+                            "note": nota, "cards": [], "model": "", "date": "2026-09-01T10:00"})  # sin "report"
+    team = AgentTeam(ScriptedLLM([]).llm(), {"web_search": fake_search()}, vault=vault, history=history)
+
+    ctx = ToolContext()
+    out = {t.name: t for t in agent_tools(team)}["agent_report"].fn(ctx, about="filamentos")
+    assert "7,20 €" in out
+    assert "El asesor de compras de JARVIS ·" not in ctx.cards[0]["report"]  # sin la cabecera de JARVIS

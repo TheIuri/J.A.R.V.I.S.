@@ -1349,7 +1349,7 @@ function showPlan(ev, done) {
 }
 
 const VISUALS = { weather: showWeather, music: showMusic, agenda: showAgenda, reminders: showReminders,
-  convert: showConvert, clock: showClock, wiki: showWiki, prices: showPrices };
+  convert: showConvert, clock: showClock, wiki: showWiki, prices: showPrices, report: showReport };
 
 function clearVisual() {
   answerVisual = false;

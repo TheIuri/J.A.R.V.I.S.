@@ -34,6 +34,7 @@ from zoneinfo import ZoneInfo
 
 from .activity import ActivityLog
 from .agent_history import AgentHistory
+from .agent_history import keywords as history_keywords
 from .claude_code import TASK_TOOL_BUDGET
 from .claude_code import label as claude_label
 from .leads import LeadStore, extract_leads, safe_url
@@ -587,6 +588,58 @@ class AgentTeam:
         return (f"Antes de lanzarlo, pregúntale al usuario: {question} Opciones: {', '.join(options)}. "
                 "Cuando conteste, vuelve a llamar a agent_run con el encargo completo.")
 
+    def _note_report(self, note: str) -> str:
+        """El informe guardado en Obsidian, sin la linea de cabecera que anade JARVIS."""
+        if not note or self.vault is None:
+            return ""
+        try:
+            text = self.vault.read(note)
+        except (VaultError, OSError):
+            return ""
+        lines = [ln for ln in text.splitlines() if not ln.startswith("> ")]
+        return "\n".join(lines).strip()
+
+    def reports(self, limit: int = 20) -> list[dict]:
+        """Informes terminados, del mas reciente al mas antiguo: los de ahora y los que quedaron guardados."""
+        out: list[dict] = []
+        seen: set[str] = set()
+        for job in sorted(self.jobs.values(), key=lambda j: j.id, reverse=True):
+            if job.state != "terminado" or not job.report:
+                continue
+            seen.add(job.topic.lower())
+            out.append({"job": job.id, "agent": job.agent, "label": self.specs[job.agent].label if job.agent in
+                        self.specs else job.agent, "task": job.topic, "date": f"{job.started:%Y-%m-%d %H:%M}",
+                        "summary": job.summary, "report": job.report, "note": job.note})
+        for entry in reversed(self.history.entries if self.history else []):
+            if len(out) >= limit:
+                break
+            if entry["topic"].lower() in seen:
+                continue  # ya esta el trabajo vivo, que trae el informe entero
+            report = entry.get("report") or self._note_report(entry.get("note", ""))
+            if not report:
+                continue
+            seen.add(entry["topic"].lower())
+            agent = entry["agent"]
+            out.append({"job": 0, "agent": agent, "label": self.specs[agent].label if agent in self.specs else agent,
+                        "task": entry["topic"], "date": entry["date"].replace("T", " ")[:16],
+                        "summary": entry.get("summary", ""), "report": report, "note": entry.get("note", "")})
+        return out[:limit]
+
+    def find_report(self, about: str = "") -> dict | None:
+        """El informe que pide el usuario: por numero de tarea, por parecido con el tema, o el ultimo."""
+        found = self.reports()
+        if not found:
+            return None
+        about = " ".join(about.split())
+        if about.isdigit():
+            return next((r for r in found if r["job"] == int(about)), None)
+        wanted = history_keywords(about)
+        if not wanted:  # "el informe", "el ultimo"...: el mas reciente
+            return found[0]
+        scored = [(len(wanted & history_keywords(f"{r['task']} {r['summary']}")), r) for r in found]
+        best = max(scored, key=lambda s: s[0])
+        return best[1] if best[0] else None
+
     def request(self, agent: str, task: str, refresh: bool = False, ask: bool = False) -> tuple[Job | None, str]:
         """Un encargo (de la conversacion o del boton del HUD): reutiliza un informe parecido si lo hay
         y no se pide actualizar; si no, lanza el agente. Devuelve (tarea o None si se reutilizo, mensaje).
@@ -639,7 +692,8 @@ class AgentTeam:
                 self._trace("leads", job, found=len(found), new=len(new), names=[lead["name"] for lead in new][:10])
             job.state = "terminado"
             if self.history is not None:
-                self.history.add(job.agent, job.topic, job.summary, job.note, job.cards, job.model)
+                self.history.add(job.agent, job.topic, job.summary, job.note, job.cards, job.model,
+                                 report=job.report)
             # El aviso se dice en voz alta: corto, sin repetir el encargo ni la ruta (esa va en la tarjeta).
             doubt = len(job.check.get("unverified", []))
             warn = f" Ojo: {doubt} dato{'s' if doubt != 1 else ''} sin verificar." if doubt else ""
@@ -768,6 +822,21 @@ def agent_tools(team: AgentTeam) -> list[Tool]:
     def status(_ctx: ToolContext) -> str:
         return team.status_text()
 
+    def report(ctx: ToolContext, about: str = "") -> str:
+        """Un informe que ya esta hecho: se pone en pantalla (con PDF, copiar y descargar) y se devuelve el texto."""
+        found = team.find_report(about)
+        if found is None:
+            other = team.reports(8)
+            if not other:
+                raise ToolError("todavía no hay ningún informe terminado")
+            lista = "; ".join(f"[{r['job'] or '-'}] {r['task']} ({r['date'][:10]})" for r in other)
+            raise ToolError(f"no encuentro un informe sobre eso. Los que hay: {lista}")
+        ctx.cards.append({"kind": "report", "label": found["label"], "task": found["task"], "date": found["date"],
+                          "report": found["report"], "note": found["note"], "job": found["job"]})
+        return (f"Informe de {found['label']} del {found['date']} sobre «{found['task']}». Ya lo tiene en pantalla, "
+                "con botones para verlo entero, guardarlo en PDF, copiarlo o descargarlo: dile que está ahí y "
+                "responde a lo que pregunte usando el texto.\n\n" + found["report"][:NEWS_REPORT_CHARS])
+
     def run_description() -> str:
         agents = "; ".join(f"{k}: {team.specs[k].description}" for k in team.available)
         if team.lead_profiles and "captador" in team.available:
@@ -808,6 +877,19 @@ def agent_tools(team: AgentTeam) -> list[Tool]:
             parameters=run_params(),
             live_parameters=run_params,
             fn=run,
+        ),
+        Tool(
+            name="agent_report",
+            description=(
+                "Recupera un informe que un agente YA terminó (aunque fuera otro día) y lo pone en pantalla, donde el "
+                "usuario puede verlo entero, guardarlo en PDF, copiarlo o descargarlo. Úsala siempre que pregunten "
+                "por un informe, pidan verlo, sacarlo en PDF o preguntar sobre lo que encontró; nunca digas que hay "
+                "que esperar sin mirar aquí antes. 'about': unas palabras del tema o el número de la tarea; vacío = "
+                "el más reciente."
+            ),
+            parameters={"type": "object", "properties": {
+                "about": {"type": "string", "description": "Palabras del tema (p. ej. 'filamentos') o el número de tarea"}}},
+            fn=report,
         ),
         Tool(
             name="agent_status",
