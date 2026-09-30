@@ -943,6 +943,7 @@ const VIS_ICON = {
   calendar: '<svg class="icon" viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v10a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5zM4 10h16M8.5 3v4M15.5 3v4"/></svg>',
   bell: '<svg class="icon" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15zM10 20.5a2.2 2.2 0 0 0 4 0"/></svg>',
   swap: '<svg class="icon" viewBox="0 0 24 24"><path d="M5 8.5h13l-3.5-3.5M19 15.5H6l3.5 3.5"/></svg>',
+  report: '<svg class="icon"><use href="#i-report"/></svg>',
   music: '<svg class="icon" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>',
 };
 
@@ -1058,6 +1059,156 @@ function showWiki(c) {
   body.append(node("span", "vis-src", "Wikipedia"), node("b", "", c.title), node("p", "", c.text));
   el.append(body);
   addVisual(el);
+}
+
+// --- informes de los agentes: markdown (tablas, listas, enlaces) pintado sin HTML del modelo ---------------
+
+// Texto con **negrita**, `codigo` y enlaces ([texto](https://...) o https://... suelto); todo como nodos de texto.
+function mdInline(parent, text) {
+  const re = /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https:\/\/[^\s)]+)\)|(https:\/\/[^\s<>()|]+[^\s<>()|.,;:!?'"»])/g;
+  let at = 0;
+  for (const m of text.matchAll(re)) {
+    if (m.index > at) parent.append(text.slice(at, m.index));
+    if (m[1]) parent.append(node("strong", "", m[1]));
+    else if (m[2]) parent.append(node("code", "", m[2]));
+    else {
+      const a = node("a", "", m[3] || m[5].replace(/^https:\/\/(www\.)?/, "").slice(0, 60));
+      a.href = m[4] || m[5];
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      parent.append(a);
+    }
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) parent.append(text.slice(at));
+}
+
+function mdCells(line) {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+}
+
+function renderMarkdown(md) {
+  const root = node("div", "md");
+  const lines = String(md || "").replace(/\r/g, "").split("\n");
+  let list = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const t = line.trim();
+    if (!t) {
+      list = null;
+      continue;
+    }
+    // Tabla: fila de cabecera + |---|---| + filas.
+    if (t.startsWith("|") && /^\|?\s*:?-{2,}/.test((lines[i + 1] || "").trim())) {
+      const wrap = node("div", "md-table");
+      const table = node("table");
+      const head = node("tr");
+      mdCells(t).forEach((c) => { const th = node("th"); mdInline(th, c); head.append(th); });
+      const thead = node("thead");
+      thead.append(head);
+      const tbody = node("tbody");
+      i += 2;
+      while (i < lines.length && lines[i].trim().startsWith("|")) {
+        const tr = node("tr");
+        mdCells(lines[i]).forEach((c) => { const td = node("td"); mdInline(td, c); tr.append(td); });
+        tbody.append(tr);
+        i++;
+      }
+      i--;
+      table.append(thead, tbody);
+      wrap.append(table);
+      root.append(wrap);
+      list = null;
+      continue;
+    }
+    const h = /^(#{1,4})\s+(.*)$/.exec(t);
+    if (h) {
+      const el = node(`h${Math.min(6, h[1].length + 2)}`);
+      mdInline(el, h[2]);
+      root.append(el);
+      list = null;
+      continue;
+    }
+    const li = /^([-*•]|\d+[.)])\s+(.*)$/.exec(t);
+    if (li) {
+      const ordered = /\d/.test(li[1]);
+      if (!list || list.tagName !== (ordered ? "OL" : "UL")) {
+        list = node(ordered ? "ol" : "ul");
+        root.append(list);
+      }
+      const item = node("li");
+      mdInline(item, li[2]);
+      list.append(item);
+      continue;
+    }
+    list = null;
+    const p = node(t.startsWith(">") ? "blockquote" : "p");
+    mdInline(p, t.replace(/^>\s?/, ""));
+    root.append(p);
+  }
+  return root;
+}
+
+function download(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = node("a");
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// Imprimir solo el informe (en el móvil: Imprimir -> Guardar como PDF).
+function printReport(el) {
+  // Una copia del informe fuera de los paneles (que tienen scroll y la recortarian) y solo eso en la impresion.
+  document.getElementById("print-area")?.remove();
+  const area = node("div");
+  area.id = "print-area";
+  const copy = el.cloneNode(true);
+  copy.classList.add("open");
+  area.append(copy);
+  document.body.append(area);
+  document.body.classList.add("print-report");
+  const done = () => {
+    area.remove();
+    document.body.classList.remove("print-report");
+    removeEventListener("afterprint", done);
+  };
+  addEventListener("afterprint", done);
+  window.print();
+  setTimeout(done, 60000); // por si el navegador no avisa al cerrar el dialogo
+}
+
+function showReport(c) {
+  const el = node("section", "vis-card vis-report");
+  const head = visHead("report", `Informe · ${c.label || "agente"}`, c.date || "");
+  el.append(head);
+  if (c.task) el.append(node("p", "vis-task", c.task));
+  const body = renderMarkdown(c.report);
+  body.classList.add("vis-report-body");
+  el.append(body);
+  const tools = node("div", "vis-actions");
+  const slug = (c.task || c.label || "informe").toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").slice(0, 60);
+  const more = node("button", "pill-btn", "Ver completo");
+  more.type = "button";
+  more.addEventListener("click", () => {
+    const open = el.classList.toggle("open");
+    more.textContent = open ? "Ver menos" : "Ver completo";
+  });
+  tools.append(
+    more,
+    iconButton("report", "PDF", () => printReport(el)),
+    iconButton("copy", "Copiar", (e) => copyText(c.report, e.currentTarget)),
+    iconButton("download", "Descargar", () => download(`${slug || "informe"}.md`, c.report, "text/markdown")),
+  );
+  if (c.note) tools.append(node("span", "vis-note", `En Obsidian: ${c.note.split("/").pop().replace(/\.md$/, "")}`));
+  el.append(tools);
+  addVisual(el);
+  requestAnimationFrame(() => {
+    if (body.scrollHeight <= body.clientHeight + 4) more.hidden = true; // cabe entero: sin boton
+  });
 }
 
 const VISUALS = { weather: showWeather, music: showMusic, agenda: showAgenda, reminders: showReminders,
@@ -1965,6 +2116,11 @@ function onActivity(ev) {
       pulses.push({ fromSat: sat.key, to: REGION.thalamus, t: 0, dur: reducedMotion ? 0.01 : 0.9, rgb: [48, 209, 88] });
       trace(label, `terminado${ev.model ? ` con ${providerLabel(ev.model)}` : ""}: ${ev.summary || ""}`, [48, 209, 88]);
       if (!ev.job && externalJobs.has(ev.agent)) Object.assign(externalJobs.get(ev.agent), { state: "terminado", summary: ev.summary, note: ev.note, cards: ev.cards });
+      if (ev.report) {
+        // El informe entero en la respuesta: tabla, enlaces, PDF.
+        if (state === "idle" || state === "error") showQuestion(ev.task || label);
+        showReport({ label, task: ev.task, report: ev.report, note: ev.note });
+      }
       if (ev.cards?.length) showOptions(label, ev.cards, ev.note, rgb);
       retireSatellite(sat, 6000);
       break;
@@ -2233,6 +2389,19 @@ async function loadAgents() {
       sum.className = "summary";
       sum.textContent = j.summary;
       li.append(sum);
+    }
+    if (j.report && j.state === "terminado") {
+      const view = document.createElement("button");
+      view.type = "button";
+      view.className = "pill-btn";
+      view.textContent = "Ver informe";
+      view.addEventListener("click", () => {
+        selectView("home");
+        showQuestion(j.task);
+        showReport({ label: j.label, task: j.task, report: j.report, note: j.note });
+        $("answer").scrollIntoView({ block: "start", behavior: reducedMotion ? "auto" : "smooth" });
+      });
+      li.append(view);
     }
     if (j.cards?.length && j.state === "terminado") {
       const open = document.createElement("button");

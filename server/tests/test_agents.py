@@ -412,3 +412,35 @@ def test_custom_agents_are_web_only_limited_and_persist(tmp_path):
                                                   "CaliperWorks en España."}, headers=auth).json()["agent"]
     agents = client.get("/api/agents", headers=auth).json()["agents"]
     assert next(a for a in agents if a["id"] == new["key"])["custom"] is True
+
+
+def test_finished_report_reaches_the_conversation_and_status(tmp_path):
+    # «Sácame el link de cada uno» después de un encargo: la conversación ya tiene la tabla del informe.
+    from jarvis.pipeline import Assistant
+    from tests.test_tools import NoTTS
+
+    table = ("RESUMEN: Filamentor vende PLA, PETG, ABS+ y TPU.\n# Filamentos de Filamentor\n"
+             "| Material | Precio mínimo | Marca | Enlace |\n|---|---|---|---|\n"
+             "| PLA | 6,50 € | Filamentor | https://filamentor.es/pla |\n"
+             "| TPU | 9,95 € | Filamentor | https://filamentor.es/tpu |")
+    team = AgentTeam(ScriptedLLM([[("web_search", {"query": "filamentor"})], table]).llm(),
+                     {"web_search": fake_search()}, Vault(tmp_path))
+    script = ScriptedLLM(["PLA: https://filamentor.es/pla", "Nada más."])
+    a = Assistant(None, script.llm(), NoTTS(), "sistema")
+    team.on_done = a.note_agent_done
+    job = team.start("investigador", "materiales y precios de Filamentor", background=False)
+    assert "https://filamentor.es/tpu" in job.report
+    a.handle_text("sácame el link de cada uno")
+    system = script.requests[0]["messages"][0]["content"]
+    assert "ya estan terminadas" in system and "https://filamentor.es/pla" in system
+    a.handle_text("gracias")
+    assert "Novedades" not in script.requests[1]["messages"][0]["content"]  # solo una vez
+    status = agent_tools(team)[1].fn(ToolContext())
+    assert "Informe de la tarea 1" in status and "https://filamentor.es/tpu" in status
+
+
+def test_report_format_asks_for_complete_tables_with_links():
+    from jarvis.agents import REPORT_FORMAT, custom_prompt
+
+    assert "columna \"Enlace\"" in REPORT_FORMAT and "no visto" in REPORT_FORMAT
+    assert "columna \"Enlace\"" in custom_prompt("Vigilante", "precios del filamento")

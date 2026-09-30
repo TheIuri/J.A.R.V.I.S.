@@ -133,6 +133,9 @@ class Assistant:
         self.tool_filter = True
         self.direct_answers = True
         self._last_groups: dict[str, set[str]] = {}
+        # Informes de agentes que han terminado y la conversacion aun no ha visto (se pasan en el siguiente turno).
+        self._news: list[str] = []
+        self._news_lock = threading.Lock()
         self._pending: dict[str, tuple[PendingAction, float]] = {}  # accion esperando un "si", por sesion
         self.board = None  # tablon de avisos proactivos (notify.NoticeBoard), si esta activo
         self.vault = None  # boveda de Obsidian, si esta configurada
@@ -213,6 +216,24 @@ class Assistant:
         for user, reply in self.turn_log.recent(session, self._history_turns):
             history.append({"role": "user", "content": user})
             history.append({"role": "assistant", "content": reply})
+
+    def note_agent_done(self, label: str, job) -> None:
+        """Un agente ha terminado: su informe (tablas, enlaces...) pasa al siguiente turno de la conversacion."""
+        from .agents import NEWS_REPORT_CHARS
+
+        where = f" (guardado en Obsidian: {job.note})" if job.note else ""
+        with self._news_lock:
+            self._news.append(f"{label} ha terminado el encargo «{job.topic}»{where}. Su informe:\n"
+                              f"{job.report[:NEWS_REPORT_CHARS]}")
+            del self._news[:-3]
+
+    def take_news(self) -> str:
+        with self._news_lock:
+            news, self._news = self._news, []
+        if not news:
+            return ""
+        return ("Novedades desde el ultimo mensaje (ya estan terminadas: no digas que sigues esperando). Si el usuario "
+                "pide datos, enlaces o una tabla de esto, sacalos de aqui:\n\n" + "\n\n".join(news))
 
     def direct(self, text: str, session: str, speak: bool, emit: EventSink) -> TurnResult | None:
         """Respuesta directa sin LLM (modo Claude: se intenta antes de despertar a Claude)."""
@@ -325,6 +346,9 @@ class Assistant:
         system = self.system_prompt
         in_context = {m["content"] for m in history if m["role"] == "user"}
         system += self.conversation_context(session, text, skip=in_context)
+        news = self.take_news()
+        if news:
+            system += "\n\n" + news
         if self.memory:
             with _timed(timings, "memory"):
                 recalled = self.memory.recall(text)

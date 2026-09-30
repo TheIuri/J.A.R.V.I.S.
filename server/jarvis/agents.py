@@ -48,14 +48,20 @@ log = logging.getLogger("jarvis.agents")
 MAX_ROUNDS = 10
 MAX_JOBS = 2
 REPORT_FOLDER = "JARVIS/Investigaciones"
-MAX_REPORT_CHARS = 3800  # + cabecera < limite de escritura de la boveda
+MAX_REPORT_CHARS = 7000  # tablas con enlaces ocupan; la nota se guarda con un limite mayor (MAX_NOTE_CHARS)
+MAX_NOTE_CHARS = 9000
+NEWS_REPORT_CHARS = 3500  # lo que se pasa a la conversacion del informe de un agente que acaba de terminar
 
 REPORT_FORMAT = """Cuando tengas suficiente, responde SOLO con el informe, sin llamar a mas herramientas, con este
 formato exacto:
 RESUMEN: <una o dos frases cortas (maximo 200 caracteres) que se puedan decir en voz alta, sin markdown>
 # <titulo>
 <informe en markdown>
-Maximo 3500 caracteres. Todo en espanol de Espana."""
+Entrega exactamente lo que se pidio. Si el encargo pide una tabla, un listado, precios, marcas o enlaces, pon una
+tabla markdown completa (una fila por producto u opcion, sin resumir filas) con una columna "Enlace" con la URL
+directa de la pagina donde lo has visto. Cada precio o dato, de una fuente que hayas leido; si no lo encontraste,
+pon "no visto" en vez de inventarlo.
+Maximo 6000 caracteres. Todo en espanol de Espana."""
 
 OPTIONS_FORMAT = """
 Si comparas productos, servicios u opciones, al FINAL del informe anade este bloque exacto (JSON valido, de 2 a 5
@@ -112,7 +118,7 @@ Al FINAL del informe anade este bloque exacto (JSON valido, sin comentarios), qu
 [{"nombre": "...", "tipo": "sector", "zona": "ciudad", "web": "https://...", "contacto": "email o telefono publico",
   "encaje": "evidencia concreta de su web de que lo necesita", "mensaje": "primer mensaje corto y personalizado"}]
 ```
-""" + REPORT_FORMAT.replace("Maximo 3500 caracteres.", "Maximo 3500 caracteres sin contar el bloque leads.")
+""" + REPORT_FORMAT.replace("Maximo 6000 caracteres.", "Maximo 6000 caracteres sin contar el bloque leads.")
 
 WRITER_PROMPT = """Eres el escritor del usuario. Redacta el texto que te pida (correo, carta, reclamacion, resumen,
 documento...) con el tono adecuado. Busca en sus notas de Obsidian y en sus recuerdos los datos que necesites
@@ -170,8 +176,8 @@ SPECS = {
 # Agentes que pueden trabajar con Claude (membresia): solo buscan y leen en internet, que es lo unico que
 # Claude Code puede hacer aqui. Los que usan datos privados (NAS, agenda, notas) no.
 CLAUDE_AGENTS = ("investigador", "compras", "captador")
-CLAUDE_TOOLS_NOTE = ("\n\nTrabajas con Claude Code: en lugar de web_search usa WebSearch y en lugar de web_read usa WebFetch "
-                     "(wikipedia y news no estan: buscalas con WebSearch). Tienes un presupuesto de {budget} usos de "
+CLAUDE_TOOLS_NOTE = ("\n\nTrabajas con Claude Code: en lugar de web_search usa WebSearch y para leer paginas usa "
+                     "web_read (mcp__jarvis__web_read; wikipedia y news no estan: buscalas con WebSearch). Tienes un presupuesto de {budget} usos de "
                      "herramientas en total: reparte bien (pocas busquedas buenas y lee solo las webs mas prometedoras) "
                      "y, al llegar a unos {stop}, deja de buscar y escribe el informe con lo que tengas. "
                      "Responde solo con el informe final.")
@@ -291,6 +297,7 @@ class AgentTeam:
         self.llm = llm  # por defecto
         self.history = history  # lo ya investigado, para no repetirlo
         self.claude = None  # ClaudeCode (membresia): lo pone main.py si esta configurado
+        self.on_done = None  # (etiqueta, tarea) -> None: la conversacion se entera del informe (main.py)
         self.prefs = Path(prefs) if prefs else None  # modelo elegido en el HUD para cada agente
         self.prefer: dict[str, str] = {}
         if self.prefs:
@@ -507,6 +514,22 @@ class AgentTeam:
             self._run(job)
         return job
 
+    def status_text(self, only=None) -> str:
+        """Estado de los encargos recientes; de los ultimos terminados, el informe entero (tablas, enlaces...)."""
+        jobs = [j for j in self.jobs.values() if only is None or only(j.agent)][-5:]
+        if not jobs:
+            return "No hay tareas de agentes."
+        lines = []
+        done = [j for j in jobs if j.state == "terminado" and j.report][-2:]
+        for job in jobs:
+            label = self.specs[job.agent].label if job.agent in self.specs else job.agent
+            extra = f" ({len(job.steps)} pasos)" if job.state == "trabajando" else f": {job.summary}"
+            model = f" [{job.model}]" if job.model else ""
+            lines.append(f"[{job.id}] {label} · {job.topic}: {job.state}{model}{extra}")
+            if job in done:
+                lines.append(f"Informe de la tarea {job.id}:\n{job.report[:NEWS_REPORT_CHARS]}")
+        return "\n".join(lines)
+
     def request(self, agent: str, task: str, refresh: bool = False) -> tuple[Job | None, str]:
         """Un encargo (de la conversacion o del boton del HUD): reutiliza un informe parecido si lo hay
         y no se pide actualizar; si no, lanza el agente. Devuelve (tarea o None si se reutilizo, mensaje)."""
@@ -560,7 +583,12 @@ class AgentTeam:
             if not job.check.get("skipped"):
                 self._trace("agent_verify", job, checked=job.check["checked"], unverified=job.check["unverified"][:10])
             self._trace("agent_done", job, summary=job.summary, note=job.note, model=job.model, steps=len(job.steps),
-                        cards=job.cards, unverified=doubt)
+                        cards=job.cards, unverified=doubt, report=job.report, task=job.topic)
+            if self.on_done:  # la conversacion se entera: a "sacame los links" contesta con el informe
+                try:
+                    self.on_done(spec.label, job)
+                except Exception:
+                    log.exception("no se pudo pasar el informe a la conversacion")
         except Exception as exc:  # el hilo nunca debe morir en silencio
             job.state = "error"
             job.summary = str(exc) if isinstance(exc, (ToolError, LLMError)) else type(exc).__name__
@@ -585,7 +613,7 @@ class AgentTeam:
                 + (self._offer(job.topic) if job.agent == "captador" else ""))
 
     def _work_claude(self, job: Job, spec: AgentSpec, model: str) -> str:
-        """El agente con Claude Code (membresia): mismo encargo y formato de informe, con WebSearch/WebFetch."""
+        """El agente con Claude Code (membresia): mismo encargo y formato de informe, con WebSearch y web_read."""
         job.model = claude_label(model)
 
         def emit(event: dict) -> None:
@@ -640,7 +668,8 @@ class AgentTeam:
         title = f"{job.started:%Y-%m-%d} {job.topic}"[:120]
         header = f"> {spec.label} de JARVIS · {job.started:%d/%m/%Y %H:%M} · {len(job.steps)} pasos\n\n"
         try:
-            return self.vault.create(title, header + job.report, spec.folder, check_secrets=False)
+            return self.vault.create(title, header + job.report, spec.folder, check_secrets=False,
+                                     max_chars=MAX_NOTE_CHARS)
         except VaultError as exc:
             log.warning("agente %d: no se pudo guardar el informe: %s", job.id, exc)
             return ""
@@ -655,15 +684,7 @@ def agent_tools(team: AgentTeam) -> list[Tool]:
         return team.request(agent, task, refresh)[1]
 
     def status(_ctx: ToolContext) -> str:
-        if not team.jobs:
-            return "No hay tareas de agentes."
-        lines = []
-        for job in list(team.jobs.values())[-5:]:
-            label = team.specs[job.agent].label
-            extra = f" ({len(job.steps)} pasos)" if job.state == "trabajando" else f": {job.summary}"
-            model = f" [{job.model}]" if job.model else ""
-            lines.append(f"[{job.id}] {label} · {job.topic}: {job.state}{model}{extra}")
-        return "\n".join(lines)
+        return team.status_text()
 
     def run_description() -> str:
         agents = "; ".join(f"{k}: {team.specs[k].description}" for k in team.available)

@@ -8,6 +8,7 @@ Los resultados se recortan: al modelo le basta con titulos y fragmentos.
 from __future__ import annotations
 
 import html
+import os
 import re
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
@@ -212,20 +213,41 @@ class _TextParser(HTMLParser):
         return "\n".join(line for line in lines if len(line) > 2)
 
 
+def _public_ip(value: str) -> bool:
+    import ipaddress
+
+    try:
+        ip = ipaddress.ip_address(value.split("%")[0])
+    except ValueError:
+        return False
+    if getattr(ip, "ipv4_mapped", None):
+        ip = ip.ipv4_mapped
+    return ip.is_global and not ip.is_multicast
+
+
 def _public_host(host: str) -> bool:
     """Evita SSRF: nada de la red de casa (router, NAS...), localhost ni direcciones reservadas."""
-    import ipaddress
     import socket
 
     try:
         infos = socket.getaddrinfo(host, None)
     except OSError:
         return False
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if not ip.is_global or ip.is_multicast:
-            return False
-    return bool(infos)
+    return bool(infos) and all(_public_ip(info[4][0]) for info in infos)
+
+
+def _peer_ip(resp: httpx.Response) -> str:
+    """La IP a la que se ha conectado de verdad (vacio si no se sabe, p. ej. en pruebas)."""
+    stream = resp.extensions.get("network_stream")
+    try:
+        addr = stream.get_extra_info("server_addr") if stream is not None else None
+    except Exception:
+        return ""
+    return str(addr[0]) if isinstance(addr, tuple) and addr else ""
+
+
+# Con un proxy de salida la conexion es con el proxy, no con la web: entonces no se puede mirar la IP final.
+_PROXIED = any(os.environ.get(k) for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY"))
 
 
 class PageReader:
@@ -242,6 +264,11 @@ class PageReader:
                 raise ToolError("esa dirección no es pública; no la leo")
             try:
                 with self._client.stream("GET", url) as resp:
+                    # DNS rebinding: el nombre pudo resolverse a una IP publica al comprobarlo y a una privada al
+                    # conectar. Se mira la IP real de la conexion antes de leer nada.
+                    peer = "" if _PROXIED else _peer_ip(resp)
+                    if peer and not _public_ip(peer):
+                        raise ToolError("esa dirección no es pública; no la leo")
                     if resp.is_redirect:
                         url = str(resp.url.join(resp.headers.get("location", "")))
                         continue
