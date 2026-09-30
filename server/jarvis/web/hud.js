@@ -1229,6 +1229,37 @@ function longDate(date) {
   return d.toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" });
 }
 
+// El PDF lo monta el servidor (portada, cifras clave, graficas) y se descarga como fichero. Si la
+// imagen todavia no lo trae, se imprime desde el navegador como antes.
+async function downloadPdf(c, button) {
+  const before = button?.querySelector("span")?.textContent;
+  if (button) {
+    button.disabled = true;
+    button.querySelector("span").textContent = "Preparando…";
+  }
+  try {
+    const query = c.job ? `job=${encodeURIComponent(c.job)}` : `about=${encodeURIComponent(c.task || "")}`;
+    const resp = await api(`/api/report.pdf?${query}`);
+    if (!resp.ok) throw new Error(String(resp.status));
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = node("a");
+    a.href = url;
+    a.download = (resp.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/)?.[1] || "informe.pdf";
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (e) {
+    printReport(c); // sin PDF en el servidor: el diálogo de imprimir de siempre
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.querySelector("span").textContent = before;
+    }
+  }
+}
+
 function printReport(c) {
   document.getElementById("print-area")?.remove();
   const area = node("div");
@@ -1260,7 +1291,7 @@ function showReport(c) {
   tools.append(
     more,
     iconButton("ask", "Preguntar", () => askAboutReport(c.job, c.task)),
-    iconButton("report", "PDF", () => printReport(c)),
+    iconButton("report", "PDF", (e) => downloadPdf(c, e.currentTarget)),
     iconButton("copy", "Copiar", (e) => copyText(c.report, e.currentTarget)),
     iconButton("download", "Descargar", () => download(`${slug || "informe"}.md`, c.report, "text/markdown")),
   );
@@ -1270,7 +1301,7 @@ function showReport(c) {
   // Han pedido el informe en PDF: se abre el visor y, con él, el diálogo de guardar como PDF.
   if (c.print) {
     openReportViewer(c, slug);
-    setTimeout(() => printReport(c), 400);
+    setTimeout(() => downloadPdf(c, $("viewer-pdf")), 300);
   }
 }
 
@@ -1298,7 +1329,7 @@ function openReportViewer(c, slug) {
   $("viewer-title").textContent = `Informe · ${c.label || "agente"}`;
   $("viewer-ask").hidden = !c.job;
   $("viewer-ask").onclick = () => askAboutReport(c.job, c.task);
-  $("viewer-pdf").onclick = () => printReport(c);
+  $("viewer-pdf").onclick = (e) => downloadPdf(c, e.currentTarget);
   $("viewer-copy").onclick = (e) => copyText(c.report, e.currentTarget);
   $("viewer-download").onclick = () => download(`${slug || "informe"}.md`, c.report, "text/markdown");
   $("report-viewer").hidden = false;
