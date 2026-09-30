@@ -18,10 +18,11 @@ from dataclasses import dataclass, field
 
 from typing import Any, Callable
 
+from .learn import looks_like_correction
 from .llm import FallbackLLM
 from .memory import Retriever, as_prompt
 from .memory.retrieval import keywords
-from .shortcuts import direct_answer, select_specs
+from .shortcuts import Direct, direct_answer, select_specs
 from .stt import STT
 from .tools import ToolContext, ToolRegistry
 from .tools.registry import PendingAction
@@ -97,6 +98,7 @@ class TurnResult:
     tools_used: list[str] = field(default_factory=list)
     pc_actions: list[dict[str, Any]] = field(default_factory=list)
     cards: list[dict[str, Any]] = field(default_factory=list)
+    turn: int = 0  # numero en el registro: con el se le pone el pulgar desde el HUD
 
 
 @contextmanager
@@ -145,6 +147,7 @@ class Assistant:
         self.planner = None  # plans.Planner: encargos grandes repartidos en varios pasos
         self.prices = None  # prices.PriceStore: historico de precios
         self.notes = None  # notes_index.NotesIndex: busqueda por significado en las notas
+        self.routes = None  # routes.Routes: atajos aprendidos (llaman a la herramienta, no cachean)
         self.insights = None  # insights.Insights: fichas con los datos clave de cada respuesta (HUD)
         self.learner = None  # learn.PrefLearner: apunta las preferencias que se cuelan en la conversacion
         self.watcher = None
@@ -266,6 +269,11 @@ class Assistant:
                 emit: EventSink) -> TurnResult | None:
         with _timed(timings, "tool"):
             hit = direct_answer(text, self.tools, ctx)
+            if not hit and self.routes is not None:
+                # Atajo aprendido: se llama a la herramienta ahora, asi que el dato es el de este momento.
+                learned = self.routes.answer(text, self.tools, ctx)
+                if learned:
+                    hit = Direct(learned[0], learned[1])
         if not hit:
             return None
         emit({"type": "tool", "id": "direct", "name": hit.tool, "args": {}})
@@ -279,15 +287,15 @@ class Assistant:
         history = self._history[session]
         history.append({"role": "user", "content": text})
         history.append({"role": "assistant", "content": hit.reply})
-        if self.turn_log:
-            self.turn_log.add(session, text, hit.reply)
+        turn = self.turn_log.add(session, text, hit.reply, DIRECT, [hit.tool], timings.get("tool", 0)) \
+            if self.turn_log else 0
         audio = None
         if speak:
             emit({"type": "speaking"})
             with _timed(timings, "tts"):
                 audio = self.tts.synthesize(hit.reply)
         timings["total"] = sum(timings.values())
-        return TurnResult(text, hit.reply, DIRECT, audio, timings, [hit.tool], ctx.pc_actions, ctx.cards)
+        return TurnResult(text, hit.reply, DIRECT, audio, timings, [hit.tool], ctx.pc_actions, ctx.cards, turn)
 
     def claude_context(self, session: str, text: str, fresh: bool = False) -> str:
         """Para una conversacion nueva de Claude (la primera, tras reiniciar o al compactar una larga): lo ultimo
@@ -331,8 +339,7 @@ class Assistant:
         reply = f"Hecho. {result}" if ok else f"No he podido hacerlo: {result.removeprefix('ERROR: ')}"
         emit({"type": "reply", "text": reply, "provider": None, "ms": 0})
         log.info("[%s] accion confirmada %s: %r", session, name, reply)
-        if self.turn_log:
-            self.turn_log.add(session, text, reply)
+        turn = self.turn_log.add(session, text, reply, "", [name], timings.get("tool", 0)) if self.turn_log else 0
         history = self._history[session]
         history.append({"role": "user", "content": text})
         history.append({"role": "assistant", "content": reply})
@@ -342,7 +349,7 @@ class Assistant:
             with _timed(timings, "tts"):
                 audio = self.tts.synthesize(reply)
         timings["total"] = sum(timings.values())
-        return TurnResult(text, reply, None, audio, timings, [name], ctx.pc_actions)
+        return TurnResult(text, reply, None, audio, timings, [name], ctx.pc_actions, turn=turn)
 
     def _respond(
         self, text: str, session: str, speak: bool, timings: dict[str, int], ctx: ToolContext, emit: EventSink,
@@ -364,6 +371,9 @@ class Assistant:
                 return hit
         self._resume_history(session)
         history = self._history[session]
+        # "No, en realidad..." corrige lo que se acaba de decir: de ahi sale una regla para siempre.
+        if self.learner and len(history) >= 2 and looks_like_correction(text):
+            self.learner.submit_correction(history[-2]["content"], history[-1]["content"], text, model)
         system = self.system_prompt
         in_context = {m["content"] for m in history if m["role"] == "user"}
         system += self.conversation_context(session, text, skip=in_context)
@@ -447,8 +457,8 @@ class Assistant:
         log.info("[%s] LLM %dms (%s) tools=%s: %r", session, timings["llm"], reply.provider, used, reply.text)
         history.append({"role": "user", "content": text})
         history.append({"role": "assistant", "content": reply.text})
-        if self.turn_log:
-            self.turn_log.add(session, text, reply.text)
+        turn = self.turn_log.add(session, text, reply.text, reply.provider or "", used,
+                                 timings.get("llm", 0)) if self.turn_log else 0
         if self.insights and emit is not _no_events:  # solo turnos del HUD (en directo)
             self.insights.submit(text, reply.text, used, model)
         if self.learner:  # si ha dicho algo que valga para siempre, se guarda como preferencia
@@ -462,4 +472,4 @@ class Assistant:
             log.info("[%s] TTS %dms", session, timings["tts"])
 
         timings["total"] = sum(timings.values())
-        return TurnResult(text, reply.text, reply.provider, audio, timings, used, ctx.pc_actions, ctx.cards)
+        return TurnResult(text, reply.text, reply.provider, audio, timings, used, ctx.pc_actions, ctx.cards, turn)

@@ -45,6 +45,8 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
                    r"kilo\w*|onza\w*|pulgada\w*|fahrenheit|celsius|divisa\w*|cambio", ("convert",)),
     "memoria": (r"recuerda\w*|acuerdas|olvida\w*|sabes de mi|mi nombre|me llamo|prefiero|me gusta|mi|mis",
                 ("memory_save", "memory_search", "memory_update", "memory_forget")),
+    "recuerdos": (r"dijiste|dije|hablamos|comentaste|comentamos|acuerdas|acuerdo|recuerdas|quedamos|"
+                  r"el otro dia|la otra vez|hace (?:unos |unas )?(?:dias|semanas|meses)|aquello", ("recall",)),
     "notas": (r"nota|notas|obsidian|apunte\w*|diario|anota\w*|boveda", (
         "obsidian_search", "obsidian_read", "obsidian_create_note", "obsidian_append", "obsidian_daily_note")),
     "agentes": (r"investiga\w*|a fondo|compara\w*|agente\w*|cliente\w*|leads?|informe\w*|redacta\w*|audita\w*|"
