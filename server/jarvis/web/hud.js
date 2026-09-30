@@ -945,6 +945,7 @@ const VIS_ICON = {
   swap: '<svg class="icon" viewBox="0 0 24 24"><path d="M5 8.5h13l-3.5-3.5M19 15.5H6l3.5 3.5"/></svg>',
   report: '<svg class="icon"><use href="#i-report"/></svg>',
   music: '<svg class="icon" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>',
+  price: '<svg class="icon" viewBox="0 0 24 24"><path d="M4 18.5 9.5 13l3.5 3 6.5-7.5M20 5v5h-5"/></svg>',
 };
 
 function visHead(icon, title, sub = "") {
@@ -1243,8 +1244,72 @@ addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeReportViewer();
 });
 
+// Gráfica de la evolución de un precio: una línea por producto, dibujada con SVG (sin librerías).
+function sparkline(series) {
+  const NS = "http://www.w3.org/2000/svg";
+  const w = 240;
+  const h = 44;
+  const pad = 3;
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.setAttribute("class", "spark");
+  svg.setAttribute("aria-hidden", "true");
+  const values = series.map((p) => p.cents);
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const span = hi - lo || 1;
+  const x = (i) => (series.length < 2 ? w / 2 : pad + (i * (w - 2 * pad)) / (series.length - 1));
+  const y = (v) => h - pad - ((v - lo) / span) * (h - 2 * pad);
+  const points = series.map((p, i) => `${x(i).toFixed(1)},${y(p.cents).toFixed(1)}`);
+  const area = document.createElementNS(NS, "polygon");
+  area.setAttribute("points", `${x(0).toFixed(1)},${h} ${points.join(" ")} ${x(series.length - 1).toFixed(1)},${h}`);
+  area.setAttribute("class", "spark-area");
+  const line = document.createElementNS(NS, "polyline");
+  line.setAttribute("points", points.join(" "));
+  line.setAttribute("class", "spark-line");
+  const dot = document.createElementNS(NS, "circle");
+  dot.setAttribute("cx", x(series.length - 1).toFixed(1));
+  dot.setAttribute("cy", y(values[values.length - 1]).toFixed(1));
+  dot.setAttribute("r", "2.6");
+  dot.setAttribute("class", "spark-dot");
+  svg.append(area, line, dot);
+  return svg;
+}
+
+function showPrices(c) {
+  const el = node("section", "vis-card vis-prices");
+  el.append(visHead("price", c.title || "Precios", c.items?.length ? `${c.items.length} producto${c.items.length > 1 ? "s" : ""}` : ""));
+  for (const d of c.drops || []) {
+    const drop = node("p", "price-drop");
+    drop.append(node("b", "", d.product), node("span", "price-now", d.price));
+    drop.append(node("span", "price-was", `antes ${d.before}`));
+    if (d.pct) drop.append(node("span", "price-pct", `-${d.pct}%`));
+    el.append(drop);
+  }
+  const list = node("ul", "price-list");
+  for (const item of c.items || []) {
+    const li = node("li");
+    const url = httpsUrl(item.url);
+    const name = node(url ? "a" : "b", "price-name", item.product);
+    if (url) {
+      name.href = url;
+      name.target = "_blank";
+      name.rel = "noopener noreferrer";
+    }
+    li.append(name);
+    if (item.series?.length > 1) li.append(sparkline(item.series));
+    const now = node("span", "price-now num", item.price);
+    now.classList.toggle("is-low", !!item.down);
+    li.append(now);
+    if (item.best && item.best !== item.price) li.append(node("span", "price-best num", `mín. ${item.best}`));
+    list.append(li);
+  }
+  if (list.children.length) el.append(list);
+  addVisual(el);
+}
+
 const VISUALS = { weather: showWeather, music: showMusic, agenda: showAgenda, reminders: showReminders,
-  convert: showConvert, clock: showClock, wiki: showWiki };
+  convert: showConvert, clock: showClock, wiki: showWiki, prices: showPrices };
 
 function clearVisual() {
   answerVisual = false;
@@ -2165,6 +2230,14 @@ function onActivity(ev) {
       trace(label, `reutiliza el informe del ${fmtDay(ev.date)} (0 tokens): ${ev.summary || ""}`, rgb);
       if (ev.cards?.length) showOptions(label, ev.cards, ev.note, rgb);
       retireSatellite(sat, 5000);
+      break;
+    case "price_drop":
+      // Ha bajado algo que vigilabas: la gráfica y el aviso van a la respuesta.
+      trace(label, `ha bajado de precio: ${(ev.drops || []).join(" ")}`, [48, 209, 88]);
+      if (ev.card) {
+        if (state === "idle" || state === "error") showQuestion("Vigilancia de precios");
+        showPrices(ev.card);
+      }
       break;
     case "leads":
       sat.span.textContent = ev.new ? `${ev.new} leads nuevos` : "sin leads nuevos";

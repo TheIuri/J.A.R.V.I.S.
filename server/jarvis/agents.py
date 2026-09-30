@@ -221,6 +221,7 @@ class Job:
     cards: list[dict] = field(default_factory=list)  # opciones para ver como tarjetas en el HUD
     evidence: list[str] = field(default_factory=list)  # lo que devolvieron sus herramientas (para verificar)
     check: dict = field(default_factory=dict)  # resultado de la vigilancia de alucinaciones
+    drops: list[str] = field(default_factory=list)  # bajadas de precio detectadas en este informe
 
 
 MAX_SUMMARY = 220
@@ -297,6 +298,7 @@ class AgentTeam:
         self.llm = llm  # por defecto
         self.history = history  # lo ya investigado, para no repetirlo
         self.claude = None  # ClaudeCode (membresia): lo pone main.py si esta configurado
+        self.prices = None  # PriceStore: historico de precios de los informes (main.py)
         self.on_done = None  # (etiqueta, tarea) -> None: la conversacion se entera del informe (main.py)
         self.prefs = Path(prefs) if prefs else None  # modelo elegido en el HUD para cada agente
         self.prefer: dict[str, str] = {}
@@ -569,6 +571,7 @@ class AgentTeam:
             # Vigilancia de alucinaciones: cada web, email, telefono y precio, contra lo que leyo (sin tokens).
             job.check = verify(job.report, job.cards, found, job.evidence)
             job.report += verify_section(job.check)
+            job.drops = self._prices(job)
             job.note = self._save(job, spec)
             if found and self.leads is not None:
                 new = self.leads.add(found, source=job.note or job.topic)
@@ -579,7 +582,10 @@ class AgentTeam:
             # El aviso se dice en voz alta: corto, sin repetir el encargo ni la ruta (esa va en la tarjeta).
             doubt = len(job.check.get("unverified", []))
             warn = f" Ojo: {doubt} dato{'s' if doubt != 1 else ''} sin verificar." if doubt else ""
-            self._notify(job, "info", f"{spec.label} ha terminado. {job.summary}{warn}")
+            if job.drops:  # ha bajado algo que vigilabas: eso es lo importante del aviso
+                self._notify(job, "info", "Ha bajado de precio. " + " ".join(job.drops[:2]))
+            else:
+                self._notify(job, "info", f"{spec.label} ha terminado. {job.summary}{warn}")
             if not job.check.get("skipped"):
                 self._trace("agent_verify", job, checked=job.check["checked"], unverified=job.check["unverified"][:10])
             self._trace("agent_done", job, summary=job.summary, note=job.note, model=job.model, steps=len(job.steps),
@@ -661,6 +667,21 @@ class AgentTeam:
         reply = llm.chat(messages, prefer=self._chain_prefer(job.agent), patient=True)
         job.model = reply.provider or job.model
         return reply.text
+
+    def _prices(self, job: Job) -> list[str]:
+        """Guarda en el historico los precios del informe y devuelve las bajadas, para avisar."""
+        if self.prices is None:
+            return []
+        try:
+            drops = self.prices.record_report(job.report, job.cards, job.agent)
+        except Exception:  # un fallo guardando precios no puede tumbar el encargo
+            log.exception("no se pudieron guardar los precios del encargo %d", job.id)
+            return []
+        if drops:
+            from .prices import prices_card
+            card = prices_card(self.prices, self.prices.products(), drops, "Ha bajado de precio")
+            self._trace("price_drop", job, card=card, drops=[d.text() for d in drops])
+        return [d.text() for d in drops]
 
     def _save(self, job: Job, spec: AgentSpec) -> str:
         if not self.vault:

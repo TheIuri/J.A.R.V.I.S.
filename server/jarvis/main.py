@@ -35,18 +35,21 @@ from .memory import MemoryRejected, MemoryStore, RuleRetriever
 from .notify import NoticeBoard, NtfyPush, parse_quiet
 from .obsidian import Vault
 from .pipeline import PENDING_TTL_S, Assistant, TurnResult, is_affirmative, is_negative
+from .prices import PriceStore
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
 from .tools import build_registry, make_calendars, spotify_configured, truenas_snapshot
 from .tools.info import PageReader, research_tools, web_read_tool
 from .tools.calendar import Calendars
+from .tools.prices import AGENTS as PRICE_AGENTS, price_tools
 from .tools.registry import ToolContext, ToolError, ToolRegistry
 from .tools.reminders import ReminderStore
 from .tools.truenas import _default_connect
 from .tools.vision import Vision, check_image
 from .tts import EdgeTTS, NullTTS, PiperTTS
 from .turnlog import TurnLog
-from .watch import Watcher, briefing_check, calendar_check, reminders_check, summary_check, truenas_check
+from .watch import (Watcher, briefing_check, calendar_check, prices_check, reminders_check, summary_check,
+                    truenas_check)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)  # evita loguear URLs firmadas y ruido
@@ -118,6 +121,8 @@ def build_assistant(settings: Settings) -> Assistant:
     assistant.activity = ActivityLog()  # trazabilidad de agentes para el HUD
     if settings.insights_enabled:
         assistant.insights = Insights(llm, assistant.activity)
+    # Historico de precios: lo llenan los informes de los agentes (ver AgentTeam._prices).
+    assistant.prices = PriceStore(data / "prices.db", settings.timezone) if settings.agents_enabled else None
     if reminders:
         assistant.board, assistant.watcher = build_watcher(settings, assistant, reminders, calendars)
     if tools and settings.agents_enabled:
@@ -144,8 +149,12 @@ def build_assistant(settings: Settings) -> Assistant:
         assistant.team = team
         team.on_done = assistant.note_agent_done
         assistant.leads = leads
+        team.prices = assistant.prices
         for tool in agent_tools(team) + lead_tools(leads):
             tools.register(tool)
+        if assistant.prices is not None:
+            for tool in price_tools(assistant.prices, lambda: [a for a in team.available if a in PRICE_AGENTS]):
+                tools.register(tool)
         log.info("Agentes: %s (informes en %s)", ", ".join(team.available), "Obsidian" if vault else "memoria")
     if settings.claude_token:
         store = assistant.memory
@@ -203,6 +212,15 @@ def build_watcher(
                 settings.truenas_watch_minutes * 60,
             )
         )
+    if getattr(assistant, "prices", None) is not None:
+        # Relanzar las vigilancias de precio a su hora. El equipo aun no existe aqui: se mira al vuelo.
+        def run_watch(agent: str, task: str) -> None:
+            team = getattr(assistant, "team", None)
+            if team is None:
+                raise RuntimeError("los agentes no están disponibles todavía")
+            team.request(agent, task, refresh=True)
+
+        checks.append(prices_check(assistant.prices, run_watch))
     if settings.briefing_at:
 
         def ask(text: str) -> str:
