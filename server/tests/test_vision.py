@@ -12,7 +12,7 @@ from jarvis.pipeline import Assistant
 from jarvis.tools import ToolContext
 from jarvis.tools.homeassistant import HomeAssistant, ha_tools
 from jarvis.tools.vision import Vision, camera_tool, check_image
-from tests.test_core import llm_with
+from tests.test_core import llm_with, make_assistant
 from tests.test_tools import NoTTS, ScriptedLLM, registry
 
 JPEG = base64.b64encode(b"\xff\xd8\xff\xe0" + b"0" * 100).decode()
@@ -90,3 +90,18 @@ def test_api_passes_the_photo_to_the_turn():
     assert "camera_look" in json.dumps(script.requests[0]["tools"])
     bad = client.post("/api/chat/stream", json={"text": "x", "image": "AAAA"}, headers=auth)
     assert bad.status_code == 400
+
+
+def test_hud_serves_the_local_gesture_recognizer():
+    """Los gestos se reconocen en el navegador: el HUD sirve el modelo y el wasm, sin CDN ni nube."""
+    client = TestClient(create_app(make_assistant()))
+    js = client.get("/hud/gestures.js")
+    assert js.status_code == 200 and "GestureTracker" in js.text
+    model = client.get("/hud/vendor/mediapipe/gesture_recognizer.task")
+    assert model.status_code == 200 and len(model.content) > 1_000_000
+    wasm = client.get("/hud/vendor/mediapipe/wasm/vision_wasm_internal.wasm")
+    assert wasm.status_code == 200 and wasm.headers["content-type"] == "application/wasm"
+    assert client.get("/hud/vendor/mediapipe/vision_bundle.mjs").status_code == 200
+    # El HUD carga los gestos y el reconocimiento no manda nada al servidor.
+    page = client.get("/hud/").text
+    assert "gestures.js" in page and "gesture-cam" in page

@@ -1,0 +1,3 @@
+MediaPipe Tasks Vision (@mediapipe/tasks-vision 1.0.1) y el modelo gesture_recognizer.task (float16).
+Copyright Google LLC. Licencia Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
+Solo se incluye la variante wasm con SIMD (vision_wasm_internal): la admiten todos los navegadores actuales.

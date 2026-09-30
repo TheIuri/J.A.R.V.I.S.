@@ -77,6 +77,11 @@
       <canvas id="orb" aria-label="Mantén pulsado para hablar"></canvas>
       <div id="flow" aria-hidden="true"></div>
       <video id="cam" muted playsinline hidden aria-label="Cámara activa"></video>
+      <div id="gesture-box" hidden role="status" aria-live="polite">
+        <div class="gesture-view"><video id="gesture-cam" muted playsinline aria-label="Vista de los gestos"></video><span id="gesture-icon" aria-hidden="true"></span></div>
+        <p id="gesture-label"></p>
+        <p id="gesture-say"></p>
+      </div>
       <div class="stage-foot">
         <p id="trail" aria-label="Recorrido del último turno"></p>
         <p id="state">En espera</p>
@@ -222,9 +227,11 @@
               <h2 id="h-conv">Conversación. <span class="gris">Cámara y memoria.</span></h2>
               <div class="actions">
                 <button id="camera" type="button" aria-pressed="false"><svg class="icon"><use href="#i-camera"/></svg><span>Cámara</span></button>
+                <button id="gestures" type="button" aria-pressed="false"><svg class="icon"><use href="#i-camera"/></svg><span>Gestos</span></button>
                 <button id="memories" type="button"><svg class="icon"><use href="#i-memory"/></svg><span>Ver recuerdos</span></button>
                 <button id="reset" type="button"><svg class="icon"><use href="#i-reset"/></svg><span>Nueva conversación</span></button>
               </div>
+              <p class="agent-hint">Gestos (se reconocen en este dispositivo; el vídeo no sale de él): ✋ mantén la palma para hablar y ✊ cierra el puño para enviar (o para callar a JARVIS) · 👍 / 👎 sí o no cuando JARVIS pregunta · ☝️ sube y ✌️ baja el volumen.</p>
               <div id="memory-list"></div>
             </section>
           </div>
@@ -268,6 +275,7 @@
     </form>
   </div>
 
+  <script src="gestures.js"></script>
   <script src="hud.js"></script>
   <script type="module" src="brain3d.js"></script>
 </body>

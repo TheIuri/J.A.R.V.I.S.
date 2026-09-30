@@ -13,7 +13,7 @@ TrueNAS SCALE; el "cerebro" (LLM) usa capas gratuitas en la nube, con un modelo 
 | 1 · Voz | micro → STT → LLM → TTS → altavoz, push-to-talk | ✅ |
 | 2 · Tools | registro de herramientas tipadas + permisos | ✅ |
 | 3 · Memoria | SQLite (+ Qdrant cuando haga falta) | ✅ |
-| 4 · Sentidos | wake word, cámara bajo demanda, event bus | pendiente |
+| 4 · Sentidos | wake word, cámara bajo demanda, gestos de mano, event bus | en curso |
 | 5 · Agentes | orquestador + especialistas | pendiente |
 | 6 · OS personal | gateway, clientes móvil/escritorio | pendiente |
 
@@ -360,6 +360,31 @@ Con Home Assistant, también sus cámaras: *"¿Hay alguien en la puerta?"*.
 (`gemini-flash-latest`), y si no, el modelo de visión de Groq (`meta-llama/llama-4-scout-17b-16e-instruct`).
 Se cambia con `VISION_PROVIDERS: "gemini,groq"` y `GROQ_VISION_MODEL` / `GEMINI_VISION_MODEL` (si Groq retira el
 modelo, elige otro de visión en console.groq.com/docs/models). En modo Claude no se usa la cámara.
+
+### Gestos de mano (Nivel 4, región VISUAL)
+
+Pulsa **GESTOS** en el panel del HUD. Enseña la mano a la cámara frontal y maneja JARVIS sin tocar nada:
+
+| Gesto | Qué hace |
+|---|---|
+| ✋ palma abierta | Empieza a escuchar (como mantener pulsado el cerebro) |
+| ✊ puño | Envía lo que acabas de decir; si JARVIS está hablando, lo calla |
+| 👍 / 👎 | Sí o no, cuando JARVIS acaba de hacerte una pregunta |
+| ☝️ índice arriba | Sube el volumen (se repite si lo mantienes) |
+| ✌️ victoria | Baja el volumen |
+
+Cada gesto hay que mantenerlo entre medio segundo y uno: sale un anillo que se llena, así no cuentan los gestos
+que haces al hablar. Debajo se ve qué ha entendido y qué ha hecho.
+
+**Corre entero en tu dispositivo.** El reconocimiento es
+[MediaPipe Gesture Recognizer](https://ai.google.dev/edge/mediapipe/solutions/vision/gesture_recognizer) en
+WebAssembly (`web/vendor/mediapipe/`, unos 20 MB que sirve el propio NAS: ni CDN ni cuentas). El vídeo no sale del
+navegador y no llega al servidor: solo viaja la acción. Va a 15 fps y usa la GPU del navegador si la hay, con la CPU
+de reserva. Mientras la pestaña no se ve, no analiza nada.
+
+Es independiente del botón **CÁMARA**: los gestos no adjuntan fotos a tus preguntas, y para *"¿qué ves?"* sigue
+haciendo falta la cámara y un modelo de visión (los gestos solo reconocen posturas de la mano, no describen
+escenas).
 
 ### Avisos proactivos (Nivel 4)
 
