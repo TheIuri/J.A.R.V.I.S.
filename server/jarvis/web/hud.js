@@ -2174,6 +2174,12 @@ function retireSatellite(sat, ms) {
 
 function onActivity(ev) {
   if (ev.type === "insight") return showInsight(ev);
+  if (ev.type === "learned") {
+    // Ha aprendido una preferencia: se ve en la traza y en Ajustes > Memoria.
+    trace("Memoria", `aprende que ${ev.content}`, [211, 140, 255]);
+    if (!$("memory-list").textContent.includes("Cargando")) showMemories();
+    return;
+  }
   const rgb = agentRgb(ev.agent);
   const label = ev.label || ev.agent;
   const sat = satellite(ev);

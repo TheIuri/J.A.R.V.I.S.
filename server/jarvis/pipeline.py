@@ -143,6 +143,7 @@ class Assistant:
         self.activity = None  # activity.ActivityLog: trazabilidad de agentes para el HUD
         self.team = None  # agents.AgentTeam
         self.insights = None  # insights.Insights: fichas con los datos clave de cada respuesta (HUD)
+        self.learner = None  # learn.PrefLearner: apunta las preferencias que se cuelan en la conversacion
         self.watcher = None
         # Un turno cada vez: evita pelearse por la GPU y mantiene el orden del historial.
         self._lock = threading.Lock()
@@ -428,6 +429,8 @@ class Assistant:
             self.turn_log.add(session, text, reply.text)
         if self.insights and emit is not _no_events:  # solo turnos del HUD (en directo)
             self.insights.submit(text, reply.text, used, model)
+        if self.learner:  # si ha dicho algo que valga para siempre, se guarda como preferencia
+            self.learner.submit(text, model)
 
         audio = None
         if speak:

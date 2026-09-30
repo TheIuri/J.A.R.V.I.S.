@@ -30,8 +30,10 @@ from .claude_code import ClaudeCode, label
 from .config import Settings, load_settings
 from .insights import Insights
 from .leads import STATUSES as LEAD_STATUSES, LeadStore, lead_tools
+from .learn import PrefLearner
 from .llm import FallbackLLM, LLMError, OpenAICompatLLM, usage_report
 from .memory import MemoryRejected, MemoryStore, RuleRetriever
+from .notes_index import NotesIndex
 from .notify import NoticeBoard, NtfyPush, parse_quiet
 from .obsidian import Vault
 from .pipeline import PENDING_TTL_S, Assistant, TurnResult, is_affirmative, is_negative
@@ -100,7 +102,9 @@ def build_assistant(settings: Settings) -> Assistant:
         if settings.vision_providers
         else None
     )
-    tools = build_registry(settings, store, vault, reminders, calendars, vision)
+    # Busqueda por significado en las notas (local, sin tokens): la usan el chat y los agentes.
+    notes = NotesIndex(vault) if vault else None
+    tools = build_registry(settings, store, vault, reminders, calendars, vision, notes)
     retriever = RuleRetriever(store, settings.memory_max_items) if store else None
 
     log.info("STT=%s | LLM=%s | TTS=%s | memoria=%s", stt.name, llm.name, tts.name, "si" if store else "no")
@@ -115,12 +119,15 @@ def build_assistant(settings: Settings) -> Assistant:
         retriever,
     )
     assistant.vault = vault
+    assistant.notes = notes
     # Registro de conversaciones (siempre): seguir tras reiniciar y recordar lo hablado otros dias.
     data.mkdir(parents=True, exist_ok=True)
     assistant.turn_log = TurnLog(data / "turns.db", settings.timezone)
     assistant.activity = ActivityLog()  # trazabilidad de agentes para el HUD
     if settings.insights_enabled:
         assistant.insights = Insights(llm, assistant.activity)
+    if settings.learn_prefs and store is not None:
+        assistant.learner = PrefLearner(llm, store, assistant.activity)
     # Historico de precios: lo llenan los informes de los agentes (ver AgentTeam._prices).
     assistant.prices = PriceStore(data / "prices.db", settings.timezone) if settings.agents_enabled else None
     if reminders:

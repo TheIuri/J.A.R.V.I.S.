@@ -6,7 +6,8 @@ from ..obsidian import Vault, VaultError
 from .registry import Tool, ToolContext, ToolError
 
 
-def obsidian_tools(vault: Vault) -> list[Tool]:
+def obsidian_tools(vault: Vault, index=None) -> list[Tool]:
+    """index: NotesIndex opcional; busca por significado y deja la busqueda literal de respaldo."""
     def guard(fn, *args):
         try:
             return fn(*args)
@@ -14,6 +15,13 @@ def obsidian_tools(vault: Vault) -> list[Tool]:
             raise ToolError(str(exc)) from exc
 
     def search(_ctx: ToolContext, query: str) -> str:
+        if index is not None:
+            try:
+                found = index.search(query)
+            except OSError:  # la boveda no responde: se busca a la antigua
+                found = []
+            if found:
+                return "\n".join(f.line() for f in found)
         hits = guard(vault.search, query)
         return "\n".join(f"- {h.path}: {h.snippet}" for h in hits) or "No hay notas sobre eso."
 
@@ -32,7 +40,10 @@ def obsidian_tools(vault: Vault) -> list[Tool]:
     return [
         Tool(
             name="obsidian_search",
-            description="Busca en las notas de Obsidian del usuario. Devuelve rutas y un fragmento de cada nota.",
+            description=(
+                "Busca en las notas de Obsidian del usuario por significado, no solo por la palabra exacta "
+                "(pregunta con las palabras del usuario). Devuelve rutas y un fragmento de cada nota."
+            ),
             parameters={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
             fn=search,
         ),

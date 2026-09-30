@@ -36,6 +36,7 @@ def build_registry(
     reminders: ReminderStore | None = None,
     calendars: Calendars | None = None,
     vision: Vision | None = None,
+    notes_index=None,  # NotesIndex: busqueda por significado en las notas (main.py)
 ) -> ToolRegistry | None:
     if not settings.tools_enabled:
         log.info("Tools desactivadas (TOOLS_ENABLED=false)")
@@ -79,7 +80,7 @@ def build_registry(
         registry.register(wol_tool(parse_devices(settings.wol_devices), settings.wol_broadcast))
     for tool in memory_tools(memory) if memory else []:
         registry.register(tool)
-    for tool in obsidian_tools(vault) if vault else []:
+    for tool in obsidian_tools(vault, notes_index) if vault else []:
         registry.register(tool)
     if settings.truenas_url and settings.truenas_api_key:
         if not settings.truenas_url.startswith("wss://"):
