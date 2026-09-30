@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -28,6 +28,7 @@ from .agents import REPORT_FOLDER, SPECS, AgentTeam, agent_tools, extract_option
 from .claude_code import DEFAULT_MODELS as CLAUDE_DEFAULTS
 from .claude_code import ClaudeCode, label
 from .config import Settings, load_settings
+from . import docgen
 from .insights import Insights
 from .leads import STATUSES as LEAD_STATUSES, LeadStore, lead_tools
 from .learn import PrefLearner
@@ -648,6 +649,34 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         except ToolError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"job": job.id if job else None, "reused": job is None, "message": message}
+
+    @app.get("/api/report.pdf", dependencies=[Depends(require_token)])
+    def report_pdf(job: int | None = None, about: str = "") -> Response:
+        """El informe maquetado en PDF (portada, cifras clave, graficas). Se descarga como fichero."""
+        team: AgentTeam | None = getattr(state["assistant"], "team", None)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Agentes desactivados")
+        found = team.find_report(str(job) if job else about)
+        if found is None:
+            raise HTTPException(status_code=404, detail="No encuentro ese informe")
+        # Historico del producto del informe que mas datos tenga, para la grafica de evolucion.
+        history, product = [], ""
+        prices = getattr(state["assistant"], "prices", None)
+        if prices is not None:
+            for item in docgen.from_report(found["report"], found.get("cards")):
+                points = prices.history(item["name"])
+                if len(points) > len(history):
+                    history, product = points, item["name"]
+        try:
+            pdf = docgen.render_pdf(
+                report=found["report"], label=found["label"], task=found["task"], date=found["date"],
+                note=found["note"], cards=found.get("cards"), history=history, product=product,
+            )
+        except RuntimeError as exc:  # imagen antigua sin WeasyPrint: el HUD imprime desde el navegador
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+        name = docgen.filename(found["task"], found["date"])
+        return Response(pdf, media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     @app.post("/api/agents/custom", dependencies=[Depends(require_token)])
     def create_custom_agent(req: CustomAgentRequest) -> dict:

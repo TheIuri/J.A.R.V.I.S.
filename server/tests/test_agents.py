@@ -544,3 +544,33 @@ def test_agent_report_con_pdf_pide_abrir_el_dialogo(tmp_path):
     ctx2 = ToolContext()
     tool.fn(ctx2, about="filamentos")
     assert ctx2.cards[0]["print"] is False
+
+
+def test_endpoint_del_pdf(tmp_path):
+    """El botón PDF del HUD baja un fichero hecho en el servidor."""
+    from fastapi.testclient import TestClient
+
+    from jarvis import docgen
+    from jarvis.agent_history import AgentHistory
+    from jarvis.agents import AgentTeam
+    from jarvis.main import create_app
+    from tests.test_core import make_assistant
+    from tests.test_tools import ScriptedLLM
+
+    assistant = make_assistant()
+    script = ScriptedLLM(["RESUMEN: listo.\n# Filamentos\n| Material | Precio |\n|---|---|\n| PETG | 6,50 € |"])
+    assistant.team = AgentTeam(script.llm(), {"web_search": fake_search()},
+                               history=AgentHistory(tmp_path / "h.json"))
+    job = assistant.team.start("compras", "precios de filamentos", background=False)
+    client = TestClient(create_app(assistant, api_token="s"))
+    auth = {"Authorization": "Bearer s"}
+
+    assert client.get(f"/api/report.pdf?job={job.id}").status_code == 401
+    assert client.get("/api/report.pdf?about=nada-de-nada", headers=auth).status_code == 404
+    resp = client.get(f"/api/report.pdf?job={job.id}", headers=auth)
+    if not docgen.available():  # imagen sin WeasyPrint: el HUD se entera y usa el navegador
+        assert resp.status_code == 501
+        return
+    assert resp.status_code == 200 and resp.headers["content-type"] == "application/pdf"
+    assert resp.content.startswith(b"%PDF")
+    assert "filamentos" in resp.headers["content-disposition"]

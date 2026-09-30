@@ -11,6 +11,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     XDG_CACHE_HOME=/data/cache \
     LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib
 
+# Librerias de WeasyPrint, que convierte los informes en PDF (jarvis/docgen.py).
+RUN apt-get update && apt-get install --no-install-recommends -y \
+        libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libfribidi0 libcairo2 libgdk-pixbuf-2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY requirements.txt requirements-cuda.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \

@@ -13,3 +13,5 @@ recurring-ical-events>=3.0
 # Voces de Microsoft Edge (TTS_PROVIDER=edge) y MP3 -> WAV
 edge-tts>=7.0
 miniaudio>=1.60
+# Informes en PDF maquetados en el servidor (jarvis/docgen.py). Necesita libpango y libcairo en la imagen.
+weasyprint>=62
