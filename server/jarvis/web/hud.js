@@ -1206,6 +1206,11 @@ function showReport(c) {
   if (c.note) tools.append(node("span", "vis-note", `En Obsidian: ${c.note.split("/").pop().replace(/\.md$/, "")}`));
   el.append(tools);
   addVisual(el);
+  // Han pedido el informe en PDF: se abre el visor y, con él, el diálogo de guardar como PDF.
+  if (c.print) {
+    openReportViewer(c, slug);
+    setTimeout(() => printReport($("report-paper")), 400);
+  }
 }
 
 // Visor del informe dentro de la ventana: una hoja clara, como un PDF, con su barra (PDF, copiar, descargar).
@@ -1349,7 +1354,7 @@ function showPlan(ev, done) {
 }
 
 const VISUALS = { weather: showWeather, music: showMusic, agenda: showAgenda, reminders: showReminders,
-  convert: showConvert, clock: showClock, wiki: showWiki, prices: showPrices };
+  convert: showConvert, clock: showClock, wiki: showWiki, prices: showPrices, report: showReport };
 
 function clearVisual() {
   answerVisual = false;

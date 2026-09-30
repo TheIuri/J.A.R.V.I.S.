@@ -31,7 +31,7 @@ def test_needs_detail(agent, task, pregunta):
 def test_la_conversacion_pregunta_antes_de_gastar_un_agente():
     activity = ActivityLog()
     team = team_with(ScriptedLLM(["RESUMEN: ok.\n# x"]), activity=activity)
-    run = agent_tools(team)[0]
+    run = {t.name: t for t in agent_tools(team)}["agent_run"]
     out = run.fn(ToolContext(), agent="compras", task="monitor 4k")
     assert "presupuesto" in out and not team.jobs  # no se ha lanzado nada
     ev = [e for e in activity.since(-1) if e["type"] == "agent_ask"]

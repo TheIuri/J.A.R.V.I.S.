@@ -21,6 +21,7 @@ from typing import Any
 # ya evitan repetidos por su cuenta).
 MAX_AGE_DAYS = {"compras": 30, "investigador": 90}
 MAX_ENTRIES = 300
+MAX_REPORT_CHARS = 7000  # lo que se guarda del informe de cada trabajo
 MIN_SHARED = 2  # palabras con significado en comun
 MIN_OVERLAP = 0.6  # de las del encargo mas corto
 
@@ -75,13 +76,15 @@ class AgentHistory:
         tmp.replace(self.path)
 
     def add(self, agent: str, topic: str, summary: str, note: str = "", cards: list[dict] | None = None,
-            model: str = "", when: datetime | None = None) -> None:
+            model: str = "", when: datetime | None = None, report: str = "") -> None:
         if agent not in self.ages:
             return
         with self._lock:
             self.entries.append({
                 "agent": agent, "topic": topic[:300], "summary": summary[:400], "note": note,
                 "cards": cards or [], "model": model, "date": (when or datetime.now()).isoformat(timespec="minutes"),
+                # El informe entero: asi se puede volver a ver (y sacar en PDF) despues de reiniciar.
+                "report": (report or "")[:MAX_REPORT_CHARS],
             })
             self.entries = self.entries[-MAX_ENTRIES:]
             self._save()
