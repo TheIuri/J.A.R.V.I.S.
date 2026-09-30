@@ -1167,6 +1167,7 @@ function printReport(el) {
   const area = node("div");
   area.id = "print-area";
   const copy = el.cloneNode(true);
+  copy.removeAttribute("id");
   copy.classList.add("open");
   area.append(copy);
   document.body.append(area);
@@ -1191,12 +1192,7 @@ function showReport(c) {
   el.append(body);
   const tools = node("div", "vis-actions");
   const slug = (c.task || c.label || "informe").toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").slice(0, 60);
-  const more = node("button", "pill-btn", "Ver completo");
-  more.type = "button";
-  more.addEventListener("click", () => {
-    const open = el.classList.toggle("open");
-    more.textContent = open ? "Ver menos" : "Ver completo";
-  });
+  const more = iconButton("expand", "Ver completo", () => openReportViewer(c, slug));
   tools.append(
     more,
     iconButton("report", "PDF", () => printReport(el)),
@@ -1206,10 +1202,46 @@ function showReport(c) {
   if (c.note) tools.append(node("span", "vis-note", `En Obsidian: ${c.note.split("/").pop().replace(/\.md$/, "")}`));
   el.append(tools);
   addVisual(el);
-  requestAnimationFrame(() => {
-    if (body.scrollHeight <= body.clientHeight + 4) more.hidden = true; // cabe entero: sin boton
-  });
 }
+
+// Visor del informe dentro de la ventana: una hoja clara, como un PDF, con su barra (PDF, copiar, descargar).
+let viewerReturn = null;
+
+function closeReportViewer() {
+  const v = $("report-viewer");
+  if (!v || v.hidden) return;
+  v.hidden = true;
+  $("report-paper").textContent = "";
+  document.body.classList.remove("viewer-open");
+  viewerReturn?.focus?.();
+}
+
+function openReportViewer(c, slug) {
+  viewerReturn = document.activeElement;
+  const paper = $("report-paper");
+  paper.textContent = "";
+  const head = node("header", "paper-head");
+  head.append(node("span", "paper-kicker", `${c.label || "Agente"}${c.date ? ` · ${c.date}` : ""}`));
+  if (c.task) head.append(node("p", "paper-task", c.task));
+  paper.append(head, renderMarkdown(c.report));
+  if (c.note) paper.append(node("p", "paper-note", `Guardado en Obsidian: ${c.note}`));
+  $("viewer-title").textContent = `Informe · ${c.label || "agente"}`;
+  $("viewer-pdf").onclick = () => printReport(paper);
+  $("viewer-copy").onclick = (e) => copyText(c.report, e.currentTarget);
+  $("viewer-download").onclick = () => download(`${slug || "informe"}.md`, c.report, "text/markdown");
+  $("report-viewer").hidden = false;
+  document.body.classList.add("viewer-open");
+  paper.scrollTop = 0;
+  $("viewer-close").focus();
+}
+
+$("viewer-close").addEventListener("click", closeReportViewer);
+$("report-viewer").addEventListener("click", (e) => {
+  if (e.target.id === "report-viewer") closeReportViewer(); // clic fuera de la hoja
+});
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeReportViewer();
+});
 
 const VISUALS = { weather: showWeather, music: showMusic, agenda: showAgenda, reminders: showReminders,
   convert: showConvert, clock: showClock, wiki: showWiki };

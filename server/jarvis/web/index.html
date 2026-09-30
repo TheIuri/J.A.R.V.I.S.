@@ -26,6 +26,7 @@
     <symbol id="i-leads" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></symbol>
     <symbol id="i-report" viewBox="0 0 24 24"><path d="M7 3.5h7l4.5 4.5v11A1.5 1.5 0 0 1 17 20.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5zM14 3.5V8h4.5M8.5 12h7M8.5 15.5h7"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 4.5h5.5V10M10 19.5H4.5V14M19.5 4.5l-6 6M4.5 19.5l6-6"/></symbol>
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14"/></symbol>
     <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
     <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4 4v4.5h4.5"/></symbol>
@@ -240,6 +241,19 @@
       </section>
     </section>
   </main>
+
+  <div id="report-viewer" class="viewer" role="dialog" aria-modal="true" aria-labelledby="viewer-title" hidden>
+    <div class="viewer-window">
+      <header class="viewer-bar">
+        <b id="viewer-title">Informe</b>
+        <button type="button" id="viewer-pdf" class="pill-btn" aria-label="Guardar como PDF"><svg class="icon"><use href="#i-report"/></svg><span>PDF</span></button>
+        <button type="button" id="viewer-copy" class="pill-btn" aria-label="Copiar el informe"><svg class="icon"><use href="#i-copy"/></svg><span>Copiar</span></button>
+        <button type="button" id="viewer-download" class="pill-btn" aria-label="Descargar en Markdown"><svg class="icon"><use href="#i-download"/></svg><span>Descargar</span></button>
+        <button type="button" id="viewer-close" class="icon-btn" aria-label="Cerrar el informe"><svg class="icon"><use href="#i-close"/></svg></button>
+      </header>
+      <article id="report-paper" class="paper md"></article>
+    </div>
+  </div>
 
   <div id="login" hidden>
     <form id="login-form" autocomplete="off">
