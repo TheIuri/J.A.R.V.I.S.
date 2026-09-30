@@ -2844,12 +2844,46 @@ addEventListener("keyup", (e) => {
   e.preventDefault();
   stopRecording();
 });
+// En el móvil el cerebro ocupa casi toda la pantalla: deslizar sobre él tiene que hacer scroll. Por eso con el dedo
+// se habla al mantenerlo quieto un momento; si se mueve (o el navegador empieza a desplazar), no se graba nada.
+const HOLD_MS = 220;
+const HOLD_SLOP = 10; // px que puede moverse el dedo sin que cuente como deslizar
+let hold = null;
+
+function cancelHold() {
+  if (hold) clearTimeout(hold.timer);
+  hold = null;
+}
+
 canvas.addEventListener("pointerdown", (e) => {
-  canvas.setPointerCapture(e.pointerId);
-  startRecording();
+  if (e.pointerType !== "touch") {
+    canvas.setPointerCapture(e.pointerId);
+    startRecording();
+    return;
+  }
+  cancelHold();
+  const timer = setTimeout(() => {
+    hold = null;
+    startRecording();
+  }, HOLD_MS);
+  hold = { x: e.clientX, y: e.clientY, timer };
 });
-canvas.addEventListener("pointerup", stopRecording);
-canvas.addEventListener("pointercancel", stopRecording);
+canvas.addEventListener("pointermove", (e) => {
+  if (hold && (Math.abs(e.clientY - hold.y) > HOLD_SLOP || Math.abs(e.clientX - hold.x) > HOLD_SLOP)) cancelHold();
+});
+// Ya grabando, el dedo no debe desplazar la página (cortaría la grabación a medias).
+canvas.addEventListener("touchmove", (e) => {
+  if (recorder) e.preventDefault();
+}, { passive: false });
+canvas.addEventListener("pointerup", () => {
+  cancelHold();
+  stopRecording();
+});
+canvas.addEventListener("pointercancel", () => {
+  cancelHold();
+  stopRecording(); // el navegador ha tomado el gesto (scroll): lo grabado, si algo, se descarta por corto
+});
+canvas.addEventListener("contextmenu", (e) => e.preventDefault()); // mantener pulsado no abre el menú
 
 $("ask").addEventListener("submit", (e) => {
   e.preventDefault();
