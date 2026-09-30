@@ -245,6 +245,7 @@ const MODEL_COLORS = {
   "claude-sonnet": [217, 119, 87],
   "claude-opus": [236, 146, 110],
   "claude-haiku": [244, 180, 140],
+  directo: [48, 209, 88], // respuestas sin LLM
 };
 const PROVIDER_NAME = { groq: "Groq", gemini: "Gemini", cerebras: "Cerebras", mistral: "Mistral", opencode: "OpenCode", openrouter: "OpenRouter", ollama: "Ollama" };
 let currentModel = "";
@@ -260,7 +261,7 @@ function providerLabel(spec) {
 
 // Si ha contestado otro modelo que el elegido (limite, caida...), es un respaldo.
 function isBackup(spec) {
-  if (!spec || !currentModel) return false;
+  if (!spec || !currentModel || String(spec).startsWith("directo")) return false; // sin LLM: no es un respaldo
   // Con Claude elegido, si contesta otro (Groq...) es el respaldo por falta de cupo.
   if (currentModel.startsWith("claude-")) return !/^Claude /.test(spec);
   return spec !== currentModel && !spec.startsWith(`${currentModel}:`);

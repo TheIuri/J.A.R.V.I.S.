@@ -276,7 +276,8 @@ def test_claude_as_full_brain_uses_jarvis_tools_confirms_and_falls_back(tmp_path
     assert mcp["JARVIS_MCP_MODE"] == "full"
 
     # Claude recibe el prompt de JARVIS y todas sus herramientas, pero no WebFetch.
-    client.post("/claude/chat/stream", json={"text": "pausa", "model": "claude-sonnet-5", "session": "m"}, headers=auth)
+    client.post("/claude/chat/stream", json={"text": "pon algo tranquilo", "model": "claude-sonnet-5", "session": "m"},
+                headers=auth)
     call = json.loads((tmp_path / "home" / "call.json").read_text())
     allowed = call["argv"][call["argv"].index("--allowedTools") + 1]
     assert allowed == "WebSearch,mcp__jarvis" and "WebFetch" in call["argv"][call["argv"].index("--disallowedTools") + 1]

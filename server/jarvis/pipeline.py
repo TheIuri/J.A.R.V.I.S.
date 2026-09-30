@@ -21,6 +21,7 @@ from typing import Any, Callable
 from .llm import FallbackLLM
 from .memory import Retriever, as_prompt
 from .memory.retrieval import keywords
+from .shortcuts import direct_answer, select_specs
 from .stt import STT
 from .tools import ToolContext, ToolRegistry
 from .tools.registry import PendingAction
@@ -36,18 +37,37 @@ EVENT_TEXT_CHARS = 160
 EventSink = Callable[[dict[str, Any]], None]
 
 # Acciones que piden confirmacion: el "si" tiene que llegar en el turno siguiente y antes de este plazo.
-PENDING_TTL_S = 120
-_YES = re.compile(
-    r"^(si|vale|ok|okay|confirmo|confirmado|adelante|hazlo|dale|claro|por supuesto|venga|correcto|afirmativo)"
-    r"( (si|vale|claro|hazlo|adelante|confirmo|por favor|gracias|jarvis))*$"
-)
+DIRECT = "directo:0 tokens"  # "proveedor" de las respuestas sin LLM (el HUD lo enseña como Directo · 0 tokens)
+PENDING_TTL_S = 300  # con Claude y la voz, 2 minutos se quedaban cortos
+_YES_START = set("si vale ok okay confirmo confirmado adelante dale claro venga correcto afirmativo perfecto genial "
+                 "exacto eso porfa".split())
+# "si, crealo", "apuntalo", "si, ponlo en el calendario": verbos de confirmar la accion propuesta.
+_YES_VERBS = set("hazlo crealo apuntalo anotalo ponlo guardalo confirmalo agendalo reinicialo enciendelo mandalo "
+                 "envialo haz crea apunta anota pon guarda confirma agenda sigue continua procede".split())
+_YES_FILL = set("por favor gracias jarvis lo la el ya asi tal como esta bien muy todo supuesto en calendario evento "
+                "cita recordatorio de acuerdo me parece sin problema".split())
+_NO = set("no pero espera cambia cambialo mejor otro otra otra antes cancela cancelalo para nunca tampoco".split())
+
+
+def _plain_words(text: str) -> list[str]:
+    plain = "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
+    return re.sub(r"[^a-z ]", " ", plain).split()
 
 
 def is_affirmative(text: str) -> bool:
-    """Un "si" corto e inequivoco. Cualquier otra respuesta cancela la accion pendiente."""
-    plain = "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
-    plain = " ".join(re.sub(r"[^a-z ]", " ", plain).split())
-    return bool(_YES.match(plain))
+    """Un "si" corto e inequivoco ("si", "vale", "si, crealo", "apuntalo por favor"). Si hay un "no", un "pero" o
+    algo que cambiar, no lo es."""
+    words = _plain_words(text)
+    if not words or len(words) > 10 or any(w in _NO for w in words):
+        return False
+    if words[0] not in _YES_START and words[0] not in _YES_VERBS:
+        return False
+    return all(w in _YES_START or w in _YES_VERBS or w in _YES_FILL for w in words)
+
+
+def is_negative(text: str) -> bool:
+    words = _plain_words(text)
+    return bool(words) and words[0] in _NO
 
 
 def _no_events(event: dict[str, Any]) -> None:
@@ -109,6 +129,10 @@ class Assistant:
         self._history: dict[str, deque[dict[str, str]]] = defaultdict(lambda: deque(maxlen=history_turns * 2))
         self._history_turns = history_turns
         self._seeded: set[str] = set()  # sesiones ya retomadas del registro (o empezadas de cero a proposito)
+        # Ahorro de tokens (shortcuts.py): solo las herramientas que vienen a cuento y lo trivial sin LLM.
+        self.tool_filter = True
+        self.direct_answers = True
+        self._last_groups: dict[str, set[str]] = {}
         self._pending: dict[str, tuple[PendingAction, float]] = {}  # accion esperando un "si", por sesion
         self.board = None  # tablon de avisos proactivos (notify.NoticeBoard), si esta activo
         self.vault = None  # boveda de Obsidian, si esta configurada
@@ -190,6 +214,40 @@ class Assistant:
             history.append({"role": "user", "content": user})
             history.append({"role": "assistant", "content": reply})
 
+    def direct(self, text: str, session: str, speak: bool, emit: EventSink) -> TurnResult | None:
+        """Respuesta directa sin LLM (modo Claude: se intenta antes de despertar a Claude)."""
+        if not self.direct_answers or session in self._pending:
+            return None
+        with self._lock:
+            return self._direct(text.strip(), session, speak, {}, ToolContext(), emit)
+
+    def _direct(self, text: str, session: str, speak: bool, timings: dict[str, int], ctx: ToolContext,
+                emit: EventSink) -> TurnResult | None:
+        with _timed(timings, "tool"):
+            hit = direct_answer(text, self.tools, ctx)
+        if not hit:
+            return None
+        emit({"type": "tool", "id": "direct", "name": hit.tool, "args": {}})
+        emit({"type": "tool_result", "id": "direct", "name": hit.tool, "ok": not hit.reply.startswith("No he podido"),
+              "ms": timings["tool"], "text": _short(hit.reply)})
+        if ctx.cards:
+            emit({"type": "cards", "cards": ctx.cards})
+        emit({"type": "reply", "text": hit.reply, "provider": DIRECT, "ms": 0})
+        log.info("[%s] respuesta directa (0 tokens) con %s: %r", session, hit.tool, hit.reply)
+        self._resume_history(session)
+        history = self._history[session]
+        history.append({"role": "user", "content": text})
+        history.append({"role": "assistant", "content": hit.reply})
+        if self.turn_log:
+            self.turn_log.add(session, text, hit.reply)
+        audio = None
+        if speak:
+            emit({"type": "speaking"})
+            with _timed(timings, "tts"):
+                audio = self.tts.synthesize(hit.reply)
+        timings["total"] = sum(timings.values())
+        return TurnResult(text, hit.reply, DIRECT, audio, timings, [hit.tool], ctx.pc_actions, ctx.cards)
+
     def claude_context(self, session: str, text: str, fresh: bool = False) -> str:
         """Para una conversacion nueva de Claude (la primera, tras reiniciar o al compactar una larga): lo ultimo
         que hablasteis en esta sesion y las conversaciones anteriores relacionadas con lo que acaba de decir."""
@@ -253,7 +311,15 @@ class Assistant:
         if waiting and self.tools and time.monotonic() < waiting[1]:
             if is_affirmative(text):
                 return self._confirm(text, session, speak, timings, ctx, emit, waiting[0])
-            log.info("[%s] accion cancelada (no hubo 'si'): %s", session, waiting[0].summary)
+            if not is_negative(text):
+                # Respuesta que no es un "si" claro: si el modelo entiende que si y vuelve a pedir exactamente la misma
+                # accion en este turno, se hace (sin volver a preguntar y quedarse en bucle).
+                ctx.preconfirmed = waiting[0]
+            log.info("[%s] sin 'si' claro para: %s", session, waiting[0].summary)
+        if self.direct_answers and not ctx.preconfirmed:
+            hit = self._direct(text, session, speak, timings, ctx, emit)
+            if hit:
+                return hit
         self._resume_history(session)
         history = self._history[session]
         system = self.system_prompt
@@ -279,6 +345,13 @@ class Assistant:
             {"role": "user", "content": text},
         ]
         specs = self.tools.specs(ctx) if self.tools else []
+        if specs and self.tool_filter:
+            total = len(specs)
+            keep = {ctx.preconfirmed.tool.name} if ctx.preconfirmed else set()
+            specs, groups = select_specs(specs, text, self._last_groups.get(session), keep)
+            self._last_groups[session] = groups
+            if len(specs) < total:
+                log.info("[%s] herramientas: %d de %d (%s)", session, len(specs), total, ", ".join(sorted(groups)))
         used: list[str] = []
 
         with _timed(timings, "llm"):

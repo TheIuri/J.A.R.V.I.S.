@@ -106,3 +106,24 @@ def test_calendar_status_endpoint():
     assistant.google_calendar = True
     assert client.get("/api/calendar/status", headers=auth).json() == {"google": True}
     assert client.post("/api/calendar/outlook/connect", headers=auth).status_code in (404, 405)
+
+
+def test_a_yes_in_other_words_still_creates_the_event():
+    # El usuario contesta con una frase que no es un "si" de manual: el modelo vuelve a pedir el mismo evento y se
+    # crea (antes se quedaba en bucle pidiendo confirmacion).
+    rec = Recorder()
+    tool = calendar_add_tool({"google": GoogleCalendar("i", "s", "r", client=rec.client())}, now=NOW)
+    args = {"title": "Cena", "date": "2026-10-03", "time": "21:00"}
+    script = ScriptedLLM([[("calendar_add", args)], "¿Creo la cena el sábado a las 21:00?",
+                          [("calendar_add", args)], "Hecho, la cena está en tu calendario."])
+    assistant = Assistant(None, script.llm(), NoTTS(), "s", tools=registry(tool))
+    assistant.handle_text("apunta una cena el sábado a las nueve")
+    assert rec.requests == []
+    done = assistant.handle_text("sí, genial, así me acuerdo seguro")
+    assert len(rec.requests) == 2 and "Hecho" in done.reply
+    # Con un "no" o un cambio no se hace nada aunque el modelo insista.
+    rec.requests.clear()
+    script.steps += [[("calendar_add", args)], "¿Creo la cena?", [("calendar_add", args)], "¿Seguro?"]
+    assistant.handle_text("apunta una cena el sábado a las nueve")
+    assistant.handle_text("no, espera")
+    assert rec.requests == []

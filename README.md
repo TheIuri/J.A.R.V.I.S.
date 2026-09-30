@@ -446,6 +446,18 @@ Cuando JARVIS responde con datos (usó herramientas o la respuesta es larga), ap
 con los datos clave (*Máxima 22 °C · Cielo soleado · Lista: leche, pan, huevos*). La hace el mismo modelo en segundo
 plano, así que no retrasa la respuesta; gasta una petición más por turno. `INSIGHTS_ENABLED: "false"` las apaga.
 
+**Ahorro de tokens**
+- **Respuestas directas, sin LLM**: lo trivial se contesta llamando a la herramienta y montando la frase en el
+  servidor (0 tokens, y más rápido). Por ejemplo: *«¿qué hora es?»*, *«¿qué día es hoy?»*, *«¿qué tiempo hace?»*
+  (también *mañana* o *esta semana*), *«¿qué tengo mañana?»*, *«mis recordatorios»*, *«pausa»*, *«siguiente»*,
+  *«¿qué suena?»*, *«pon el volumen al 40»*. Funciona con Groq y con Claude (no gasta la membresía). En el HUD sale
+  como **Directo · 0 tokens**, con su tarjeta visual. Solo frases cortas y claras: lo demás va al LLM como siempre.
+  `DIRECT_ANSWERS: "false"` lo apaga.
+- **Solo las herramientas que vienen a cuento**: por palabras clave, al LLM se le mandan solo las herramientas del
+  tema (tiempo, agenda, música, casa, NAS, web, notas, agentes...) en vez de todas, que son varios miles de tokens
+  por mensaje. Si la pregunta no encaja en ningún tema, se mandan todas; en una pregunta corta de seguimiento
+  (*«¿y el jueves?»*) se mantienen las del turno anterior. `TOOL_FILTER: "false"` lo apaga.
+
 **Memoria de conversaciones**: JARVIS guarda lo que habláis en el NAS (`turns.db`, en el dataset) durante 30 días,
 con Groq y con Claude. Así:
 - **tras reiniciar o actualizar** sigue la conversación donde estaba (los últimos turnos de las últimas 12 horas; con
