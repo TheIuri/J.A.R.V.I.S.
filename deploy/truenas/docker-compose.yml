@@ -90,6 +90,8 @@ services:
       # LEADS_PROFILE: "Taller de impresion 3D en ...: piezas a medida, prototipos, figuras" # para el captador
       # LEADS_PROFILE_CALIPERWORKS: "..." # otro producto: "busca clientes para CaliperWorks" usa este (ver README)
       # INSIGHTS_ENABLED: "true" # fichas con los datos clave de cada respuesta en el HUD (+1 peticion al LLM)
+      # DIRECT_ANSWERS: "true" # lo trivial (hora, tiempo, agenda, pausar la musica...) sin LLM: 0 tokens
+      # TOOL_FILTER: "true" # mandar al LLM solo las herramientas que vienen a cuento
 
       # --- Memoria (Nivel 3): SQLite en el dataset (/data/memory.db) ---
       MEMORY_ENABLED: "true" # "false" = sin memoria (no lee ni guarda recuerdos)

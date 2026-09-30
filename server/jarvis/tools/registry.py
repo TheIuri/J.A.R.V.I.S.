@@ -37,6 +37,9 @@ class ToolContext:
     pending: PendingAction | None = None  # accion que necesita confirmacion humana
     cards: list[dict[str, Any]] = field(default_factory=list)  # resultados para mostrar en el HUD
     image: str | None = None  # foto de la camara del HUD en este turno (base64), si esta encendida
+    # Accion que se propuso en el turno anterior y a la que el usuario ha contestado (sin un "si" de manual):
+    # si el modelo la pide otra vez igual, se hace en vez de volver a preguntar.
+    preconfirmed: PendingAction | None = None
 
 
 @dataclass(frozen=True)
@@ -142,8 +145,13 @@ class ToolRegistry:
             _validate(tool.params(), args)
             if tool.name == "pc_open_app" and args.get("app") not in (ctx.pc_apps or []):
                 raise ToolError(f"app no permitida; opciones: {ctx.pc_apps}")
-            if tool.confirm:
-                summary = tool.describe(args) if tool.describe else f"{tool.name} {args}"
+            summary = tool.describe(args) if tool.describe and tool.confirm else f"{tool.name} {args}"
+            again = ctx.preconfirmed
+            if tool.confirm and again and again.tool.name == tool.name and (again.args == args or again.summary == summary):
+                ctx.preconfirmed = None
+                audit.info("tool=%s confirmada por el usuario en su respuesta: %s", name, summary)
+                result = self._call(tool, ctx, args)
+            elif tool.confirm:
                 ctx.pending = PendingAction(tool, args, summary)
                 result = (
                     f"PENDIENTE DE CONFIRMACION: {summary}. No lo has hecho todavia. Pregunta al usuario, en una frase, "

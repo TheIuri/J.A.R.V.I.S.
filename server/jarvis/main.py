@@ -34,7 +34,7 @@ from .llm import FallbackLLM, LLMError, OpenAICompatLLM, usage_report
 from .memory import MemoryRejected, MemoryStore, RuleRetriever
 from .notify import NoticeBoard, NtfyPush, parse_quiet
 from .obsidian import Vault
-from .pipeline import PENDING_TTL_S, Assistant, TurnResult, is_affirmative
+from .pipeline import PENDING_TTL_S, Assistant, TurnResult, is_affirmative, is_negative
 from .prompts import system_prompt
 from .stt import FasterWhisperSTT, GroqSTT
 from .tools import build_registry, make_calendars, spotify_configured, truenas_snapshot
@@ -168,6 +168,8 @@ def build_assistant(settings: Settings) -> Assistant:
             log.info("Auditor en el NAS: proyectos %s", ", ".join(assistant.auditor.available_projects()))
     assistant.google_calendar = bool(settings.google_client_id and settings.google_refresh_token)
     assistant.only_claude = settings.hud_models == "claude"
+    assistant.direct_answers = settings.direct_answers
+    assistant.tool_filter = settings.tool_filter
     assistant.default_model = settings.default_model
     if getattr(assistant, "claude", None) is not None:
         assistant.claude.full = settings.claude_tools != "web" and tools is not None
@@ -459,8 +461,9 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
         a: Assistant = state["assistant"]
         if a.tools is None or req.name in CLAUDE_EXCLUDED:
             raise HTTPException(status_code=400, detail=f"herramienta no disponible: {req.name}")
-        ctx = ToolContext()
+        ctx = ToolContext(preconfirmed=state.get("claude_preconfirmed"))
         result = a.tools.execute(req.name, json.dumps(req.arguments), ctx)
+        state["claude_preconfirmed"] = ctx.preconfirmed  # se gasta al usarla
         session = state["claude_session"]
         if ctx.pending:  # lo confirma el usuario en su siguiente mensaje, como con Groq
             a._pending[session] = (ctx.pending, time.monotonic() + PENDING_TTL_S)
@@ -816,12 +819,22 @@ def create_app(assistant: Assistant | None = None, api_token: str | None = None)
                 events.put({"type": "done", **_to_json(result)})
                 return
             events.put({"type": "heard", "text": text, "ms": 0})
+            direct = a.direct(text, session, req.speak, events.put) if not waiting else None
+            if direct:  # lo trivial (la hora, el tiempo, pausar la musica...) sin gastar la membresia
+                events.put({"type": "done", **_to_json(direct)})
+                return
             events.put({"type": "thinking", "round": 1})
             start = time.perf_counter()
+            # Sin un "si" claro pero tampoco un "no": si Claude vuelve a pedir la misma accion, se hace.
+            again = waiting[0] if waiting and time.monotonic() < waiting[1] and not is_negative(text) else None
             try:
                 with state["claude_lock"]:  # las herramientas saben a que conversacion responder
                     state["claude_session"], state["claude_cards"] = session, []
-                    reply, used = c.ask(text, req.model, session, events.put)
+                    state["claude_preconfirmed"] = again
+                    try:
+                        reply, used = c.ask(text, req.model, session, events.put)
+                    finally:
+                        state["claude_preconfirmed"] = None
                     cards = list(state["claude_cards"])
             except (RuntimeError, ValueError, OSError) as exc:
                 # Sin cupo o caido: contesta la cadena de JARVIS (Groq...) para no quedarte sin respuesta.

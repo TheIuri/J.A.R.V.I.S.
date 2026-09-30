@@ -154,6 +154,8 @@ class Settings:
     leads_profiles: dict[str, str] = field(default_factory=dict)  # LEADS_PROFILE_<NOMBRE>: varios productos
     leads_profile: str = ""  # lo que ofreces, para el captador de clientes (p. ej. "taller de impresion 3D en ...")
     insights_enabled: bool = True  # fichas con los datos clave de cada respuesta en el HUD
+    direct_answers: bool = True  # lo trivial (hora, tiempo, agenda, pausar la musica...) sin LLM: 0 tokens
+    tool_filter: bool = True  # mandar al LLM solo las herramientas que vienen a cuento
     wol_broadcast: str = "255.255.255.255"
     claude_token: str = ""  # CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`): modo Claude con la membresia en el NAS
     claude_models: list[str] = field(default_factory=list)  # CLAUDE_MODELS: versiones en el selector (vacio = las de serie)
@@ -303,6 +305,8 @@ def load_settings() -> Settings:
         leads_profiles={m.group(1).lower(): v.strip() for k, v in os.environ.items()
                         if (m := re.fullmatch(r"LEADS_PROFILE_([A-Z0-9]+)", k)) and v.strip()},
         insights_enabled=_env_bool("INSIGHTS_ENABLED", True),
+        direct_answers=_env_bool("DIRECT_ANSWERS", True),
+        tool_filter=_env_bool("TOOL_FILTER", True),
         wol_broadcast=_env("WOL_BROADCAST", "255.255.255.255"),
         claude_token=_env("CLAUDE_CODE_OAUTH_TOKEN"),
         claude_models=[m.strip() for m in _env("CLAUDE_MODELS").split(",") if m.strip()],

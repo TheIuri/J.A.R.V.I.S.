@@ -241,9 +241,11 @@ def test_truenas_tool_closes_client_and_reports_connection_errors():
 
 
 def test_affirmative_answers():
-    for yes in ["Sí", "sí, hazlo", "Vale.", "adelante jarvis", "confirmo", "sí por favor"]:
+    for yes in ["Sí", "sí, hazlo", "Vale.", "adelante jarvis", "confirmo", "sí por favor", "Sí, créalo",
+                "apúntalo", "sí, ponlo en el calendario", "vale, perfecto", "sí, adelante, gracias"]:
         assert is_affirmative(yes), yes
-    for other in ["no", "sí, pero reinicia plex", "espera", "vale no", "¿qué app?", "no, mejor no"]:
+    for other in ["no", "sí, pero reinicia plex", "espera", "vale no", "¿qué app?", "no, mejor no",
+                  "sí, pero cámbialo a las 11", "ponlo a las 11"]:
         assert not is_affirmative(other), other
 
 
