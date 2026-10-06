@@ -41,6 +41,9 @@ const TOKEN_KEY = "jarvis_token";
 let audioCtx = null;
 let micAnalyser = null; // solo mide: nunca va a los altavoces
 let outAnalyser = null; // voz de JARVIS -> altavoces
+let outGain = null; // volumen de la voz de JARVIS (los gestos lo suben y bajan)
+let speaking = null; // fuente que está sonando ahora
+let silenceEpoch = 0; // al callar a JARVIS, lo que estaba en cola no llega a sonar
 let micStream = null;
 let recorder = null; // {node, source, chunks, startedAt}
 let playing = Promise.resolve();
@@ -133,7 +136,10 @@ function ensureAudio() {
     micAnalyser = audioCtx.createAnalyser();
     outAnalyser = audioCtx.createAnalyser();
     micAnalyser.fftSize = outAnalyser.fftSize = 512;
-    outAnalyser.connect(audioCtx.destination);
+    outGain = audioCtx.createGain();
+    outGain.gain.value = prefs.volume;
+    outAnalyser.connect(outGain);
+    outGain.connect(audioCtx.destination);
   }
   if (audioCtx.state === "suspended") audioCtx.resume();
   return audioCtx;
@@ -231,6 +237,132 @@ function snapshot() {
 }
 
 $("camera").addEventListener("click", toggleCamera);
+
+// --- gestos de mano (región VISUAL) ---------------------------------------------------------
+// Reconocimiento local en el navegador (gestures.js). Independiente del botón Cámara: no adjunta fotos.
+//   ✋ palma (mantenida): empieza a escuchar    ✊ puño: envía lo dicho, o calla a JARVIS mientras habla
+//   👍 / 👎: sí / no cuando JARVIS acaba de preguntar    ☝️ índice arriba: sube volumen    ✌️ victoria: baja volumen
+
+const GESTURE_INFO = {
+  Open_Palm: ["✋", "Palma"],
+  Closed_Fist: ["✊", "Puño"],
+  Thumb_Up: ["👍", "Sí"],
+  Thumb_Down: ["👎", "No"],
+  Pointing_Up: ["☝️", "Volumen +"],
+  Victory: ["✌️", "Volumen −"],
+};
+const VOLUME_STEP = 0.1;
+const ANSWER_WINDOW_MS = 120000; // un 👍 solo vale como "sí" poco después de una pregunta
+const GESTURE_RECORD_MAX_MS = 20000; // seguro: si se olvida el puño, se envía lo grabado
+let gestureEngine = null;
+let gestureRecording = false; // la grabación la empezó un gesto
+let gestureRecordTimer = null;
+let gestureSayTimer = null;
+
+function gestureSay(text) {
+  $("gesture-say").textContent = text;
+  clearTimeout(gestureSayTimer);
+  gestureSayTimer = setTimeout(() => ($("gesture-say").textContent = ""), 2500);
+}
+
+function setVolume(v) {
+  prefs.volume = Math.min(1, Math.max(0, Math.round(v * 10) / 10));
+  if (outGain) outGain.gain.value = prefs.volume;
+  savePrefs();
+  return prefs.volume;
+}
+
+function endGestureRecording() {
+  clearTimeout(gestureRecordTimer);
+  gestureRecording = false;
+  return stopRecording();
+}
+
+async function onGesture(name) {
+  switch (name) {
+    case "Open_Palm":
+      if (recorder || state !== "idle") return;
+      ensureAudio();
+      await startRecording();
+      if (recorder) {
+        gestureRecording = true;
+        gestureRecordTimer = setTimeout(endGestureRecording, GESTURE_RECORD_MAX_MS);
+        gestureSay("Te escucho: cierra el puño para enviar");
+      }
+      break;
+    case "Closed_Fist":
+      if (gestureRecording) {
+        gestureSay("Enviado");
+        await endGestureRecording();
+      } else if (state === "speaking") {
+        silence();
+        gestureSay("Callado");
+      }
+      break;
+    case "Thumb_Up":
+    case "Thumb_Down": {
+      if (!askedAt || Date.now() - askedAt > ANSWER_WINDOW_MS || state === "thinking") {
+        gestureSay("No hay nada que confirmar");
+        return;
+      }
+      const yes = name === "Thumb_Up";
+      askedAt = 0;
+      silence();
+      gestureSay(yes ? "Sí" : "No");
+      ensureAudio();
+      await sendText(yes ? "Sí" : "No");
+      break;
+    }
+    case "Pointing_Up":
+    case "Victory": {
+      const v = setVolume(prefs.volume + (name === "Pointing_Up" ? VOLUME_STEP : -VOLUME_STEP));
+      gestureSay(`Volumen ${Math.round(v * 100)} %`);
+      break;
+    }
+  }
+}
+
+function onGestureFrame({ gesture, progress, fire, seen }) {
+  const box = $("gesture-box");
+  const [icon, label] = GESTURE_INFO[gesture] || ["", seen ? "Mano detectada" : "Enseña la mano"];
+  $("gesture-icon").textContent = icon;
+  $("gesture-label").textContent = label;
+  box.style.setProperty("--progress", String(gesture ? progress : 0));
+  box.classList.toggle("seen", seen);
+  if (fire) onGesture(gesture).catch(() => setState("error", "no se pudo ejecutar el gesto"));
+}
+
+async function toggleGestures() {
+  const btn = $("gestures");
+  if (gestureEngine) {
+    gestureEngine.stop();
+    gestureEngine = null;
+    if (gestureRecording) await endGestureRecording();
+    $("gesture-box").hidden = true;
+  } else {
+    btn.disabled = true;
+    btn.querySelector("span").textContent = "Cargando gestos…";
+    ensureAudio(); // el clic habilita el sonido, que luego se usa sin tocar la página
+    const engine = new GestureEngine($("gesture-cam"), onGestureFrame, (msg) => {
+      setState("error", msg);
+      if (gestureEngine === engine) toggleGestures();
+    });
+    try {
+      await engine.start();
+      gestureEngine = engine;
+      $("gesture-box").hidden = false;
+      onGestureFrame({ gesture: null, progress: 0, fire: false, seen: false });
+    } catch (err) {
+      setState("error", err?.name === "NotAllowedError" || err?.name === "NotFoundError" ? "sin acceso a la cámara" : "no se pudo cargar el reconocedor de gestos");
+    }
+    btn.disabled = false;
+  }
+  btn.classList.toggle("on", !!gestureEngine);
+  btn.setAttribute("aria-pressed", String(!!gestureEngine));
+  btn.querySelector("span").textContent = gestureEngine ? "Gestos activados" : "Gestos";
+}
+
+$("gestures").addEventListener("click", toggleGestures);
 
 // --- modelo -----------------------------------------------------------------------
 
@@ -661,7 +793,7 @@ addEventListener("keydown", (e) => {
 // --- preferencias de este dispositivo (Ajustes) -------------------------------------------------
 
 const PREFS_KEY = "jarvis_prefs";
-const prefs = { voice: true, highlight: true, labels: true, log: true, size: "normal" };
+const prefs = { voice: true, highlight: true, labels: true, log: true, size: "normal", volume: 1 };
 try {
   Object.assign(prefs, JSON.parse(localStorage.getItem(PREFS_KEY) || "{}"));
 } catch {
@@ -1464,9 +1596,12 @@ function routeCards(cards) {
   if (rest.length) showCards(rest);
 }
 
+let askedAt = 0; // cuándo terminó JARVIS una respuesta con una pregunta (0 = no espera un sí o un no)
+
 // Muestra una respuesta (o un aviso) en el panel de la derecha.
 function showAnswer({ q, text, label = "" }) {
   answerAt = Date.now();
+  if (!label) askedAt = /\?\s*$/.test((text || "").trim()) ? answerAt : 0; // ¿espera un sí o un no?
   $("answer-empty").hidden = true;
   $("answer-card").hidden = false;
   $("answer-card").classList.toggle("is-notice", !!label);
@@ -1692,7 +1827,9 @@ function encodeWav(samples, rate) {
 
 function playWav(b64) {
   // Encola: una respuesta y un aviso de temporizador nunca se pisan.
+  const epoch = silenceEpoch;
   playing = playing.then(async () => {
+    if (epoch !== silenceEpoch) return;
     const ctx = ensureAudio();
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     const buffer = await ctx.decodeAudioData(bytes.buffer);
@@ -1700,13 +1837,26 @@ function playWav(b64) {
     source.buffer = buffer;
     source.connect(outAnalyser);
     setState("speaking");
+    speaking = source;
     await new Promise((resolve) => {
       source.onended = resolve;
       source.start();
     });
+    if (speaking === source) speaking = null;
     if (state === "speaking") setState("idle");
   }).catch(() => setState("idle"));
   return playing;
+}
+
+// Calla a JARVIS al momento, también lo que tuviera en cola.
+function silence() {
+  silenceEpoch += 1;
+  try {
+    speaking?.stop();
+  } catch {
+    /* ya había terminado */
+  }
+  speaking = null;
 }
 
 // --- conversación ------------------------------------------------------------
