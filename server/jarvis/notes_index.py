@@ -9,6 +9,9 @@ y cada trozo se convierte en un vector TF-IDF de dos capas:
 
 La consulta se convierte igual y se comparan por coseno. Todo en local, sin modelos ni tokens: la
 boveda cabe de sobra en memoria y el indice se rehace solo cuando cambia alguna nota.
+
+Ademas de las notas, el indice puede llevar lo que hablasteis y los informes de los agentes (`extra`),
+asi que "¿que me dijiste del PETG?" encuentra la conversacion aunque no esten esas palabras exactas.
 """
 
 from __future__ import annotations
@@ -64,11 +67,22 @@ def terms(text: str) -> list[str]:
 
 
 @dataclass(frozen=True)
+class Doc:
+    """Algo que no es una nota pero se busca igual: un turno de conversacion, un informe..."""
+
+    path: str      # de donde sale, para citarlo ("Conversación del 28/09")
+    title: str
+    text: str
+    kind: str = "nota"
+
+
+@dataclass(frozen=True)
 class Chunk:
     path: str
     title: str
     text: str
     vector: dict[str, float]
+    kind: str = "nota"
 
 
 @dataclass(frozen=True)
@@ -77,6 +91,7 @@ class Found:
     title: str
     score: float
     snippet: str
+    kind: str = "nota"
 
     def line(self) -> str:
         where = f"{self.path}{f' › {self.title}' if self.title else ''}"
@@ -110,13 +125,19 @@ def _norm(counts: Counter, idf: dict[str, float]) -> dict[str, float]:
 class NotesIndex:
     """Indice en memoria de la boveda. Se rehace solo si alguna nota cambia (por fecha y tamano)."""
 
-    def __init__(self, vault, max_notes: int = MAX_NOTES):
+    def __init__(self, vault, max_notes: int = MAX_NOTES, extra=None):
+        """extra: funcion sin argumentos que devuelve mas documentos (conversaciones, informes...)."""
         self.vault = vault
         self.max_notes = max_notes
+        self.extra = extra
         self._lock = threading.Lock()
         self._chunks: list[Chunk] = []
         self._idf: dict[str, float] = {}
         self._stamp: tuple | None = None
+
+    def search_kind(self, query: str, kinds: tuple[str, ...], limit: int = 5) -> list[Found]:
+        """Solo de cierto tipo: "nota", "conversacion", "informe"."""
+        return [f for f in self.search(query, limit * 3) if f.kind in kinds][:limit]
 
     def _fingerprint(self, notes: list[Path]) -> tuple:
         out = []
@@ -130,8 +151,9 @@ class NotesIndex:
 
     def refresh(self, force: bool = False) -> int:
         """Rehace el indice si hace falta; devuelve cuantos trozos tiene."""
-        notes = sorted(self.vault.notes())[: self.max_notes]
-        stamp = self._fingerprint(notes)
+        notes = sorted(self.vault.notes())[: self.max_notes] if self.vault else []
+        docs = list(self.extra() or []) if self.extra else []
+        stamp = self._fingerprint(notes) + (len(docs), sum(len(d.text) for d in docs))
         with self._lock:
             if not force and stamp == self._stamp:
                 return len(self._chunks)
@@ -147,13 +169,20 @@ class NotesIndex:
                     counts = Counter(terms(f"{path.stem} {title} {body}"))
                     if not counts:
                         continue
-                    raw.append((rel, title, body, counts))
+                    raw.append((rel, title, body, counts, "nota"))
+                    seen.update(counts.keys())
+            for doc in docs:
+                counts = Counter(terms(f"{doc.title} {doc.text}"))
+                if counts:
+                    raw.append((doc.path, doc.title, doc.text[:MAX_CHUNK * 2], counts, doc.kind))
                     seen.update(counts.keys())
             total = len(raw) or 1
             self._idf = {t: math.log(1 + total / n) for t, n in seen.items()}
-            self._chunks = [Chunk(rel, title, body, _norm(counts, self._idf)) for rel, title, body, counts in raw]
+            self._chunks = [Chunk(rel, title, body, _norm(counts, self._idf), kind)
+                            for rel, title, body, counts, kind in raw]
             self._stamp = stamp
-            log.info("notas: índice con %d trozos de %d notas", len(self._chunks), len(notes))
+            log.info("memoria: índice con %d trozos (%d notas y %d documentos)", len(self._chunks), len(notes),
+                     len(docs))
             return len(self._chunks)
 
     def search(self, query: str, limit: int = 5) -> list[Found]:
@@ -175,7 +204,8 @@ class NotesIndex:
         for score, chunk in scored:  # una entrada por nota: el mejor trozo
             if chunk.path not in best:
                 best[chunk.path] = (score, chunk)
-        return [Found(c.path, c.title, round(s, 3), _snippet(c.text, query)) for s, c in list(best.values())[:limit]]
+        return [Found(c.path, c.title, round(s, 3), _snippet(c.text, query), c.kind)
+                for s, c in list(best.values())[:limit]]
 
 
 def _snippet(text: str, query: str) -> str:

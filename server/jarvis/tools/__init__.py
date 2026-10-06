@@ -14,7 +14,7 @@ from .delegate import delegate_tool
 from .homeassistant import HomeAssistant, ha_tools
 from .info import info_tools
 from .memory import memory_tools
-from .obsidian import obsidian_tools
+from .obsidian import obsidian_tools, recall_tool
 from .pc import pc_tools
 from .registry import Tool, ToolContext, ToolError, ToolRegistry
 from .reminders import ReminderStore, reminder_tools
@@ -82,6 +82,8 @@ def build_registry(
         registry.register(tool)
     for tool in obsidian_tools(vault, notes_index) if vault else []:
         registry.register(tool)
+    if notes_index is not None:  # buscar por significado en notas, conversaciones e informes
+        registry.register(recall_tool(notes_index))
     if settings.truenas_url and settings.truenas_api_key:
         if not settings.truenas_url.startswith("wss://"):
             # TrueNAS revoca las API keys usadas sin TLS.

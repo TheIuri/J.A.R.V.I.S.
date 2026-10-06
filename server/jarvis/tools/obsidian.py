@@ -87,3 +87,29 @@ def obsidian_tools(vault: Vault, index=None) -> list[Tool]:
             fn=daily,
         ),
     ]
+
+
+def recall_tool(index) -> Tool:
+    """Buscar por significado en todo lo que JARVIS guarda: notas, conversaciones e informes."""
+
+    def recall(_ctx: ToolContext, query: str) -> str:
+        try:
+            found = index.search(query, limit=6)
+        except OSError:
+            found = []
+        if not found:
+            return "No encuentro nada sobre eso en tus notas ni en lo que hemos hablado."
+        etiqueta = {"nota": "nota", "conversacion": "hablasteis", "informe": "informe"}
+        return "\n".join(f"- [{etiqueta.get(f.kind, f.kind)}] {f.path}: {f.snippet}" for f in found)
+
+    return Tool(
+        name="recall",
+        description=(
+            "Busca por significado en TODO lo que guarda JARVIS: las notas de Obsidian, las conversaciones "
+            "anteriores y los informes de los agentes. Úsala cuando pregunten '¿qué me dijiste de...?', "
+            "'¿te acuerdas de...?' o por algo que se habló o se investigó antes. No gasta tokens."
+        ),
+        parameters={"type": "object", "properties": {
+            "query": {"type": "string", "description": "Con las palabras del usuario"}}, "required": ["query"]},
+        fn=recall,
+    )
